@@ -37,6 +37,9 @@ final class AppModel: ObservableObject {
     @Published var waveGain: Double = 1
     @Published var dbScale = false
     @Published var followPlayhead = true
+    /// Trackpad: a plain two-finger swipe over a title's left/right half adjusts that edge.
+    /// Off by default because it competes with scrolling the waveform.
+    @Published var swipeOverTitleAdjusts = false
     @Published var playbackRate: Float = 1 {
         didSet { engine.setRate(playbackRate) }
     }
@@ -55,8 +58,12 @@ final class AppModel: ObservableObject {
         self.engine = engine
         engine.onTimeChange = { [weak self] t in self?.tick(t) }
         engine.onPlayStateChange = { [weak self] playing in
-            self?.clock.isPlaying = playing
-            if !playing { self?.finishSpotting() }
+            guard let self else { return }
+            self.clock.isPlaying = playing
+            if !playing {
+                self.finishSpotting()
+                self.selectTitleAtPlayhead()
+            }
         }
     }
 
@@ -81,7 +88,13 @@ final class AppModel: ObservableObject {
     }
 
     func openVideo(_ url: URL) {
+        ensureLocal(url) { [weak self] local in self?.loadVideo(local) }
+    }
+
+    private func loadVideo(_ url: URL) {
+        loadingName = url.lastPathComponent
         Task {
+            defer { loadingName = nil }
             do {
                 try await engine.load(url: url)
                 videoURL = url
@@ -89,16 +102,80 @@ final class AppModel: ObservableObject {
                 audio.load(url: url)
                 if !url.isFileURL { flash("Streaming: the waveform appears once the audio has been read.") }
             } catch {
-                flash("Couldn't open \(url.lastPathComponent): \(error.localizedDescription)")
+                showError("Couldn't open \(url.lastPathComponent)", error.localizedDescription)
             }
         }
+    }
+
+    // MARK: iCloud and errors
+
+    /// Name of the file currently downloading from iCloud or opening (shown in the title bar).
+    @Published private(set) var loadingName: String?
+    @Published private(set) var isDownloadingFromICloud = false
+    private var iCloudTask: Task<Void, Never>?
+
+    /// iCloud Drive files that are only in the cloud are downloaded first, then opened.
+    private func ensureLocal(_ url: URL, then completion: @escaping (URL) -> Void) {
+        guard url.isFileURL, let status = Self.iCloudStatus(url), status != .current else {
+            completion(url)
+            return
+        }
+        do {
+            try FileManager.default.startDownloadingUbiquitousItem(at: url)
+        } catch {
+            showError("Couldn't download \(url.lastPathComponent) from iCloud", error.localizedDescription)
+            return
+        }
+        loadingName = url.lastPathComponent
+        isDownloadingFromICloud = true
+        iCloudTask?.cancel()
+        iCloudTask = Task { [weak self] in
+            let started = Date()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard let self else { return }
+                let fresh = URL(fileURLWithPath: url.path)   // avoids cached resource values
+                let now = Self.iCloudStatus(fresh)
+                if now == nil || now == .current {
+                    self.isDownloadingFromICloud = false
+                    self.loadingName = nil
+                    completion(fresh)
+                    return
+                }
+                if Date().timeIntervalSince(started) > 3600 {
+                    self.isDownloadingFromICloud = false
+                    self.loadingName = nil
+                    self.showError("iCloud download is taking too long",
+                                   "\(url.lastPathComponent) hasn't finished downloading. Check your internet connection, or download it in Finder first.")
+                    return
+                }
+            }
+        }
+    }
+
+    /// nil when the file isn't in iCloud Drive.
+    private static func iCloudStatus(_ url: URL) -> URLUbiquitousItemDownloadingStatus? {
+        guard let values = try? url.resourceValues(forKeys: [.isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey]),
+              values.isUbiquitousItem == true else { return nil }
+        return values.ubiquitousItemDownloadingStatus
+    }
+
+    /// Problems opening or saving are shown as an alert, so nothing fails silently.
+    func showError(_ title: String, _ detail: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = detail
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     func openURLString(_ string: String) {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(),
               ["http", "https", "file"].contains(scheme) else {
-            flash("That doesn't look like a video link.")
+            showError("That doesn't look like a video link",
+                      "Use a direct link to a video file (https://…/film.mp4) or an HLS stream (.m3u8).")
             return
         }
         openVideo(url)
@@ -113,13 +190,17 @@ final class AppModel: ObservableObject {
     }
 
     func openSubtitles(_ url: URL) {
+        ensureLocal(url) { [weak self] local in self?.readSubtitles(local) }
+    }
+
+    private func readSubtitles(_ url: URL) {
         do {
             let subs = try SubtitleFormats.read(url: url)
             doc.replaceAll(subs)
             subtitleURL = url.pathExtension.lowercased() == "srt" ? url : nil
             flash("Loaded \(subs.count) titles from \(url.lastPathComponent)")
         } catch {
-            flash("Couldn't read \(url.lastPathComponent): \(error.localizedDescription)")
+            showError("Couldn't read \(url.lastPathComponent)", error.localizedDescription)
         }
     }
 
@@ -166,7 +247,7 @@ final class AppModel: ObservableObject {
             flash("Saved \(url.lastPathComponent)")
             return true
         } catch {
-            flash("Couldn't save: \(error.localizedDescription)")
+            showError("Couldn't save \(url.lastPathComponent)", error.localizedDescription)
             return false
         }
     }
@@ -218,6 +299,20 @@ final class AppModel: ObservableObject {
     func select(_ id: UUID?, seekToStart: Bool = false) {
         doc.selectedID = id
         if seekToStart, let s = doc.subtitle(id) { seek(s.start) }
+    }
+
+    /// When playback stops, the title under the playhead becomes the selected one.
+    private func selectTitleAtPlayhead() {
+        guard !doc.isLive, let s = doc.active(at: engine.currentTime), s.id != doc.selectedID else { return }
+        if focusRequest != nil { focusRequest = nil }
+        doc.selectedID = s.id
+    }
+
+    /// Typing while a title is selected (and nothing is being edited) starts editing it.
+    func typeIntoSelected(_ characters: String) {
+        guard let id = doc.selectedID, let s = doc.subtitle(id) else { return }
+        doc.setText(id, s.text + characters)
+        focusRequest = id
     }
 
     func selectAdjacent(_ delta: Int) {
@@ -276,11 +371,9 @@ final class AppModel: ObservableObject {
     /// After an adjustment: start edges play from 1 s before to 1 s after;
     /// end edges play from 1 s before to 0.5 s after.
     func preview(_ edge: Edge, of id: UUID) {
+        // Either edge: play the whole title, from 1 s before it starts to just after it ends.
         guard hasMedia, let s = doc.subtitle(id) else { return }
-        switch edge {
-        case .start: engine.play(from: max(0, s.start - 1), to: s.start + 1)
-        case .end: engine.play(from: max(0, s.end - 1), to: s.end + 0.5)
-        }
+        engine.play(from: max(0, s.start - 1), to: s.end + 0.25)
     }
 
     /// Keyboard, wheel and trackpad nudges: frame steps, coalesced into one undo

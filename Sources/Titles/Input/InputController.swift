@@ -176,6 +176,13 @@ final class InputController {
             model.deleteSelected()
             return nil
         default:
+            // Typing while a title is selected starts editing it (the keystroke isn't lost).
+            if let chars = e.characters, let scalar = chars.unicodeScalars.first,
+               scalar.value >= 0x20, scalar.value != 0x7F, !(0xF700...0xF8FF).contains(scalar.value),
+               model.doc.selectedID != nil {
+                model.typeIntoSelected(chars)
+                return nil
+            }
             return e
         }
     }
