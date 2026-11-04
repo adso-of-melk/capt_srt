@@ -41,6 +41,10 @@ struct CardPane: View {
                     guard let id else { return }
                     withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .center) }
                 }
+                .onChange(of: model.cardScrollTarget) { _, id in
+                    guard let id else { return }
+                    withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .center) }
+                }
             }
         }
         .background(Theme.panel)

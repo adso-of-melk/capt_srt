@@ -341,8 +341,18 @@ final class AppModel: ObservableObject {
         let last = doc.subtitles.last(where: { $0.start <= t + 0.001 })
         guard last?.id != lastFollowedID else { return }
         lastFollowedID = last?.id
-        if let last, last.id != doc.selectedID { doc.selectedID = last.id }
+        guard let last else { return }
+        if clock.isPlaying {
+            if last.id != doc.selectedID { doc.selectedID = last.id }
+        } else {
+            // Paused (stepping, seeking): scroll the cards but keep the selection, so a
+            // jog or nudge never lands on a different title than the one you picked.
+            cardScrollTarget = last.id
+        }
     }
+
+    /// Card the list should scroll to centre, without selecting it.
+    @Published var cardScrollTarget: UUID?
 
     /// The editor window; keyboard and mouse handling ignores every other window
     /// (Settings, sheets), so typing there can't change titles.

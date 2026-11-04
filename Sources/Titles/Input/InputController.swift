@@ -157,7 +157,7 @@ final class InputController {
         if isEditingText {
             if e.keyCode == Key.escape {
                 model.focusRequest = nil
-                window.makeFirstResponder(nil)
+                e.window?.makeFirstResponder(nil)
                 return nil
             }
             return e
