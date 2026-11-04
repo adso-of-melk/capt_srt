@@ -358,6 +358,21 @@ final class AppModel: ObservableObject {
     /// (Settings, sheets), so typing there can't change titles.
     weak var mainWindow: NSWindow?
 
+    /// Clicking to place the playhead (ruler or empty waveform). While paused: landing
+    /// inside a title selects it; landing in a gap clears the selection and scrolls the
+    /// cards to that point in the list.
+    func placePlayhead(_ t: Double) {
+        guard hasMedia else { return }
+        seek(t)
+        guard !clock.isPlaying else { return }
+        if let s = doc.active(at: t) {
+            doc.selectedID = s.id
+        } else {
+            doc.selectedID = nil
+            cardScrollTarget = doc.subtitles.last(where: { $0.start <= t })?.id ?? doc.subtitles.first?.id
+        }
+    }
+
     /// When playback stops, the title under the playhead becomes the selected one.
     private func selectTitleAtPlayhead() {
         guard !doc.isLive, let s = doc.active(at: engine.currentTime), s.id != doc.selectedID else { return }

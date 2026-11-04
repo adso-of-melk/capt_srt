@@ -382,7 +382,7 @@ final class WaveformNSView: NSView {
 
         if p.y < rulerHeight {
             drag = .ruler
-            model.seek(t(p.x))
+            model.placePlayhead(t(p.x))
             return
         }
 
@@ -422,7 +422,7 @@ final class WaveformNSView: NSView {
         case .none:
             break
         case .ruler:
-            model.seek(t(p.x))
+            model.placePlayhead(t(p.x))
         case let .creating(t0, _):
             drag = .creating(t0: t0, t1: t(p.x))
         case let .moving(id, grab, length):
@@ -451,7 +451,7 @@ final class WaveformNSView: NSView {
             if didDrag, abs(t1 - t0) >= 0.15 {
                 model.createTitle(start: min(t0, t1), end: max(t0, t1))
             } else {
-                model.seek(t0)
+                model.placePlayhead(t0)
             }
         case let .moving(id, _, _):
             model.doc.commitLive()
