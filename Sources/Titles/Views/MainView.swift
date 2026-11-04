@@ -20,7 +20,7 @@ struct MainView: View {
         .background(WindowAccessor { model.mainWindow = $0 })
         .preferredColorScheme(.dark)
         .tint(Theme.amber)
-        .navigationTitle(model.showHome ? "Titles" : model.windowTitle)
+        .navigationTitle(model.showHome ? "KPTN.SRT" : model.windowTitle)
         .dropDestination(for: URL.self) { urls, _ in
             model.handleDrop(urls)
             return !urls.isEmpty

@@ -13,7 +13,7 @@ struct HomeView: View {
                         Capsule().fill(Theme.amber).frame(width: 46, height: 16)
                         Capsule().fill(Theme.periwinkle).frame(width: 18, height: 16)
                     }
-                    Text("TITLES")
+                    Text("KPTN.SRT")
                         .font(Theme.label(44, .heavy))
                         .tracking(8)
                         .foregroundStyle(Theme.peach)

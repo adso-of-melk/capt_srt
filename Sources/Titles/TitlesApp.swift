@@ -7,7 +7,7 @@ struct TitlesApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        Window("Titles", id: "main") {
+        Window("KPTN.SRT", id: "main") {
             MainView(model: model, doc: model.doc)
                 .frame(minWidth: 960, minHeight: 600)
                 .onAppear { appDelegate.attach(model) }

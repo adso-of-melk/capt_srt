@@ -1,6 +1,8 @@
-# Titles — build 1
+# KPTN.SRT (working name)
 
 A focused subtitle editor for macOS: the card list on the left, the video at top right, and the title bar and waveform at bottom right.
+
+The code and Swift package are still called `Titles`; the working name only shows in the app for now.
 
 ## Build and run
 
