@@ -44,6 +44,8 @@ struct CardPane: View {
                 .onChange(of: model.cardScrollTarget) { _, id in
                     guard let id else { return }
                     withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .center) }
+                    // Clear it so the same target scrolls again next time.
+                    model.cardScrollTarget = nil
                 }
             }
         }

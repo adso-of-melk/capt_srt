@@ -367,6 +367,7 @@ final class AppModel: ObservableObject {
         guard !clock.isPlaying else { return }
         if let s = doc.active(at: t) {
             doc.selectedID = s.id
+            cardScrollTarget = s.id
         } else {
             doc.selectedID = nil
             cardScrollTarget = doc.subtitles.last(where: { $0.start <= t })?.id ?? doc.subtitles.first?.id
@@ -390,7 +391,15 @@ final class AppModel: ObservableObject {
     /// Moves to the next/previous title and puts the playhead at its start.
     func selectAdjacent(_ delta: Int, keepEditing: Bool = false) {
         guard !doc.subtitles.isEmpty else { return }
-        let i = doc.index(of: doc.selectedID) ?? (delta > 0 ? -1 : doc.subtitles.count)
+        let i: Int
+        if let sel = doc.index(of: doc.selectedID) {
+            i = sel
+        } else {
+            // Nothing selected (playhead in a gap): step from the playhead's position in the list.
+            let t = clock.time
+            let k = doc.subtitles.lastIndex(where: { $0.start <= t }) ?? -1
+            i = delta > 0 ? k : k + 1
+        }
         let j = min(max(0, i + delta), doc.subtitles.count - 1)
         let id = doc.subtitles[j].id
         if engine.isPlaying { engine.pause() }
