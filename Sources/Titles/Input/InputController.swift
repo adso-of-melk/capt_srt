@@ -108,6 +108,7 @@ final class InputController {
 
     private enum Key {
         static let space: UInt16 = 49
+        static let tab: UInt16 = 48
         static let returnKey: UInt16 = 36
         static let enter: UInt16 = 76
         static let escape: UInt16 = 53
@@ -124,6 +125,20 @@ final class InputController {
     private func keyDown(_ e: NSEvent, flags: NSEvent.ModifierFlags, model: AppModel) -> NSEvent? {
         if e.keyCode == Key.escape, jogEdge != nil {
             endJog(commit: false)
+            return nil
+        }
+
+        let plain = flags.subtracting(.shift).isEmpty
+
+        // Shift+Space: play/pause from anywhere, including while typing in a card.
+        if e.keyCode == Key.space, flags == [.shift] {
+            if !e.isARepeat { model.togglePlay() }
+            return nil
+        }
+
+        // Tab / Shift+Tab: next / previous title, from anywhere. Keeps editing if you were.
+        if e.keyCode == Key.tab, plain {
+            model.selectAdjacent(flags.contains(.shift) ? -1 : 1, keepEditing: isEditingText)
             return nil
         }
 
@@ -205,8 +220,9 @@ final class InputController {
         guard let model, let edge = jogEdge, let id = jogID else { return }
         // Speed-sensitive: slow movement = single frames, fast = bigger jumps.
         let speed = abs(dx)
-        let framesPerPoint: CGFloat = speed < 2 ? 0.12 : speed < 6 ? 0.25 : speed < 15 ? 0.5 : 1.0
-        jogAccumulator += dx * framesPerPoint * (coarse ? 5 : 1)
+        // Base rate is half of build 1's; the Jog Speed setting scales it (1 = default).
+        let framesPerPoint: CGFloat = speed < 2 ? 0.06 : speed < 6 ? 0.12 : speed < 15 ? 0.25 : 0.5
+        jogAccumulator += dx * framesPerPoint * CGFloat(model.jogSpeed) * (coarse ? 5 : 1)
         let whole = Int(jogAccumulator)
         guard whole != 0 else { return }
         jogAccumulator -= CGFloat(whole)

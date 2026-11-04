@@ -52,10 +52,13 @@ Dragging the body of a box moves the whole title. After adjusting either edge, t
 
 | Key | Action |
 | --- | --- |
-| Space | Play / pause |
+| Shift+Space | Play / pause, from anywhere, even while typing (plain Space also works when not typing) |
+| Tab / Shift+Tab | Next / previous title. The playhead jumps to it, and editing carries over if you were typing |
 | ← / → | Step one frame back / forward (Shift: one second) |
 | ↑ / ↓ while paused | Select the previous / next title and jump to it |
 | Return, or just start typing | Edit the selected card's text (cursor at the end) |
+
+During playback, the last title the playhead reached stays highlighted, and the card list scrolls to keep it centred. Starting playback leaves text editing.
 | Click a card | Select it and edit its text, with the cursor at the end |
 | Esc | Leave text editing |
 | ⌫ (when not typing) | Delete the selected title |
@@ -65,7 +68,9 @@ Dragging the body of a box moves the whole title. After adjusting either edge, t
 | Click the ruler | Seek |
 | Right-click a box | Play, edit text, delete |
 
-**Waveform display.** The **Scale** slider makes quiet passages larger. The **dB** toggle shows loudness in decibels, so whispers stay visible next to loud sounds.
+**Settings (⌘,).** Jog speed (how fast Control/Option + mouse moves an edge), spotting mode, reaction offset, timing preset and the trackpad swipe option.
+
+**Waveform display.** Boxes show the full text of each title, wrapped to fit. The **Scale** slider makes quiet passages larger. The **dB** toggle shows loudness in decibels, so whispers stay visible next to loud sounds.
 
 **Timing colours.** Periwinkle means OK, amber means close to the limit, and red means over the limit, for both reading speed (CPS) and duration. Change the preset under Title ▸ Timing Preset.
 

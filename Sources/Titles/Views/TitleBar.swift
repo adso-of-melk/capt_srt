@@ -17,7 +17,7 @@ struct TitleBar: View {
                             .foregroundStyle(Theme.background)
                     )
                     .onTapGesture { model.togglePlay() }
-                    .help("Play / pause (Space)")
+                    .help("Play / pause (Shift+Space)")
                 Text(Timecode.frames(clock.time, fps: model.engine.frameRate))
                     .font(Theme.mono(17, .semibold))
                     .foregroundStyle(Theme.peach)

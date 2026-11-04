@@ -60,9 +60,14 @@ struct CardPane: View {
                 }
             }
         }
-        .onChange(of: focused) { _, id in
-            if model.focusRequest != id { model.focusRequest = id }
-            if let id { doc.selectedID = id }
+        .onChange(of: focused) { old, id in
+            if let id {
+                if model.focusRequest != id { model.focusRequest = id }
+                doc.selectedID = id
+            } else if model.focusRequest == old {
+                // Focus really left the card (not a hand-over to another card via Tab).
+                model.focusRequest = nil
+            }
         }
     }
 }

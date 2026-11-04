@@ -29,10 +29,18 @@ final class AppModel: ObservableObject {
 
     @Published private(set) var videoURL: URL?
     @Published private(set) var subtitleURL: URL?
-    @Published var spotMode: SpotMode = .hold
+    @Published var spotMode: SpotMode = .hold {
+        didSet { UserDefaults.standard.set(spotMode.rawValue, forKey: "spotMode") }
+    }
+    /// Control/Option + mouse jog sensitivity (1 = default). Set in Settings.
+    @Published var jogSpeed: Double = 1 {
+        didSet { UserDefaults.standard.set(jogSpeed, forKey: "jogSpeed") }
+    }
     @Published var preset: TimingPreset = .general
     /// Subtracted from spotting key presses to allow for reaction time.
-    @Published var reactionOffset: Double = 0.25
+    @Published var reactionOffset: Double = 0.25 {
+        didSet { UserDefaults.standard.set(reactionOffset, forKey: "reactionOffset") }
+    }
     @Published var pixelsPerSecond: Double = 120
     @Published var waveGain: Double = 1
     @Published var dbScale = false
@@ -56,13 +64,22 @@ final class AppModel: ObservableObject {
     init(engine: PlaybackEngine? = nil) {
         let engine = engine ?? AVFoundationEngine()
         self.engine = engine
+        let defaults = UserDefaults.standard
+        if let mode = defaults.string(forKey: "spotMode").flatMap(SpotMode.init(rawValue:)) { spotMode = mode }
+        if defaults.object(forKey: "jogSpeed") != nil { jogSpeed = defaults.double(forKey: "jogSpeed") }
+        if defaults.object(forKey: "reactionOffset") != nil { reactionOffset = defaults.double(forKey: "reactionOffset") }
         engine.onTimeChange = { [weak self] t in self?.tick(t) }
         engine.onPlayStateChange = { [weak self] playing in
             guard let self else { return }
             self.clock.isPlaying = playing
             if !playing {
                 self.finishSpotting()
-                self.selectTitleAtPlayhead()
+                if let until = self.previewUntil {
+                    // The preview's own pause before it seeks doesn't end it; reaching its end does.
+                    if self.engine.currentTime >= until - 0.05 { self.previewUntil = nil }
+                } else {
+                    self.selectTitleAtPlayhead()
+                }
             }
         }
     }
@@ -266,7 +283,18 @@ final class AppModel: ObservableObject {
 
     func togglePlay() {
         guard hasMedia else { return }
-        engine.isPlaying ? engine.pause() : engine.play()
+        previewUntil = nil
+        if engine.isPlaying {
+            engine.pause()
+        } else {
+            // Starting playback leaves text editing so the cards can follow the playhead.
+            // When it stops, the title under the playhead is selected; Return or typing edits it.
+            if focusRequest != nil {
+                focusRequest = nil
+                NSApp.keyWindow?.makeFirstResponder(nil)
+            }
+            engine.play()
+        }
     }
 
     func seek(_ t: Double, exact: Bool = true) {
@@ -288,6 +316,7 @@ final class AppModel: ObservableObject {
 
     private func tick(_ t: Double) {
         clock.time = t
+        if clock.isPlaying { followSelection(at: t) }
         if let id = spottingID, let s = doc.subtitle(id) {
             let end = max(s.start + 0.1, t - reactionOffset)
             if end > s.end { doc.liveUpdate(id) { $0.end = end } }
@@ -299,6 +328,15 @@ final class AppModel: ObservableObject {
     func select(_ id: UUID?, seekToStart: Bool = false) {
         doc.selectedID = id
         if seekToStart, let s = doc.subtitle(id) { seek(s.start) }
+    }
+
+    /// While playing, the last title the playhead entered stays selected until it
+    /// reaches the next one (the card list scrolls to keep it centred). Not while
+    /// previewing, spotting, dragging or typing.
+    private func followSelection(at t: Double) {
+        guard !isPreviewing, spottingID == nil, !doc.isLive, focusRequest == nil else { return }
+        guard let last = doc.subtitles.last(where: { $0.start <= t + 0.001 }) else { return }
+        if last.id != doc.selectedID { doc.selectedID = last.id }
     }
 
     /// When playback stops, the title under the playhead becomes the selected one.
@@ -315,11 +353,15 @@ final class AppModel: ObservableObject {
         focusRequest = id
     }
 
-    func selectAdjacent(_ delta: Int) {
+    /// Moves to the next/previous title and puts the playhead at its start.
+    func selectAdjacent(_ delta: Int, keepEditing: Bool = false) {
         guard !doc.subtitles.isEmpty else { return }
         let i = doc.index(of: doc.selectedID) ?? (delta > 0 ? -1 : doc.subtitles.count)
         let j = min(max(0, i + delta), doc.subtitles.count - 1)
-        select(doc.subtitles[j].id, seekToStart: true)
+        let id = doc.subtitles[j].id
+        if engine.isPlaying { engine.pause() }
+        select(id, seekToStart: true)
+        if keepEditing { focusRequest = id }
     }
 
     func deleteSelected() {
@@ -373,7 +415,18 @@ final class AppModel: ObservableObject {
     func preview(_ edge: Edge, of id: UUID) {
         // Either edge: play the whole title, from 1 s before it starts to just after it ends.
         guard hasMedia, let s = doc.subtitle(id) else { return }
-        engine.play(from: max(0, s.start - 1), to: s.end + 0.25)
+        playRange(from: max(0, s.start - 1), to: s.end + 0.25)
+    }
+
+    /// Short, automatic playbacks (previews). Selection doesn't follow the playhead
+    /// during these, so the title being worked on stays selected.
+    private var previewUntil: Double?
+    var isPreviewing: Bool { previewUntil != nil }
+
+    func playRange(from: Double, to: Double) {
+        guard hasMedia else { return }
+        previewUntil = to
+        engine.play(from: from, to: to)
     }
 
     /// Keyboard, wheel and trackpad nudges: frame steps, coalesced into one undo

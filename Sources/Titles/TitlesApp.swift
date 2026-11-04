@@ -14,6 +14,10 @@ struct TitlesApp: App {
         }
         .defaultSize(width: 1440, height: 900)
         .commands { TitlesCommands(model: model) }
+
+        Settings {
+            SettingsView(model: model)
+        }
     }
 }
 
