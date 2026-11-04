@@ -51,11 +51,16 @@ final class InputController {
 
     private func handle(_ e: NSEvent) -> NSEvent? {
         guard let model else { return e }
+        // Only the editor window. Settings and sheets get their keys untouched.
+        guard let window = e.window, window === model.mainWindow else {
+            if jogEdge != nil { endJog(commit: true) }
+            return e
+        }
         let flags = e.modifierFlags.intersection([.shift, .control, .option, .command])
 
         switch e.type {
         case .flagsChanged:
-            e.window?.acceptsMouseMovedEvents = true
+            window.acceptsMouseMovedEvents = true
             let edge = Self.edge(for: flags)
             if jogEdge != nil && edge != jogEdge { endJog(commit: true) }
             armedEdge = edge
@@ -152,7 +157,7 @@ final class InputController {
         if isEditingText {
             if e.keyCode == Key.escape {
                 model.focusRequest = nil
-                e.window?.makeFirstResponder(nil)
+                window.makeFirstResponder(nil)
                 return nil
             }
             return e

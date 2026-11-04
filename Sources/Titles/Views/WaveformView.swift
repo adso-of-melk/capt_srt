@@ -283,8 +283,12 @@ final class WaveformNSView: NSView {
             NSBezierPath(roundedRect: pill, xRadius: 7.5, yRadius: 7.5).fill()
             drawText(numberText, at: CGPoint(x: pill.minX + 5, y: pill.minY + 1), font: font, color: Palette.background)
             let fullText = s.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            let textWidth = r.maxX - pill.maxX - 9
-            if !fullText.isEmpty, textWidth > 8 {
+            // Beside the number pill when there's room; otherwise underneath it.
+            let besidePill = r.maxX - pill.maxX - 9 >= 40
+            let textRect = besidePill
+                ? CGRect(x: pill.maxX + 5, y: r.minY + 3, width: r.maxX - pill.maxX - 9, height: r.height - 6)
+                : CGRect(x: r.minX + 4, y: pill.maxY + 2, width: r.width - 8, height: r.maxY - pill.maxY - 4)
+            if !fullText.isEmpty, textRect.width > 6, textRect.height > 8 {
                 let para = NSMutableParagraphStyle()
                 para.lineBreakMode = .byWordWrapping
                 let attrs: [NSAttributedString.Key: Any] = [
@@ -292,7 +296,6 @@ final class WaveformNSView: NSView {
                     .foregroundColor: Palette.text.withAlphaComponent(0.9),
                     .paragraphStyle: para
                 ]
-                let textRect = CGRect(x: pill.maxX + 5, y: r.minY + 3, width: textWidth, height: r.height - 6)
                 (fullText as NSString).draw(with: textRect,
                                             options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
                                             attributes: attrs)

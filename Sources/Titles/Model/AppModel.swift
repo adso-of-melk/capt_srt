@@ -316,7 +316,7 @@ final class AppModel: ObservableObject {
 
     private func tick(_ t: Double) {
         clock.time = t
-        if clock.isPlaying { followSelection(at: t) }
+        followSelection(at: t)
         if let id = spottingID, let s = doc.subtitle(id) {
             let end = max(s.start + 0.1, t - reactionOffset)
             if end > s.end { doc.liveUpdate(id) { $0.end = end } }
@@ -330,14 +330,23 @@ final class AppModel: ObservableObject {
         if seekToStart, let s = doc.subtitle(id) { seek(s.start) }
     }
 
-    /// While playing, the last title the playhead entered stays selected until it
-    /// reaches the next one (the card list scrolls to keep it centred). Not while
-    /// previewing, spotting, dragging or typing.
+    /// As the playhead moves (playing, stepping or seeking), the last title it reached
+    /// becomes selected, and the card list keeps it centred. The selection only changes
+    /// when the playhead reaches a *different* title, so clicking another title's box
+    /// isn't undone on the next tick. Paused while previewing, spotting, dragging or typing.
+    private var lastFollowedID: UUID?
+
     private func followSelection(at t: Double) {
         guard !isPreviewing, spottingID == nil, !doc.isLive, focusRequest == nil else { return }
-        guard let last = doc.subtitles.last(where: { $0.start <= t + 0.001 }) else { return }
-        if last.id != doc.selectedID { doc.selectedID = last.id }
+        let last = doc.subtitles.last(where: { $0.start <= t + 0.001 })
+        guard last?.id != lastFollowedID else { return }
+        lastFollowedID = last?.id
+        if let last, last.id != doc.selectedID { doc.selectedID = last.id }
     }
+
+    /// The editor window; keyboard and mouse handling ignores every other window
+    /// (Settings, sheets), so typing there can't change titles.
+    weak var mainWindow: NSWindow?
 
     /// When playback stops, the title under the playhead becomes the selected one.
     private func selectTitleAtPlayhead() {
