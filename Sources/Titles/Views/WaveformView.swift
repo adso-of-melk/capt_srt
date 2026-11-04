@@ -361,12 +361,37 @@ final class WaveformNSView: NSView {
     override func cursorUpdate(with event: NSEvent) { updateCursor(event) }
     override func mouseMoved(with event: NSEvent) { updateCursor(event) }
 
+    /// Command held over a box: the split cursor.
+    private var flagsMonitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let m = flagsMonitor { NSEvent.removeMonitor(m); flagsMonitor = nil }
+        guard window != nil else { return }
+        flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] e in
+            MainActor.assumeIsolated {
+                guard let self, let window = self.window, e.window === window else { return }
+                let p = self.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+                if self.bounds.contains(p) { self.updateCursor(at: p, flags: e.modifierFlags) }
+            }
+            return e
+        }
+    }
+
     private func updateCursor(_ event: NSEvent) {
-        let p = convert(event.locationInWindow, from: nil)
+        updateCursor(at: convert(event.locationInWindow, from: nil), flags: event.modifierFlags)
+    }
+
+    private static func isSplitClick(_ flags: NSEvent.ModifierFlags) -> Bool {
+        flags.intersection([.command, .shift, .control, .option]) == [.command]
+    }
+
+    private func updateCursor(at p: CGPoint, flags: NSEvent.ModifierFlags) {
         if p.y < rulerHeight { NSCursor.pointingHand.set(); return }
+        let split = Self.isSplitClick(flags)
         switch hit(p) {
-        case .edge: NSCursor.resizeLeftRight.set()
-        case .body: NSCursor.openHand.set()
+        case .edge: (split ? NSCursor.split : NSCursor.resizeLeftRight).set()
+        case .body: (split ? NSCursor.split : NSCursor.openHand).set()
         case .empty: NSCursor.crosshair.set()
         }
     }
@@ -384,6 +409,19 @@ final class WaveformNSView: NSView {
             drag = .ruler
             model.placePlayhead(t(p.x))
             return
+        }
+
+        // ⌘-click on a box: split it there.
+        if Self.isSplitClick(event.modifierFlags) {
+            switch hit(p) {
+            case let .edge(id, _), let .body(id):
+                model.splitTitle(id, at: t(p.x))
+                drag = .none
+                needsDisplay = true
+                return
+            case .empty:
+                break
+            }
         }
 
         switch hit(p) {
@@ -586,4 +624,38 @@ final class WaveformNSView: NSView {
     private func drawText(_ s: String, at p: CGPoint, font: NSFont, color: NSColor) {
         (s as NSString).draw(at: p, withAttributes: [.font: font, .foregroundColor: color])
     }
+}
+
+extension NSCursor {
+    /// Scissors with a split line, shown while ⌘ is held over a title box.
+    static let split: NSCursor = {
+        let size = NSSize(width: 24, height: 24)
+        let image = NSImage(size: size, flipped: false) { rect in
+            let line = NSBezierPath()
+            line.move(to: NSPoint(x: 12, y: 1))
+            line.line(to: NSPoint(x: 12, y: 23))
+            line.lineWidth = 3
+            NSColor.black.withAlphaComponent(0.7).setStroke()
+            line.stroke()
+            line.lineWidth = 1
+            NSColor.white.setStroke()
+            line.stroke()
+            let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .bold)
+                .applying(.init(paletteColors: [.white]))
+            if let scissors = NSImage(systemSymbolName: "scissors", accessibilityDescription: "Split")?
+                .withSymbolConfiguration(config) {
+                let s = scissors.size
+                let r = NSRect(x: 13, y: 12 - s.height / 2, width: s.width, height: s.height)
+                NSGraphicsContext.current?.saveGraphicsState()
+                let shadow = NSShadow()
+                shadow.shadowColor = .black
+                shadow.shadowBlurRadius = 2
+                shadow.set()
+                scissors.draw(in: r)
+                NSGraphicsContext.current?.restoreGraphicsState()
+            }
+            return true
+        }
+        return NSCursor(image: image, hotSpot: NSPoint(x: 12, y: 12))
+    }()
 }

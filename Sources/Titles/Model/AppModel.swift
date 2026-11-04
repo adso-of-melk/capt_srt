@@ -55,9 +55,13 @@ final class AppModel: ObservableObject {
         didSet { UserDefaults.standard.set(jogSpeed, forKey: "jogSpeed") }
     }
     @Published var preset: TimingPreset = .general
-    /// Subtracted from spotting key presses to allow for reaction time.
-    @Published var reactionOffset: Double = 0.25 {
-        didSet { UserDefaults.standard.set(reactionOffset, forKey: "reactionOffset") }
+    /// Live spotting: subtracted from the key press (title start). 0 = exactly where you press.
+    @Published var spotStartOffset: Double = 0 {
+        didSet { UserDefaults.standard.set(spotStartOffset, forKey: "spotStartOffset") }
+    }
+    /// Live spotting: subtracted from the key release (title end), allowing for reaction time.
+    @Published var spotEndOffset: Double = 0.25 {
+        didSet { UserDefaults.standard.set(spotEndOffset, forKey: "spotEndOffset") }
     }
     @Published var pixelsPerSecond: Double = 120
     @Published var waveGain: Double = 1
@@ -89,7 +93,8 @@ final class AppModel: ObservableObject {
         let defaults = UserDefaults.standard
         if let mode = defaults.string(forKey: "spotMode").flatMap(SpotMode.init(rawValue:)) { spotMode = mode }
         if defaults.object(forKey: "jogSpeed") != nil { jogSpeed = defaults.double(forKey: "jogSpeed") }
-        if defaults.object(forKey: "reactionOffset") != nil { reactionOffset = defaults.double(forKey: "reactionOffset") }
+        if defaults.object(forKey: "spotStartOffset") != nil { spotStartOffset = defaults.double(forKey: "spotStartOffset") }
+        if defaults.object(forKey: "spotEndOffset") != nil { spotEndOffset = defaults.double(forKey: "spotEndOffset") }
         if let data = defaults.data(forKey: "recentFilms"),
            let list = try? JSONDecoder().decode([RecentFilm].self, from: data) { recents = list }
         engine.onTimeChange = { [weak self] t in self?.tick(t) }
@@ -457,7 +462,7 @@ final class AppModel: ObservableObject {
         clock.time = t
         followSelection(at: t)
         if let id = spottingID, let s = doc.subtitle(id) {
-            let end = max(s.start + 0.1, t - reactionOffset)
+            let end = max(s.start + 0.1, t - spotEndOffset)
             if end > s.end { doc.liveUpdate(id) { $0.end = end } }
         }
     }
@@ -638,11 +643,24 @@ final class AppModel: ObservableObject {
 
     // MARK: Live spotting
 
+    /// The playhead time when a key event actually happened. Events can reach us a little
+    /// after the key moved (while the main thread is drawing), so that delay is taken back off.
+    private func spotTime(eventTimestamp: TimeInterval?, offset: Double) -> Double {
+        var t = engine.currentTime
+        if let ts = eventTimestamp {
+            let lag = min(0.2, max(0, ProcessInfo.processInfo.systemUptime - ts))
+            t -= lag * Double(playbackRate)
+        }
+        return max(0, t - offset)
+    }
+
     /// Hold mode: key down. Tap mode: "end this, start next".
-    func spotDown() {
+    func spotDown(eventTimestamp: TimeInterval? = nil) {
         guard hasMedia, engine.isPlaying else { return }
-        let t = max(0, engine.currentTime - reactionOffset)
-        if spotMode == .tap, spottingID != nil { finishSpotting(at: t) }
+        let t = spotTime(eventTimestamp: eventTimestamp, offset: spotStartOffset)
+        if spotMode == .tap, spottingID != nil {
+            finishSpotting(at: spotTime(eventTimestamp: eventTimestamp, offset: spotEndOffset))
+        }
         guard spottingID == nil else { return }
         let start: Double
         if let last = doc.subtitles.last(where: { $0.start <= t }), last.end > t - minGap, last.end <= t + 0.5 {
@@ -657,8 +675,61 @@ final class AppModel: ObservableObject {
     }
 
     /// Hold mode: key up. Tap mode: "end, leave a gap".
-    func spotUp() {
-        finishSpotting(at: max(0, engine.currentTime - reactionOffset))
+    func spotUp(eventTimestamp: TimeInterval? = nil) {
+        finishSpotting(at: spotTime(eventTimestamp: eventTimestamp, offset: spotEndOffset))
+    }
+
+    // MARK: Splitting
+
+    /// Splits a title at `t`, leaving the minimum gap (half each side of the split point).
+    /// The text is divided at the line break or word nearest the split.
+    func splitTitle(_ id: UUID, at t: Double) {
+        guard let s = doc.subtitle(id) else { return }
+        let half = minGap / 2
+        let firstEnd = t - half
+        let secondStart = t + half
+        guard firstEnd - s.start >= 0.1, s.end - secondStart >= 0.1 else {
+            flash("Too close to the edge of the title to split there.")
+            return
+        }
+        let parts = Self.splitText(s.text, at: (t - s.start) / max(0.001, s.duration))
+        let second = Subtitle(start: secondStart, end: s.end, text: parts.1)
+        doc.perform { subs in
+            guard let i = subs.firstIndex(where: { $0.id == id }) else { return }
+            subs[i].end = firstEnd
+            subs[i].text = parts.0
+            subs.append(second)
+        }
+        doc.selectedID = second.id
+        if !engine.isPlaying { seek(secondStart) }
+    }
+
+    /// Title ▸ Split at Playhead: splits the title under the playhead.
+    func splitAtPlayhead() {
+        let t = engine.currentTime
+        guard hasMedia, let s = doc.active(at: t) else {
+            flash("Put the playhead over a title to split it.")
+            return
+        }
+        splitTitle(s.id, at: t)
+    }
+
+    /// Divides text at the line break, or else the word gap, nearest `fraction` of the way through.
+    static func splitText(_ text: String, at fraction: Double) -> (String, String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return ("", "") }
+        let chars = Array(trimmed)
+        let target = Double(chars.count) * min(1, max(0, fraction))
+        let lineBreaks = chars.indices.filter { chars[$0] == "\n" }
+        let spaces = chars.indices.filter { chars[$0] == " " }
+        let candidates = lineBreaks.isEmpty ? spaces : lineBreaks
+        guard let cut = candidates.min(by: { abs(Double($0) - target) < abs(Double($1) - target) }) else {
+            // A single word: keep it on the side with more of the time.
+            return fraction < 0.5 ? ("", trimmed) : (trimmed, "")
+        }
+        let a = String(chars[..<cut]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let b = String(chars[(cut + 1)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (a, b)
     }
 
     private func finishSpotting(at t: Double? = nil) {

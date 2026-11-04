@@ -178,8 +178,9 @@ struct CardView: View {
         }
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded {
-            // Clicking a card selects it and puts the cursor at the end of its text.
-            model.select(sub.id, seekToStart: !isSelected)
+            // Clicking a card selects it, takes the playhead to its start,
+            // and puts the cursor at the end of its text.
+            model.select(sub.id, seekToStart: true)
             model.focusRequest = sub.id
         })
     }

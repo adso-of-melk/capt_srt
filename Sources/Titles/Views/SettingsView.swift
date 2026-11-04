@@ -29,12 +29,21 @@ struct SettingsView: View {
                     Text("Hold ↓ while a line is spoken").tag(SpotMode.hold)
                     Text("Tap ↓ to start next, ↑ to end").tag(SpotMode.tap)
                 }
-                LabeledContent("Reaction offset") {
-                    Stepper(value: $model.reactionOffset, in: 0...0.6, step: 0.05) {
-                        Text("\(Int((model.reactionOffset * 1000).rounded())) ms")
+                LabeledContent("Start earlier by") {
+                    Stepper(value: $model.spotStartOffset, in: 0...0.5, step: 0.01) {
+                        Text("\(Int((model.spotStartOffset * 1000).rounded())) ms")
                             .font(Theme.mono(11))
                     }
                 }
+                LabeledContent("End earlier by") {
+                    Stepper(value: $model.spotEndOffset, in: 0...0.6, step: 0.01) {
+                        Text("\(Int((model.spotEndOffset * 1000).rounded())) ms")
+                            .font(Theme.mono(11))
+                    }
+                }
+                Text("Taken off each spotting key press and release. 0 ms puts the edge exactly where you pressed.")
+                    .font(Theme.label(11, .regular))
+                    .foregroundStyle(Theme.textDim)
             }
 
             Section {

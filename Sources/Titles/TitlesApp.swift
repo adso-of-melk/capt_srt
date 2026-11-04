@@ -78,6 +78,8 @@ struct TitlesCommands: Commands {
         }
         CommandMenu("Title") {
             Button("Play / Pause") { model.togglePlay() }
+            Button("Split at Playhead  (or ⌘-click a box)") { model.splitAtPlayhead() }
+                .keyboardShortcut("b")
             Button("Delete Title  (⌫ when not typing)") { model.deleteSelected() }
             Divider()
             Picker("Spotting Mode", selection: $model.spotMode) {

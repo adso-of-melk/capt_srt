@@ -77,7 +77,15 @@ final class InputController {
 
         case .leftMouseDown, .rightMouseDown:
             // Control+click is right-click on the Mac; ignore clicks while jogging.
-            return jogEdge != nil ? nil : e
+            if jogEdge != nil { return nil }
+            // A click in the card being typed in goes to the field editor, so the card never
+            // sees it. Still take the playhead back to that title's start.
+            if e.type == .leftMouseDown, let editor = window.firstResponder as? NSTextView,
+               editor.bounds.contains(editor.convert(e.locationInWindow, from: nil)),
+               let s = model.doc.subtitle(model.doc.selectedID) {
+                model.seek(s.start)
+            }
+            return e
 
         case .scrollWheel:
             guard let edge = Self.edge(for: flags), model.doc.selectedID != nil else { return e }
@@ -89,7 +97,7 @@ final class InputController {
 
         case .keyUp:
             if e.keyCode == Key.down, model.spotMode == .hold, model.isSpotting {
-                model.spotUp()
+                model.spotUp(eventTimestamp: e.timestamp)
                 return nil
             }
             return e
@@ -169,18 +177,18 @@ final class InputController {
 
         switch e.keyCode {
         case Key.space:
-            if !e.isARepeat { model.togglePlay() }
+            // Space alone does nothing outside a card; Shift+Space plays and pauses.
             return nil
         case Key.down:
             if model.clock.isPlaying {
-                if !e.isARepeat { model.spotDown() }
+                if !e.isARepeat { model.spotDown(eventTimestamp: e.timestamp) }
             } else {
                 model.selectAdjacent(1)
             }
             return nil
         case Key.up:
             if model.clock.isPlaying {
-                if model.spotMode == .tap && !e.isARepeat { model.spotUp() }
+                if model.spotMode == .tap && !e.isARepeat { model.spotUp(eventTimestamp: e.timestamp) }
             } else {
                 model.selectAdjacent(-1)
             }
