@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Left pane: one title-box-shaped card per subtitle, in order, numbered.
 /// This is the only place text is edited.
@@ -44,10 +45,19 @@ struct CardPane: View {
         }
         .background(Theme.panel)
         .onChange(of: model.focusRequest) { _, id in
+            // Already focused by a click inside the field: leave the cursor where it was put.
+            if focused == id { return }
             // Slight delay so a just-created card exists before it takes focus.
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 50_000_000)
                 if focused != model.focusRequest { focused = model.focusRequest }
+                // Put the text cursor at the end instead of selecting everything.
+                try? await Task.sleep(nanoseconds: 30_000_000)
+                if model.focusRequest != nil,
+                   let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
+                    let end = (editor.string as NSString).length
+                    editor.setSelectedRange(NSRange(location: end, length: 0))
+                }
             }
         }
         .onChange(of: focused) { _, id in
@@ -115,13 +125,22 @@ struct CardView: View {
             .padding(.bottom, 5)
 
             // Title box: the text, centred, styled like it appears over the video.
-            TextField("Type the title…", text: $text, axis: .vertical)
-                .textFieldStyle(.plain)
+            // Only the selected card is editable, so no other card can keep a stale
+            // text selection or cursor.
+            Group {
+                if isSelected {
+                    TextField("Type the title…", text: $text, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .focused(focused, equals: sub.id)
+                } else {
+                    Text(sub.text.isEmpty ? " " : sub.text)
+                        .frame(maxWidth: .infinity)
+                }
+            }
                 .font(.system(size: 15, weight: .medium))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(Theme.text)
                 .lineLimit(1...4)
-                .focused(focused, equals: sub.id)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 9)
                 .frame(maxWidth: .infinity, minHeight: 48)
@@ -148,7 +167,9 @@ struct CardView: View {
         }
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded {
+            // Clicking a card selects it and puts the cursor at the end of its text.
             model.select(sub.id, seekToStart: !isSelected)
+            model.focusRequest = sub.id
         })
     }
 }

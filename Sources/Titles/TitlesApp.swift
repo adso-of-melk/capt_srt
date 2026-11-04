@@ -76,6 +76,7 @@ struct TitlesCommands: Commands {
                 ForEach(TimingPreset.all) { Text($0.name).tag($0.id) }
             }
             Toggle("Follow Playhead", isOn: $model.followPlayhead)
+            Toggle("Trackpad Swipe Over a Title Adjusts Its Edges", isOn: $model.swipeOverTitleAdjusts)
         }
     }
 

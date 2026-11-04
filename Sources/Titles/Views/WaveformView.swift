@@ -514,8 +514,11 @@ final class WaveformNSView: NSView {
         let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
         let horizontal = abs(dx) > abs(dy)
 
-        // Two-finger horizontal swipe over the left/right half of a box adjusts start/end.
-        if event.hasPreciseScrollingDeltas, horizontal, event.momentumPhase.isEmpty {
+        // Optional (off by default): a trackpad two-finger horizontal swipe over the
+        // left/right half of a box adjusts start/end. Mice, wheels and trackballs never
+        // do this (they have no gesture phase), so scrolling can't change a title.
+        let isTrackpadGesture = event.hasPreciseScrollingDeltas && !event.phase.isEmpty
+        if model.swipeOverTitleAdjusts, isTrackpadGesture, horizontal, event.momentumPhase.isEmpty {
             let p = convert(event.locationInWindow, from: nil)
             if let box = boxRects.first(where: { $0.rect.contains(p) }) {
                 if event.phase == .began { swipeAccumulator = 0 }

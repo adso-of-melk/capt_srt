@@ -59,7 +59,18 @@ struct TitleBar: View {
 
             Spacer(minLength: 8)
 
-            if let msg = model.statusMessage {
+            if let name = model.loadingName {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    ConsoleLabel(text: model.isDownloadingFromICloud ? "Downloading from iCloud" : "Opening",
+                                 color: Theme.teal, size: 9)
+                    Text(name)
+                        .font(Theme.label(11, .medium))
+                        .foregroundStyle(Theme.textDim)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            } else if let msg = model.statusMessage {
                 Text(msg)
                     .font(Theme.label(11, .medium))
                     .foregroundStyle(Theme.peach)

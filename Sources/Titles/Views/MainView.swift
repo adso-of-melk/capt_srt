@@ -27,13 +27,9 @@ struct MainView: View {
         .preferredColorScheme(.dark)
         .tint(Theme.amber)
         .navigationTitle(model.windowTitle)
-        .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
-            for provider in providers {
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    if let url { Task { @MainActor in model.handleDrop([url]) } }
-                }
-            }
-            return true
+        .dropDestination(for: URL.self) { urls, _ in
+            model.handleDrop(urls)
+            return !urls.isEmpty
         }
         .sheet(isPresented: $model.showURLSheet) {
             OpenURLSheet(text: $urlText) { string in

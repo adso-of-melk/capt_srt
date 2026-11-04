@@ -19,7 +19,9 @@ Or, from Terminal in this folder: `swift run -c release`.
 | Subtitles in | SRT, WebVTT. Encoding is detected (UTF-8, UTF-16, Windows-1252, Latin-1). |
 | Subtitles out | SRT (⌘S), WebVTT (⇧⌘E). Always written as UTF-8. |
 
-You can also drop a video and/or an `.srt` file onto the window.
+You can also drop a video and/or an `.srt` file onto the window. Files that are only in iCloud Drive download automatically first, with progress shown in the title bar. Anything that can't be opened shows an alert explaining why.
+
+When playback stops, the title under the playhead becomes the selected title.
 
 ## Controls
 
@@ -41,10 +43,10 @@ You can also drop a video and/or an `.srt` file onto the window.
 | Cancel a jog (while still holding) | Esc | Esc |
 | Nudge 1 frame (Shift: 10) | Control + [ / ] | Option + [ / ] |
 | Wheel or two-finger swipe: 1 frame per notch (Shift: 10) | Control + wheel | Option + wheel |
-| Two-finger swipe over a box, no key | left half of the box | right half of the box |
+| Two-finger trackpad swipe over a box, no key (off by default; turn on under Title ▸ Trackpad Swipe Over a Title Adjusts Its Edges) | left half of the box | right half of the box |
 | Mouse drag | box's left edge | box's right edge |
 
-Dragging the body of a box moves the whole title. After a change, the start preview plays from 1 s before to 1 s after the start, and the end preview plays from 1 s before to 0.5 s after the end. Jogs and nudges stop at the neighbouring title, keeping a 2-frame gap. Mouse drags can overlap a neighbour; overlapping titles turn lilac and are drawn one slightly higher and one slightly lower.
+Dragging the body of a box moves the whole title. After adjusting either edge, the whole title plays, from 1 s before its start to just after its end. A plain scroll wheel, trackball or Shift+scroll only pans the waveform and never changes a title. Jogs and nudges stop at the neighbouring title, keeping a 2-frame gap. Mouse drags can overlap a neighbour; overlapping titles turn lilac and are drawn one slightly higher and one slightly lower.
 
 **Navigation**
 
@@ -53,7 +55,8 @@ Dragging the body of a box moves the whole title. After a change, the start prev
 | Space | Play / pause |
 | ← / → | Step one frame back / forward (Shift: one second) |
 | ↑ / ↓ while paused | Select the previous / next title and jump to it |
-| Return | Edit the selected card's text |
+| Return, or just start typing | Edit the selected card's text (cursor at the end) |
+| Click a card | Select it and edit its text, with the cursor at the end |
 | Esc | Leave text editing |
 | ⌫ (when not typing) | Delete the selected title |
 | ⌘Z / ⇧⌘Z | Undo / redo |

@@ -2,6 +2,17 @@ import AVFoundation
 import AVKit
 import AppKit
 
+enum EngineError: LocalizedError {
+    case unsupported(String)
+    var errorDescription: String? {
+        switch self {
+        case .unsupported(let ext):
+            let kind = ext.isEmpty ? "This video" : "This \(ext) file"
+            return "\(kind) can't be played yet. Build 1 plays MP4, MOV and M4V (H.264, HEVC, ProRes). MKV, WebM and AVI arrive with the next video engine."
+        }
+    }
+}
+
 /// AVFoundation-backed engine: MP4, MOV and M4V with H.264, HEVC or ProRes, plus HTTPS and HLS.
 @MainActor
 final class AVFoundationEngine: NSObject, PlaybackEngine {
@@ -49,6 +60,8 @@ final class AVFoundationEngine: NSObject, PlaybackEngine {
     func load(url: URL) async throws {
         pause()
         let asset = AVURLAsset(url: url)
+        let playable = try await asset.load(.isPlayable)
+        guard playable else { throw EngineError.unsupported(url.pathExtension.uppercased()) }
         let dur = try await asset.load(.duration)
         duration = dur.seconds.isFinite ? dur.seconds : 0
         let videoTracks = try await asset.loadTracks(withMediaType: .video)

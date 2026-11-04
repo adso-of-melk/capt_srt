@@ -24,8 +24,17 @@ struct VideoPane: View {
                     EngineSurface(engine: model.engine)
                 } else {
                     VStack(spacing: 10) {
-                        ConsoleLabel(text: "Awaiting picture", color: Theme.periwinkle, size: 12)
-                        Text("Drop a video here or press ⌘O")
+                        Group {
+                        if let name = model.loadingName {
+                            ProgressView().controlSize(.small)
+                            ConsoleLabel(text: model.isDownloadingFromICloud ? "Downloading from iCloud" : "Opening",
+                                         color: Theme.teal, size: 12)
+                            Text(name)
+                        } else {
+                            ConsoleLabel(text: "Awaiting picture", color: Theme.periwinkle, size: 12)
+                            Text("Drop a video here or press ⌘O")
+                        }
+                        }
                             .font(Theme.label(13, .regular))
                             .foregroundStyle(Theme.textDim)
                     }
