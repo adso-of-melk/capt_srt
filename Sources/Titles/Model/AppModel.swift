@@ -10,6 +10,24 @@ final class PlayheadClock: ObservableObject {
     @Published var isPlaying = false
 }
 
+/// A film opened before, shown on the home screen. URLs are stored as strings so links work too.
+struct RecentFilm: Codable, Identifiable, Equatable {
+    var video: String
+    var subtitles: String?
+    var opened: Date
+
+    var id: String { video }
+    var videoURL: URL? { URL(string: video) }
+    var subtitleURL: URL? { subtitles.flatMap(URL.init(string:)) }
+    var name: String { videoURL?.deletingPathExtension().lastPathComponent ?? video }
+}
+
+enum ExportFormat: String, CaseIterable {
+    case srt, vtt
+    var title: String { self == .srt ? "SubRip (.srt)" : "WebVTT (.vtt)" }
+    var type: UTType { UTType(filenameExtension: rawValue) ?? .plainText }
+}
+
 enum SpotMode: String, CaseIterable, Identifiable {
     case hold = "Hold"
     case tap = "Tap"
@@ -55,6 +73,10 @@ final class AppModel: ObservableObject {
     @Published var focusRequest: UUID?
     @Published var statusMessage: String?
     @Published var showURLSheet = false
+    /// The start screen for choosing a film. Shown at launch and after Back to Home.
+    @Published var showHome = true
+    @Published private(set) var recents: [RecentFilm] = []
+    private var pendingSubtitles: URL?
 
     private(set) var spottingID: UUID?
     private var nudgeCommit: Task<Void, Never>?
@@ -68,6 +90,8 @@ final class AppModel: ObservableObject {
         if let mode = defaults.string(forKey: "spotMode").flatMap(SpotMode.init(rawValue:)) { spotMode = mode }
         if defaults.object(forKey: "jogSpeed") != nil { jogSpeed = defaults.double(forKey: "jogSpeed") }
         if defaults.object(forKey: "reactionOffset") != nil { reactionOffset = defaults.double(forKey: "reactionOffset") }
+        if let data = defaults.data(forKey: "recentFilms"),
+           let list = try? JSONDecoder().decode([RecentFilm].self, from: data) { recents = list }
         engine.onTimeChange = { [weak self] t in self?.tick(t) }
         engine.onPlayStateChange = { [weak self] playing in
             guard let self else { return }
@@ -117,11 +141,101 @@ final class AppModel: ObservableObject {
                 videoURL = url
                 clock.time = 0
                 audio.load(url: url)
+                showHome = false
+                if let subs = pendingSubtitles {
+                    pendingSubtitles = nil
+                    openSubtitles(subs)
+                }
+                rememberFilm()
                 if !url.isFileURL { flash("Streaming: the waveform appears once the audio has been read.") }
             } catch {
+                pendingSubtitles = nil
                 showError("Couldn't open \(url.lastPathComponent)", error.localizedDescription)
             }
         }
+    }
+
+    // MARK: Home screen and recent films
+
+    /// Asks to save unsaved changes, then closes the film and shows the home screen.
+    func goHome() {
+        guard !showHome, confirmDiscardChanges() else { return }
+        closeFilm()
+        showHome = true
+    }
+
+    func openRecent(_ film: RecentFilm) {
+        guard let url = film.videoURL else { return }
+        if url.isFileURL && !FileManager.default.fileExists(atPath: url.path) {
+            removeRecent(film)
+            showError("Can't find \(url.lastPathComponent)",
+                      "It may have been moved, renamed or deleted, so it has been taken off the list. Open it again with ⌘O.")
+            return
+        }
+        if let subs = film.subtitleURL, !subs.isFileURL || FileManager.default.fileExists(atPath: subs.path) {
+            pendingSubtitles = subs
+        }
+        openVideo(url)
+    }
+
+    func removeRecent(_ film: RecentFilm) {
+        recents.removeAll { $0.id == film.id }
+        storeRecents()
+    }
+
+    /// Records the open video, and its subtitle file once there is one.
+    private func rememberFilm() {
+        guard let video = videoURL else { return }
+        let key = video.absoluteString
+        var entry = recents.first { $0.video == key } ?? RecentFilm(video: key, subtitles: nil, opened: Date())
+        if let subs = subtitleURL { entry.subtitles = subs.absoluteString }
+        entry.opened = Date()
+        recents.removeAll { $0.video == key }
+        recents.insert(entry, at: 0)
+        if recents.count > 12 { recents.removeLast(recents.count - 12) }
+        storeRecents()
+    }
+
+    private func storeRecents() {
+        if let data = try? JSONEncoder().encode(recents) {
+            UserDefaults.standard.set(data, forKey: "recentFilms")
+        }
+    }
+
+    /// true when it's fine to throw the current titles away.
+    private func confirmDiscardChanges() -> Bool {
+        guard doc.isDirty else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Save changes to \(suggestedName(ext: "srt"))?"
+        alert.informativeText = "Your changes will be lost if you don't save them."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Don't Save")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            save()
+            return !doc.isDirty   // false if the save panel was cancelled
+        case .alertSecondButtonReturn:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func closeFilm() {
+        finishSpotting()
+        previewUntil = nil
+        focusRequest = nil
+        mainWindow?.makeFirstResponder(nil)
+        engine.unload()
+        clock.isPlaying = false
+        clock.time = 0
+        audio.clear()
+        doc.replaceAll([])
+        doc.selectedID = nil
+        videoURL = nil
+        subtitleURL = nil
+        pendingSubtitles = nil
     }
 
     // MARK: iCloud and errors
@@ -215,6 +329,7 @@ final class AppModel: ObservableObject {
             let subs = try SubtitleFormats.read(url: url)
             doc.replaceAll(subs)
             subtitleURL = url.pathExtension.lowercased() == "srt" ? url : nil
+            rememberFilm()
             flash("Loaded \(subs.count) titles from \(url.lastPathComponent)")
         } catch {
             showError("Couldn't read \(url.lastPathComponent)", error.localizedDescription)
@@ -237,17 +352,41 @@ final class AppModel: ObservableObject {
         panel.allowedContentTypes = [UTType(filenameExtension: "srt") ?? .plainText]
         panel.nameFieldStringValue = suggestedName(ext: "srt")
         if panel.runModal() == .OK, let url = panel.url {
-            if write(SubtitleFormats.srt(doc.subtitles), to: url) { subtitleURL = url }
+            if write(SubtitleFormats.srt(doc.subtitles), to: url) {
+                subtitleURL = url
+                rememberFilm()
+            }
         }
     }
 
-    func exportVTT() {
+    /// File ▸ Export…: a save panel with a Format menu. Exporting doesn't change the file ⌘S saves to.
+    func export() {
+        let defaults = UserDefaults.standard
+        let initial = defaults.string(forKey: "exportFormat").flatMap(ExportFormat.init(rawValue:)) ?? .srt
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "vtt") ?? .plainText]
-        panel.nameFieldStringValue = suggestedName(ext: "vtt")
-        if panel.runModal() == .OK, let url = panel.url {
-            _ = write(SubtitleFormats.vtt(doc.subtitles), to: url, markSaved: false)
-        }
+        panel.title = "Export Subtitles"
+        panel.prompt = "Export"
+        panel.allowedContentTypes = [initial.type]
+        panel.nameFieldStringValue = suggestedName(ext: initial.rawValue)
+
+        let switcher = ExportFormatSwitcher(panel: panel)
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        ExportFormat.allCases.forEach { popup.addItem(withTitle: $0.title) }
+        popup.selectItem(at: ExportFormat.allCases.firstIndex(of: initial) ?? 0)
+        popup.target = switcher
+        popup.action = #selector(ExportFormatSwitcher.formatChanged(_:))
+        let stack = NSStackView(views: [NSTextField(labelWithString: "Format:"), popup])
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 10, left: 20, bottom: 10, right: 20)
+        stack.setFrameSize(stack.fittingSize)
+        panel.accessoryView = stack
+
+        let response = withExtendedLifetime(switcher) { panel.runModal() }
+        guard response == .OK, let url = panel.url else { return }
+        let format = ExportFormat.allCases[max(0, popup.indexOfSelectedItem)]
+        defaults.set(format.rawValue, forKey: "exportFormat")
+        let text = format == .srt ? SubtitleFormats.srt(doc.subtitles) : SubtitleFormats.vtt(doc.subtitles)
+        write(text, to: url, markSaved: false)
     }
 
     private func suggestedName(ext: String) -> String {
@@ -532,4 +671,19 @@ final class AppModel: ObservableObject {
     }
 
     var isSpotting: Bool { spottingID != nil }
+}
+
+/// Keeps the export panel's file type and extension in step with its Format menu.
+@MainActor
+final class ExportFormatSwitcher: NSObject {
+    private weak var panel: NSSavePanel?
+    init(panel: NSSavePanel) { self.panel = panel }
+
+    @objc func formatChanged(_ sender: NSPopUpButton) {
+        guard let panel, ExportFormat.allCases.indices.contains(sender.indexOfSelectedItem) else { return }
+        let format = ExportFormat.allCases[sender.indexOfSelectedItem]
+        panel.allowedContentTypes = [format.type]
+        let base = (panel.nameFieldStringValue as NSString).deletingPathExtension
+        panel.nameFieldStringValue = "\(base).\(format.rawValue)"
+    }
 }

@@ -54,14 +54,21 @@ struct TitlesCommands: Commands {
                 .keyboardShortcut("o", modifiers: [.command, .option])
             Button("Open Subtitles…") { model.openSubtitlesPanel() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
+            Divider()
+            Button("Back to Home") { model.goHome() }
+                .keyboardShortcut("h", modifiers: [.command, .shift])
+                .disabled(model.showHome)
         }
         CommandGroup(replacing: .saveItem) {
-            Button("Save") { model.save() }
-                .keyboardShortcut("s")
-            Button("Save As…") { model.saveAs() }
-                .keyboardShortcut("s", modifiers: [.command, .shift])
-            Button("Export WebVTT…") { model.exportVTT() }
-                .keyboardShortcut("e", modifiers: [.command, .shift])
+            Group {
+                Button("Save") { model.save() }
+                    .keyboardShortcut("s")
+                Button("Save As…") { model.saveAs() }
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
+                Button("Export…") { model.export() }
+                    .keyboardShortcut("e", modifiers: [.command, .shift])
+            }
+            .disabled(model.showHome)
         }
         CommandGroup(replacing: .undoRedo) {
             Button("Undo") { model.doc.undo() }

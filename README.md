@@ -17,7 +17,9 @@ Or, from Terminal in this folder: `swift run -c release`.
 | --- | --- |
 | Video in | MP4, MOV, M4V (H.264, HEVC, ProRes), plus https links and HLS streams via ⌥⌘O. MKV, WebM and AVI come with the libmpv engine in build 2. |
 | Subtitles in | SRT, WebVTT. Encoding is detected (UTF-8, UTF-16, Windows-1252, Latin-1). |
-| Subtitles out | SRT (⌘S), WebVTT (⇧⌘E). Always written as UTF-8. |
+| Subtitles out | Save writes SRT (⌘S). File ▸ Export… (⇧⌘E) asks for the format: SRT or WebVTT. Always written as UTF-8. |
+
+The app opens on a home screen listing recent films with their subtitle files; click one to carry on where you left off. **Home** at the left of the title bar (or File ▸ Back to Home, ⇧⌘H) closes the film, asking to save changes first, and goes back there.
 
 You can also drop a video and/or an `.srt` file onto the window. Files that are only in iCloud Drive download automatically first, with progress shown in the title bar. Anything that can't be opened shows an alert explaining why.
 

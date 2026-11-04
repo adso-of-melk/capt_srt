@@ -9,6 +9,33 @@ struct MainView: View {
     @State private var urlText = ""
 
     var body: some View {
+        Group {
+            if model.showHome {
+                HomeView(model: model)
+            } else {
+                editor
+            }
+        }
+        .background(Theme.background)
+        .background(WindowAccessor { model.mainWindow = $0 })
+        .preferredColorScheme(.dark)
+        .tint(Theme.amber)
+        .navigationTitle(model.showHome ? "Titles" : model.windowTitle)
+        .dropDestination(for: URL.self) { urls, _ in
+            model.handleDrop(urls)
+            return !urls.isEmpty
+        }
+        .sheet(isPresented: $model.showURLSheet) {
+            OpenURLSheet(text: $urlText) { string in
+                model.showURLSheet = false
+                model.openURLString(string)
+            } cancel: {
+                model.showURLSheet = false
+            }
+        }
+    }
+
+    private var editor: some View {
         HSplitView {
             CardPane(model: model, doc: doc)
                 .frame(minWidth: 320, idealWidth: 400, maxWidth: 520)
@@ -23,23 +50,6 @@ struct MainView: View {
                 .frame(minHeight: 170, idealHeight: 240)
             }
             .frame(minWidth: 560)
-        }
-        .background(Theme.background)
-        .background(WindowAccessor { model.mainWindow = $0 })
-        .preferredColorScheme(.dark)
-        .tint(Theme.amber)
-        .navigationTitle(model.windowTitle)
-        .dropDestination(for: URL.self) { urls, _ in
-            model.handleDrop(urls)
-            return !urls.isEmpty
-        }
-        .sheet(isPresented: $model.showURLSheet) {
-            OpenURLSheet(text: $urlText) { string in
-                model.showURLSheet = false
-                model.openURLString(string)
-            } cancel: {
-                model.showURLSheet = false
-            }
         }
     }
 }

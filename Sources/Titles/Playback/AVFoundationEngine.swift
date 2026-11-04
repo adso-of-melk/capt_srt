@@ -75,6 +75,16 @@ final class AVFoundationEngine: NSObject, PlaybackEngine {
         onTimeChange?(0)
     }
 
+    func unload() {
+        pause()
+        stopAt = nil
+        player.replaceCurrentItem(with: nil)
+        duration = 0
+        frameRate = 25
+        hasVideo = false
+        onTimeChange?(0)
+    }
+
     func play() {
         stopAt = nil
         player.rate = playRate

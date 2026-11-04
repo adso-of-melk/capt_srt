@@ -56,6 +56,8 @@ final class InputController {
             if jogEdge != nil { endJog(commit: true) }
             return e
         }
+        // The home screen has no titles to edit.
+        if model.showHome { return e }
         let flags = e.modifierFlags.intersection([.shift, .control, .option, .command])
 
         switch e.type {
