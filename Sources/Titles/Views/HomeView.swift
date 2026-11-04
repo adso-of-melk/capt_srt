@@ -14,8 +14,8 @@ struct HomeView: View {
                         Capsule().fill(Theme.periwinkle).frame(width: 18, height: 16)
                     }
                     Text("KPTN.SRT")
-                        .font(Theme.label(44, .heavy))
-                        .tracking(8)
+                        .font(Theme.label(38, .heavy))
+                        .tracking(5)
                         .foregroundStyle(Theme.peach)
                     ConsoleLabel(text: "Subtitle editor", color: Theme.textDim, size: 11)
                 }
