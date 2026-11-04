@@ -36,7 +36,8 @@ When playback stops, the title under the playhead becomes the selected title.
 | Draw a title | Drag across empty waveform. Its card opens for typing straight away. Drag again to make the next one. |
 | Live spotting, Hold mode (default) | While the video plays, hold **↓** while a line is spoken. Key down sets the start and key up sets the end. |
 | Live spotting, Tap mode | **↓** ends the current title and starts the next. **↑** ends the current title and leaves a gap. |
-| Reaction offset | 250 ms is subtracted from every spotting key press. |
+| Spotting offsets | A title starts exactly where you press ↓, and ends 250 ms before you release it. Both can be changed in Settings (⌘,). |
+| Split a title | Hold ⌘ over a box (the cursor turns into scissors) and click where it should split, or press ⌘B to split the title under the playhead. A gap of the preset's minimum (2 frames) is left, half on each side, and the text is divided at the nearest line break or word. |
 
 **Fine-tuning**
 
@@ -56,14 +57,14 @@ Dragging the body of a box moves the whole title. After adjusting either edge, t
 
 | Key | Action |
 | --- | --- |
-| Shift+Space | Play / pause, from anywhere, even while typing (plain Space also works when not typing) |
+| Shift+Space | Play / pause, from anywhere, even while typing (Space alone only types) |
 | Tab / Shift+Tab | Next / previous title. The playhead jumps to it, and editing carries over if you were typing |
 | ← / → | Step one frame back / forward (Shift: one second) |
 | ↑ / ↓ while paused | Select the previous / next title and jump to it |
 | Return, or just start typing | Edit the selected card's text (cursor at the end) |
 
 During playback, the last title the playhead reached stays highlighted, and the card list scrolls to keep it centred. Starting playback leaves text editing.
-| Click a card | Select it and edit its text, with the cursor at the end |
+| Click a card | Select it, move the playhead to its start, and edit its text with the cursor at the end |
 | Esc | Leave text editing |
 | ⌫ (when not typing) | Delete the selected title |
 | ⌘Z / ⇧⌘Z | Undo / redo |
@@ -95,4 +96,4 @@ Sources/Titles/
 - Only the formats AVFoundation supports will play (see above).
 - It runs as a Swift package, so it isn't sandboxed and isn't packaged for the App Store yet.
 - Audio is decoded to 16 kHz mono in memory, about 230 MB for a 2-hour film.
-- Settings (preset, spotting mode, offset) aren't saved between launches yet.
+- The timing preset isn't saved between launches yet.
