@@ -48,7 +48,7 @@ struct MainView: View {
             } else {
                 HSplitView {
                     CardPane(model: model, doc: doc)
-                        .frame(minWidth: 340, idealWidth: 460, maxWidth: .infinity)
+                        .frame(minWidth: 340, idealWidth: 360, maxWidth: .infinity)
 
                     VSplitView {
                         VideoPane(model: model, doc: doc, clock: model.clock)
@@ -61,8 +61,30 @@ struct MainView: View {
                     }
                     .frame(minWidth: 620)
                 }
+                .onAppear { sizeCardPane() }
             }
         }
+        .onChange(of: model.project?.id) { _, _ in sizeCardPane() }
+    }
+
+    /// Opens the card pane at a quarter of the window (at least its minimum width). Drag the
+    /// divider to widen it for more languages.
+    private func sizeCardPane() {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            guard let window = model.mainWindow, let content = window.contentView,
+                  let split = Self.firstSideBySideSplit(in: content) else { return }
+            let width = max(340, (split.bounds.width * 0.25).rounded())
+            split.setPosition(width, ofDividerAt: 0)
+        }
+    }
+
+    private static func firstSideBySideSplit(in view: NSView) -> NSSplitView? {
+        if let split = view as? NSSplitView, split.isVertical, split.subviews.count >= 2 { return split }
+        for sub in view.subviews {
+            if let found = firstSideBySideSplit(in: sub) { return found }
+        }
+        return nil
     }
 
     /// Opens the window wide enough that no label in the title bar or headers wraps.

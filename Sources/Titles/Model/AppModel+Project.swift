@@ -186,11 +186,15 @@ extension AppModel {
             guard let track = video?.track(id), track.doc.canUndo else { continue }
             if video?.openTrackIDs.contains(id) == false { video?.openTrackIDs.append(id) }
             if focusedTrack?.id != id { focusTrack(id, edit: false) }
+            let before = track.doc.subtitles
             track.doc.undo()
             redoOrder.append(id)
+            revealChange(before: before, after: track.doc.subtitles)
             return
         }
+        let before = doc.subtitles
         doc.undo()
+        revealChange(before: before, after: doc.subtitles)
     }
 
     func redo() {
@@ -199,11 +203,37 @@ extension AppModel {
             guard let track = video?.track(id), track.doc.canRedo else { continue }
             if video?.openTrackIDs.contains(id) == false { video?.openTrackIDs.append(id) }
             if focusedTrack?.id != id { focusTrack(id, edit: false) }
+            let before = track.doc.subtitles
             track.doc.redo()
             undoOrder.append(id)
+            revealChange(before: before, after: track.doc.subtitles)
             return
         }
+        let before = doc.subtitles
         doc.redo()
+        revealChange(before: before, after: doc.subtitles)
+    }
+
+    /// After undo or redo (while paused): take the playhead to what changed, so you see what
+    /// the undo did. A title that came back or was retimed is selected at its start; when a
+    /// title was removed, the playhead parks half a second before where it began.
+    private func revealChange(before: [Subtitle], after: [Subtitle]) {
+        guard !clock.isPlaying, hasMedia else { return }
+        let old = Dictionary(before.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let new = Dictionary(after.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let touched = after.filter { old[$0.id] != $0 }
+        let removed = before.filter { new[$0.id] == nil }
+        if let first = touched.min(by: { $0.start < $1.start }),
+           removed.allSatisfy({ $0.start >= first.start - 0.001 }) {
+            doc.selectedID = first.id
+            seek(first.start)
+            cardScrollTarget = first.id
+        } else if let gone = removed.min(by: { $0.start < $1.start }) {
+            let t = max(0, gone.start - 0.5)
+            doc.selectedID = nil
+            seek(t)
+            cardScrollTarget = after.last(where: { $0.start <= gone.start })?.id ?? after.first?.id
+        }
     }
 
     // MARK: Creating and opening projects
@@ -800,5 +830,30 @@ extension AppModel {
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
         return alert.runModal() == .alertFirstButtonReturn ? field.stringValue.trimmingCharacters(in: .whitespaces) : nil
+    }
+}
+
+// MARK: Line breaks
+
+extension AppModel {
+    /// After typing in a card: if the title is too long for one line and has no line break
+    /// of yours, break it by the style-guide rules. Your own breaks are never touched.
+    func autoBreak(_ id: UUID) {
+        guard autoLineBreaks, let track = video?.tracks.first(where: { $0.doc.subtitle(id) != nil }),
+              let sub = track.doc.subtitle(id), !sub.text.contains("\n") else { return }
+        let rules = preset(for: track)
+        guard sub.text.count > rules.maxCharsPerLine else { return }
+        let broken = LineBreaker.breakLines(sub.text, maxChars: rules.maxCharsPerLine,
+                                            maxLines: rules.maxLines, language: track.language.code)
+        if broken != sub.text { track.doc.setText(id, broken) }
+    }
+
+    /// Title ▸ Re-break Lines: re-breaks the selected title from scratch.
+    func rebreakSelected() {
+        guard let track = focusedTrack, let sub = doc.selected else { return }
+        let rules = preset(for: track)
+        let broken = LineBreaker.breakLines(sub.text, maxChars: rules.maxCharsPerLine,
+                                            maxLines: rules.maxLines, language: track.language.code)
+        if broken != sub.text { doc.setText(sub.id, broken) }
     }
 }

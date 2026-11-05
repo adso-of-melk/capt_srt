@@ -57,6 +57,10 @@ struct CardPane: View {
             }
         }
         .background(Theme.panel)
+        .onChange(of: focused) { old, new in
+            // Leaving a card: break its lines if it's too long for one.
+            if let old, old != new { model.autoBreak(old) }
+        }
         .onChange(of: model.focusRequest) { _, id in
             // Already focused by a click inside the field: leave the cursor where it was put.
             if focused == id { return }

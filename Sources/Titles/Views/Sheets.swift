@@ -76,6 +76,7 @@ struct NewProjectSheet: View {
                     .font(Theme.label(11, .regular)).foregroundStyle(Theme.textFaint)
                 Spacer()
                 Button("Cancel") { model.sheet = nil; model.newProjectVideo = nil }.keyboardShortcut(.cancelAction)
+                    .buttonStyle(ConsoleButtonStyle(secondary: true))
                 Button("Create Project") { create() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(ConsoleButtonStyle())
@@ -145,6 +146,7 @@ struct ProjectSettingsSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { model.sheet = nil }.keyboardShortcut(.cancelAction)
+                    .buttonStyle(ConsoleButtonStyle(secondary: true))
                 Button("Save") {
                     model.applySettings(settings, name: name)
                     model.sheet = nil
@@ -289,6 +291,7 @@ struct LanguageSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { model.sheet = nil; model.pendingImport = nil }.keyboardShortcut(.cancelAction)
+                    .buttonStyle(ConsoleButtonStyle(secondary: true))
                 Button(importURL == nil ? "Add Language" : "Import") {
                     model.sheet = nil
                     if let importURL {
@@ -360,6 +363,7 @@ struct ExportSheet: View {
                     .font(Theme.label(11, .regular)).foregroundStyle(Theme.textFaint)
                 Spacer()
                 Button("Cancel") { model.sheet = nil }.keyboardShortcut(.cancelAction)
+                    .buttonStyle(ConsoleButtonStyle(secondary: true))
                 Button("Export…") {
                     model.sheet = nil
                     let (a, v, f) = (allLanguages, allVideos, format)
@@ -395,6 +399,7 @@ struct OpenLinkSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { model.sheet = nil }.keyboardShortcut(.cancelAction)
+                    .buttonStyle(ConsoleButtonStyle(secondary: true))
                 Button("Add") { open() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(ConsoleButtonStyle())

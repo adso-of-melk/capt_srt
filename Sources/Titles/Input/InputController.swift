@@ -165,6 +165,12 @@ final class InputController {
         }
 
         if isEditingText {
+            // Return (or Shift+Return) is a line break inside the title, not "done".
+            if e.keyCode == Key.returnKey || e.keyCode == Key.enter, flags.subtracting(.shift).isEmpty,
+               let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
+                editor.insertNewlineIgnoringFieldEditor(nil)
+                return nil
+            }
             if e.keyCode == Key.escape {
                 model.focusRequest = nil
                 e.window?.makeFirstResponder(nil)

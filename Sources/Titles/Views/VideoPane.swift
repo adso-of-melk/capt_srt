@@ -60,6 +60,11 @@ struct VideoPane: View {
                     // A title with no text yet (or one being spotted): a clear glass placeholder.
                     GlassPlaceholder()
                         .frame(width: 280, height: 56)
+                        .overlay(alignment: .topTrailing) {
+                            if let timer = model.spotTimer() {
+                                SpotTimerPill(text: timer.text, status: timer.status).padding(6)
+                            }
+                        }
                         .padding(.bottom, 28)
                         .allowsHitTesting(false)
                 }

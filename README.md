@@ -34,7 +34,7 @@ Each video has a **master** language (★) and any number of others, shown side 
 - **⌘L / ⇧⌘L** move focus to the next / previous language (wrapping), and **⌘1–⌘9** jump to a column, even while typing. The focused language is the one you edit, in the cards and the waveform.
 - The waveform shows the other open languages as slim lanes above it. Click a lane to focus that language. The selected row is outlined in every lane.
 - **Text Only (⇧⌘T)** hides picture and waveform, leaving the columns and a slim transport.
-- Undo and redo (⌘Z / ⇧⌘Z) work across all languages in order.
+- Undo and redo (⌘Z / ⇧⌘Z) work across all languages in order. While paused, the playhead goes to what changed (half a second before a removed title).
 
 ## Supported files
 
@@ -56,6 +56,7 @@ When playback stops, the title under the playhead becomes the selected title.
 | --- | --- |
 | Draw a title | Drag across empty waveform. Its card opens for typing straight away. Drag again to make the next one. |
 | Live spotting, Hold mode (default) | While the video plays, hold **↓** while a line is spoken. Key down sets the start and key up sets the end. |
+| While spotting | A timer in the box's top right corner (and on the video) shows the length, coloured by the standard: amber while too short, periwinkle when fine, amber near the maximum, red over it. The card list scrolls to each new title. |
 | Live spotting, Tap mode | **↓** ends the current title and starts the next. **↑** ends the current title and leaves a gap. |
 | Spotting offsets | A title starts exactly where you press ↓ and ends exactly where you release it. Both can be offset in Settings (⌘,). |
 | Split a title | Hold ⌘ over a box (the cursor turns into scissors) and click where it should split, or press ⌘B to split the title under the playhead. A gap of the standard's minimum (2 frames) is left, half on each side, and the text is divided at the nearest line break or word. |
@@ -72,7 +73,7 @@ When playback stops, the title under the playhead becomes the selected title.
 | Two-finger trackpad swipe over a box, no key (off by default; turn on under Title ▸ Trackpad Swipe Over a Title Adjusts Its Edges) | left half of the box | right half of the box |
 | Mouse drag | box's left edge | box's right edge |
 
-Dragging the body of a box moves the whole title. After adjusting an edge, the whole title plays from 1 s before its start to just after its end; turn this off separately for jogs/nudges and for drag-resizes in the Title menu. A plain scroll wheel, trackball or Shift+scroll only pans the waveform and never changes a title. Jogs and nudges stop at the neighbouring title, keeping a 2-frame gap. Mouse drags can overlap a neighbour; overlapping titles turn lilac and are drawn one slightly higher and one slightly lower.
+Dragging the body of a box moves the whole title. After adjusting an edge, the whole title plays from 1 s before its start to just after its end; turn this off separately for jogs/nudges and for drag-resizes in the Title menu. A plain scroll wheel, trackball or Shift+scroll only pans the waveform and never changes a title. Jogs and nudges stop at the neighbouring title, keeping a 2-frame gap. Mouse drags stop at the minimum gap from a neighbour; drag about 12 px further and it gives, so titles can overlap; overlapping titles turn lilac and are drawn one slightly higher and one slightly lower.
 
 **Navigation**
 
@@ -83,6 +84,8 @@ Dragging the body of a box moves the whole title. After adjusting an edge, the w
 | ← / → | Step one frame back / forward (Shift: one second) |
 | ↑ / ↓ while paused | Select the previous / next title and jump to it |
 | Return, or just start typing | Edit the selected card's text (cursor at the end), or fill a selected empty slot |
+| Return while typing | New line in the title (Esc or Tab leaves the card) |
+| ⌥⌘B | Re-break the selected title's lines |
 | ⌘L / ⇧⌘L, ⌘1–9 | Focus the next / previous language, or column 1–9 |
 | Click a card | Select it, move the playhead to its start, and edit its text with the cursor at the end |
 | Esc | Leave text editing |
@@ -92,11 +95,13 @@ Dragging the body of a box moves the whole title. After adjusting an edge, the w
 | ⌘ + scroll, or pinch | Zoom the waveform |
 | Click the ruler | Seek |
 | Right-click a box | Play, edit text, delete |
-| Double-click a card's number | Play that title |
+| Double-click a card's or box's number | Play that title |
 
 During playback, the last title the playhead reached stays highlighted, and the card list scrolls to keep it centred. Starting playback leaves text editing.
 
 **Settings (⌘,).** Jog speed (how fast Control/Option + mouse moves an edge), spotting mode, reaction offsets, the trackpad swipe option and the two replay options.
+
+**Line breaks.** With Title ▸ Break Long Lines Automatically (on by default), a title too long for one line is broken when you leave its card, following the Netflix and BBC guides: break after punctuation or before a conjunction or preposition, never after an article, pronoun, auxiliary or preposition, keep names together, and prefer a shorter top line. English and Croatian (also Bosnian and Serbian) have word lists; other languages break at punctuation and for balance. Titles with your own line breaks are left alone.
 
 **Waveform display.** Boxes show the full text of each title, wrapped to fit. The **Scale** slider makes quiet passages larger. The **dB** toggle shows loudness in decibels, so whispers stay visible next to loud sounds.
 

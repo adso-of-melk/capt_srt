@@ -61,6 +61,8 @@ final class WaveformNSView: NSView {
     private let rulerHeight: CGFloat = 20
     private let edgeGrab: CGFloat = 6
     private var boxRects: [(id: UUID, rect: CGRect)] = []
+    /// Number pills, for double-click-to-play.
+    private var numberPills: [(id: UUID, rect: CGRect)] = []
     /// Boxes of the other open languages, in their slim lanes under the waveform.
     private var laneBoxes: [(track: UUID, id: UUID, rect: CGRect)] = []
     private var laneRects: [(track: UUID, rect: CGRect)] = []
@@ -74,6 +76,13 @@ final class WaveformNSView: NSView {
         case resizing(id: UUID, edge: Edge)
     }
     private var drag: Drag = .none
+
+    // Resistance: while dragging, a title stops at the minimum gap from its neighbours.
+    // Drag about 12 px further and it gives, letting the titles overlap.
+    private var barrierLower: Double?
+    private var barrierUpper: Double?
+    private var holdingLower = false, holdingUpper = false
+    private var brokeLower = false, brokeUpper = false
     private var downPoint: CGPoint = .zero
     private var didDrag = false
     private var swipeAccumulator: CGFloat = 0
@@ -277,6 +286,7 @@ final class WaveformNSView: NSView {
         let laneShift = rect.height * 0.11
 
         boxRects.removeAll(keepingCapacity: true)
+        numberPills.removeAll(keepingCapacity: true)
         var selectedRect: CGRect?
 
         for (index, s) in subs.enumerated() where (model.liveSpotEnd(for: s.id) ?? s.end) >= viewStart && s.start <= viewEnd {
@@ -303,6 +313,7 @@ final class WaveformNSView: NSView {
             let font = labelFont(11)
             let numWidth = (numberText as NSString).size(withAttributes: [.font: font]).width + 10
             let pill = CGRect(x: r.minX + 4, y: r.minY + 4, width: numWidth, height: 15)
+            numberPills.append((s.id, pill.intersection(r)))
             (isSel ? Palette.amber : base).setFill()
             NSBezierPath(roundedRect: pill, xRadius: 7.5, yRadius: 7.5).fill()
             drawText(numberText, at: CGPoint(x: pill.minX + 5, y: pill.minY + 1), font: font, color: Palette.background)
@@ -312,6 +323,17 @@ final class WaveformNSView: NSView {
             let textRect = besidePill
                 ? CGRect(x: pill.maxX + 5, y: r.minY + 3, width: r.maxX - pill.maxX - 9, height: r.height - 6)
                 : CGRect(x: r.minX + 4, y: pill.maxY + 2, width: r.width - 8, height: r.maxY - pill.maxY - 4)
+            // Spotting: a running timer in the top right corner.
+            if s.id == model.spottingID, let timer = model.spotTimer() {
+                let tf = monoFont(10)
+                let tw = (timer.text as NSString).size(withAttributes: [.font: tf]).width + 12
+                let tr = CGRect(x: r.maxX - tw - 4, y: r.minY + 4, width: tw, height: 15)
+                if tr.minX > pill.maxX + 2 {
+                    timer.status.nsColor.setFill()
+                    NSBezierPath(roundedRect: tr, xRadius: 7.5, yRadius: 7.5).fill()
+                    drawText(timer.text, at: CGPoint(x: tr.minX + 6, y: tr.minY + 1), font: tf, color: Palette.background)
+                }
+            }
             if !fullText.isEmpty, textRect.width > 6, textRect.height > 8 {
                 let para = NSMutableParagraphStyle()
                 para.lineBreakMode = .byWordWrapping
@@ -495,6 +517,15 @@ final class WaveformNSView: NSView {
             return
         }
 
+        // Double-click a box's number: play that title.
+        if event.clickCount == 2, let pill = numberPills.last(where: { $0.rect.insetBy(dx: -2, dy: -2).contains(p) }) {
+            if case .moving = drag { model.doc.cancelLive() }
+            drag = .none
+            model.playTitle(pill.id)
+            needsDisplay = true
+            return
+        }
+
         // A locked language keeps the master's timing: clicks only select and seek.
         if model.focusedIsLocked {
             drag = .none
@@ -522,6 +553,8 @@ final class WaveformNSView: NSView {
             }
         }
 
+        if case let .edge(id, _) = hit(p) { setBarriers(around: id, model: model) }
+        if case let .body(id) = hit(p) { setBarriers(around: id, model: model) }
         switch hit(p) {
         case let .edge(id, edge):
             model.select(id)
@@ -562,11 +595,13 @@ final class WaveformNSView: NSView {
         case let .creating(t0, _):
             drag = .creating(t0: t0, t1: t(p.x))
         case let .moving(id, grab, length):
-            let start = max(0, t(p.x) - grab)
+            var start = stick(max(0, t(p.x) - grab), lower: true)
+            start = stick(start + length, lower: false) - length
             model.doc.liveUpdate(id) { $0.start = start; $0.end = start + length }
             model.engine.seek(to: start, exact: true)
         case let .resizing(id, edge):
-            if let value = model.moveEdge(edge, of: id, to: t(p.x), clamp: false) {
+            let target = stick(t(p.x), lower: edge == .start)
+            if let value = model.moveEdge(edge, of: id, to: target, clamp: false) {
                 model.scrubTo(value)
             }
         }
@@ -598,6 +633,44 @@ final class WaveformNSView: NSView {
             model.doc.commitLive()
             if didDrag { model.preview(edge, of: id, after: .resize) }
         }
+    }
+
+    /// Notes where the neighbours are (minus the minimum gap) when a drag starts.
+    private func setBarriers(around id: UUID, model: AppModel) {
+        holdingLower = false; holdingUpper = false
+        brokeLower = false; brokeUpper = false
+        barrierLower = nil; barrierUpper = nil
+        guard let s = model.doc.subtitle(id) else { return }
+        let gap = model.minGap
+        if let prev = model.doc.previous(of: id), prev.end <= s.start + 0.0005 {
+            barrierLower = min(s.start, prev.end + gap)
+        }
+        if let next = model.doc.next(of: id), next.start >= s.end - 0.0005 {
+            barrierUpper = max(s.end, next.start - gap)
+        }
+    }
+
+    /// Holds a dragged time at the barrier until it's pulled about 12 px past it.
+    private func stick(_ value: Double, lower: Bool) -> Double {
+        let breakDistance = 12.0 / Double(pps)
+        if lower {
+            guard let b = barrierLower, !brokeLower else { return value }
+            if value >= b { holdingLower = false; return value }
+            if b - value > breakDistance { brokeLower = true; tick(); return value }
+            if !holdingLower { holdingLower = true; tick() }
+            return b
+        } else {
+            guard let b = barrierUpper, !brokeUpper else { return value }
+            if value <= b { holdingUpper = false; return value }
+            if value - b > breakDistance { brokeUpper = true; tick(); return value }
+            if !holdingUpper { holdingUpper = true; tick() }
+            return b
+        }
+    }
+
+    /// A light trackpad tap (Force Touch trackpads only; nothing elsewhere).
+    private func tick() {
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
     }
 
     /// Scrolls the view when dragging past either side.

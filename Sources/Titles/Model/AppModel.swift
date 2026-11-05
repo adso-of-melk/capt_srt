@@ -89,6 +89,10 @@ final class AppModel: ObservableObject {
     @Published var textOnly = false {
         didSet { UserDefaults.standard.set(textOnly, forKey: "textOnly") }
     }
+    /// Break long titles into lines automatically (style-guide rules) when you leave a card.
+    @Published var autoLineBreaks = true {
+        didSet { UserDefaults.standard.set(autoLineBreaks, forKey: "autoLineBreaks") }
+    }
     @Published var replayAfterJog = true {
         didSet { UserDefaults.standard.set(replayAfterJog, forKey: "replayAfterJog") }
     }
@@ -120,6 +124,7 @@ final class AppModel: ObservableObject {
         if defaults.object(forKey: "textOnly") != nil { textOnly = defaults.bool(forKey: "textOnly") }
         if defaults.object(forKey: "replayAfterJog") != nil { replayAfterJog = defaults.bool(forKey: "replayAfterJog") }
         if defaults.object(forKey: "replayAfterResize") != nil { replayAfterResize = defaults.bool(forKey: "replayAfterResize") }
+        if defaults.object(forKey: "autoLineBreaks") != nil { autoLineBreaks = defaults.bool(forKey: "autoLineBreaks") }
         loadRecentProjects()
         doc.playheadTime = { [weak self] in self?.clock.time ?? 0 }
         engine.onTimeChange = { [weak self] t in self?.tick(t) }
@@ -642,6 +647,27 @@ final class AppModel: ObservableObject {
         doc.live { $0.append(s) }
         doc.selectedID = s.id
         spottingID = s.id
+        // Bring the new card into view once its row exists (rows rebuild just after).
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 60_000_000)
+            self?.cardScrollTarget = s.id
+        }
+    }
+
+    /// The running length of the title being spotted, and its colour by the standard's
+    /// duration limits: under the minimum, fine, nearing the maximum, over it.
+    func spotTimer() -> (text: String, status: SpotTimerStatus)? {
+        guard let id = spottingID, let s = doc.subtitle(id), let end = liveSpotEnd(for: id) else { return nil }
+        let d = max(0, end - s.start)
+        let ms = Int((d * 1000).rounded())
+        let text = String(format: "%02d:%03d", ms / 1000, ms % 1000)
+        let p = preset
+        let status: SpotTimerStatus
+        if d < p.minDuration { status = .short }
+        else if d > p.maxDuration { status = .over }
+        else if d > p.maxDuration * 0.85 { status = .near }
+        else { status = .ok }
+        return (text, status)
     }
 
     /// Hold mode: key up. Tap mode: "end, leave a gap".
@@ -744,3 +770,5 @@ final class ResumeOnce: @unchecked Sendable {
         return true
     }
 }
+
+enum SpotTimerStatus { case short, ok, near, over }

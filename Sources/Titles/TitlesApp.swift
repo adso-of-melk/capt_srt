@@ -130,8 +130,11 @@ struct TitlesCommands: Commands {
                 Button("Split at Playhead  (or ⌘-click a box)") { model.splitAtPlayhead() }
                     .keyboardShortcut("b")
                 Button("Delete Title  (⌫ when not typing)") { model.deleteSelected() }
+                Button("Re-break Lines") { model.rebreakSelected() }
+                    .keyboardShortcut("b", modifiers: [.command, .option])
             }
             .disabled(noProject)
+            Toggle("Break Long Lines Automatically", isOn: $model.autoLineBreaks)
             Divider()
             Toggle("Replay Title After Jog or Nudge", isOn: $model.replayAfterJog)
             Toggle("Replay Title After Drag-Resize", isOn: $model.replayAfterResize)
