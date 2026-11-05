@@ -82,7 +82,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var recents: [RecentFilm] = []
     private var pendingSubtitles: URL?
 
-    private(set) var spottingID: UUID?
+    @Published private(set) var spottingID: UUID?
     private var nudgeCommit: Task<Void, Never>?
     private var nudgeEdge: Edge?
     private var statusClear: Task<Void, Never>?
@@ -97,6 +97,7 @@ final class AppModel: ObservableObject {
         if defaults.object(forKey: "spotEndOffset") != nil { spotEndOffset = defaults.double(forKey: "spotEndOffset") }
         if let data = defaults.data(forKey: "recentFilms"),
            let list = try? JSONDecoder().decode([RecentFilm].self, from: data) { recents = list }
+        doc.playheadTime = { [weak self] in self?.clock.time ?? 0 }
         engine.onTimeChange = { [weak self] t in self?.tick(t) }
         engine.onPlayStateChange = { [weak self] playing in
             guard let self else { return }
@@ -517,10 +518,14 @@ final class AppModel: ObservableObject {
     private func tick(_ t: Double) {
         clock.time = t
         followSelection(at: t)
-        if let id = spottingID, let s = doc.subtitle(id) {
-            let end = max(s.start + 0.1, t - spotEndOffset)
-            if end > s.end { doc.liveUpdate(id) { $0.end = end } }
-        }
+        // While spotting, the waveform draws the growing box straight from the playhead
+        // (see liveSpotEnd), so the document isn't rewritten 60 times a second.
+    }
+
+    /// While a title is being spotted: where its box currently ends, exactly at the playhead.
+    func liveSpotEnd(for id: UUID) -> Double? {
+        guard id == spottingID, let s = doc.subtitle(id) else { return nil }
+        return max(s.end, clock.time)
     }
 
     // MARK: Selection

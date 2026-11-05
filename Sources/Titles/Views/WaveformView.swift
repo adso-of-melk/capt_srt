@@ -256,11 +256,12 @@ final class WaveformNSView: NSView {
         boxRects.removeAll(keepingCapacity: true)
         var selectedRect: CGRect?
 
-        for (index, s) in subs.enumerated() where s.end >= viewStart && s.start <= viewEnd {
+        for (index, s) in subs.enumerated() where (model.liveSpotEnd(for: s.id) ?? s.end) >= viewStart && s.start <= viewEnd {
             let lane = lanes[s.id] ?? 0
             let height = lane == 0 ? baseHeight : baseHeight - laneShift
             let y = rect.midY - height / 2 + CGFloat(lane) * laneShift
-            let r = CGRect(x: x(s.start), y: y, width: max(2, x(s.end) - x(s.start)), height: height)
+            let end = model.liveSpotEnd(for: s.id) ?? s.end
+            let r = CGRect(x: x(s.start), y: y, width: max(2, x(end) - x(s.start)), height: height)
             boxRects.append((s.id, r))
 
             let isSel = s.id == selected

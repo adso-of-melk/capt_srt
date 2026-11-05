@@ -56,6 +56,15 @@ struct VideoPane: View {
                         .padding(.bottom, 28)
                         .padding(.horizontal, 40)
                         .allowsHitTesting(false)
+                } else if overlayText != nil || model.isSpotting {
+                    // A title with no text yet (or one being spotted): a faint frosted placeholder.
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(.ultraThinMaterial)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.14), lineWidth: 1))
+                        .frame(width: 280, height: 56)
+                        .opacity(0.75)
+                        .padding(.bottom, 28)
+                        .allowsHitTesting(false)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 8))
