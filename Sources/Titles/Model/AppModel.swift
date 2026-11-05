@@ -245,55 +245,101 @@ final class AppModel: ObservableObject {
 
     // MARK: iCloud and errors
 
-    /// Name of the file currently downloading from iCloud or opening (shown in the title bar).
+    /// Name of the file waiting on iCloud or opening (shown in the title bar and on the home screen).
     @Published private(set) var loadingName: String?
     @Published private(set) var isDownloadingFromICloud = false
-    private var iCloudTask: Task<Void, Never>?
+    private var iCloudWaits: [URL: Task<Void, Never>] = [:]
 
-    /// iCloud Drive files that are only in the cloud are downloaded first, then opened.
+    private enum LocalState: Sendable { case local, inCloud }
+
+    /// Makes sure a file is on this Mac before it's opened, downloading it from iCloud Drive
+    /// if it's only in the cloud. Every iCloud query and download request runs off the main
+    /// thread with a timeout: iCloud can stall on a cloud-only file, and the app must stay usable.
     private func ensureLocal(_ url: URL, then completion: @escaping (URL) -> Void) {
-        guard url.isFileURL, let status = Self.iCloudStatus(url), status != .current else {
-            completion(url)
-            return
-        }
-        do {
-            try FileManager.default.startDownloadingUbiquitousItem(at: url)
-        } catch {
-            showError("Couldn't download \(url.lastPathComponent) from iCloud", error.localizedDescription)
-            return
-        }
-        loadingName = url.lastPathComponent
-        isDownloadingFromICloud = true
-        iCloudTask?.cancel()
-        iCloudTask = Task { [weak self] in
+        guard url.isFileURL else { completion(url); return }
+        iCloudWaits[url]?.cancel()
+        iCloudWaits[url] = Task { [weak self] in
             let started = Date()
+            var requestedDownload = false
+            var probe: Task<LocalState, Never>?
             while !Task.isCancelled {
+                // Reuse a query that hasn't answered yet rather than piling up new ones.
+                let running = probe ?? Self.offMain { Self.localState(of: url) }
+                probe = running
+                let state = await Self.value(of: running, timeout: 1.5)
+                guard let self, !Task.isCancelled else { return }
+                if state != nil { probe = nil }
+                if state == .local {
+                    self.finishICloudWait(url)
+                    completion(URL(fileURLWithPath: url.path))
+                    return
+                }
+                // Cloud-only, or iCloud is slow to answer: ask for the download and show that we're waiting.
+                if !requestedDownload {
+                    requestedDownload = true
+                    _ = Self.offMain { try? FileManager.default.startDownloadingUbiquitousItem(at: url) }
+                }
+                self.loadingName = url.lastPathComponent
+                self.isDownloadingFromICloud = true
+                if Date().timeIntervalSince(started) > 90 {
+                    self.finishICloudWait(url)
+                    self.pendingSubtitles = nil
+                    self.showError("iCloud hasn't delivered \(url.lastPathComponent)",
+                                   "It's stored only in iCloud Drive and hasn't downloaded yet. In Finder, right-click it and choose Download Now, then open it again once it has downloaded.")
+                    return
+                }
                 try? await Task.sleep(nanoseconds: 500_000_000)
-                guard let self else { return }
-                let fresh = URL(fileURLWithPath: url.path)   // avoids cached resource values
-                let now = Self.iCloudStatus(fresh)
-                if now == nil || now == .current {
-                    self.isDownloadingFromICloud = false
-                    self.loadingName = nil
-                    completion(fresh)
-                    return
-                }
-                if Date().timeIntervalSince(started) > 3600 {
-                    self.isDownloadingFromICloud = false
-                    self.loadingName = nil
-                    self.showError("iCloud download is taking too long",
-                                   "\(url.lastPathComponent) hasn't finished downloading. Check your internet connection, or download it in Finder first.")
-                    return
-                }
             }
         }
     }
 
-    /// nil when the file isn't in iCloud Drive.
-    private static func iCloudStatus(_ url: URL) -> URLUbiquitousItemDownloadingStatus? {
-        guard let values = try? url.resourceValues(forKeys: [.isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey]),
-              values.isUbiquitousItem == true else { return nil }
-        return values.ubiquitousItemDownloadingStatus
+    /// Stops waiting for iCloud (the Cancel button next to "Waiting for iCloud").
+    func cancelICloudWait() {
+        iCloudWaits.values.forEach { $0.cancel() }
+        iCloudWaits.removeAll()
+        pendingSubtitles = nil
+        isDownloadingFromICloud = false
+        loadingName = nil
+    }
+
+    private func finishICloudWait(_ url: URL) {
+        iCloudWaits[url] = nil
+        if iCloudWaits.isEmpty {
+            isDownloadingFromICloud = false
+            loadingName = nil
+        }
+    }
+
+    /// Blocking: may wait on iCloud. Only call off the main thread.
+    private nonisolated static func localState(of url: URL) -> LocalState {
+        let fresh = URL(fileURLWithPath: url.path)   // avoids cached resource values
+        guard let values = try? fresh.resourceValues(forKeys: [.isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey]),
+              values.isUbiquitousItem == true else { return .local }
+        return values.ubiquitousItemDownloadingStatus == .notDownloaded ? .inCloud : .local
+    }
+
+    /// Runs blocking work on a background queue (not the Swift concurrency pool, which it could starve).
+    private nonisolated static func offMain<T: Sendable>(_ work: @escaping @Sendable () -> T) -> Task<T, Never> {
+        Task.detached {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async { continuation.resume(returning: work()) }
+            }
+        }
+    }
+
+    /// The task's result, or nil if it takes longer than `timeout` (the task keeps running).
+    private static func value<T: Sendable>(of task: Task<T, Never>, timeout: Double) async -> T? {
+        let once = ResumeOnce()
+        return await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
+            Task {
+                let v = await task.value
+                if once.claim() { continuation.resume(returning: v) }
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                if once.claim() { continuation.resume(returning: nil) }
+            }
+        }
     }
 
     /// Problems opening or saving are shown as an alert, so nothing fails silently.
@@ -329,15 +375,25 @@ final class AppModel: ObservableObject {
         ensureLocal(url) { [weak self] local in self?.readSubtitles(local) }
     }
 
+    /// The file is read off the main thread, so a slow disk or iCloud can't freeze the app.
     private func readSubtitles(_ url: URL) {
-        do {
-            let subs = try SubtitleFormats.read(url: url)
-            doc.replaceAll(subs)
-            subtitleURL = url.pathExtension.lowercased() == "srt" ? url : nil
-            rememberFilm()
-            flash("Loaded \(subs.count) titles from \(url.lastPathComponent)")
-        } catch {
-            showError("Couldn't read \(url.lastPathComponent)", error.localizedDescription)
+        loadingName = url.lastPathComponent
+        let reading = Self.offMain { () -> Result<[Subtitle], SubtitleReadError> in
+            do { return .success(try SubtitleFormats.read(url: url)) }
+            catch { return .failure(SubtitleReadError(message: error.localizedDescription)) }
+        }
+        Task {
+            let result = await reading.value
+            if loadingName == url.lastPathComponent { loadingName = nil }
+            switch result {
+            case .success(let subs):
+                doc.replaceAll(subs)
+                subtitleURL = url.pathExtension.lowercased() == "srt" ? url : nil
+                rememberFilm()
+                flash("Loaded \(subs.count) titles from \(url.lastPathComponent)")
+            case .failure(let error):
+                showError("Couldn't read \(url.lastPathComponent)", error.message)
+            }
         }
     }
 
@@ -756,5 +812,19 @@ final class ExportFormatSwitcher: NSObject {
         panel.allowedContentTypes = [format.type]
         let base = (panel.nameFieldStringValue as NSString).deletingPathExtension
         panel.nameFieldStringValue = "\(base).\(format.rawValue)"
+    }
+}
+
+struct SubtitleReadError: Error, Sendable { let message: String }
+
+/// Lets exactly one of several racing callers resume a continuation.
+final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func claim() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if done { return false }
+        done = true
+        return true
     }
 }

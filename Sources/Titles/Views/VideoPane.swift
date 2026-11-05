@@ -27,9 +27,13 @@ struct VideoPane: View {
                         Group {
                         if let name = model.loadingName {
                             ProgressView().controlSize(.small)
-                            ConsoleLabel(text: model.isDownloadingFromICloud ? "Downloading from iCloud" : "Opening",
+                            ConsoleLabel(text: model.isDownloadingFromICloud ? "Waiting for iCloud" : "Opening",
                                          color: Theme.teal, size: 12)
                             Text(name)
+                            if model.isDownloadingFromICloud {
+                                Button("Cancel") { model.cancelICloudWait() }
+                                    .buttonStyle(.link)
+                            }
                         } else {
                             ConsoleLabel(text: "Awaiting picture", color: Theme.periwinkle, size: 12)
                             Text("Drop a video here or press ⌘O")

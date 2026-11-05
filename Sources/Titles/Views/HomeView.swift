@@ -35,13 +35,18 @@ struct HomeView: View {
                 if let name = model.loadingName {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        ConsoleLabel(text: model.isDownloadingFromICloud ? "Downloading from iCloud" : "Opening",
+                        ConsoleLabel(text: model.isDownloadingFromICloud ? "Waiting for iCloud" : "Opening",
                                      color: Theme.teal, size: 10)
                         Text(name)
                             .font(Theme.label(12, .medium))
                             .foregroundStyle(Theme.textDim)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                        if model.isDownloadingFromICloud {
+                            Button("Cancel") { model.cancelICloudWait() }
+                                .buttonStyle(.link)
+                                .font(Theme.label(11, .semibold))
+                        }
                     }
                 }
             }
