@@ -256,11 +256,12 @@ final class WaveformNSView: NSView {
         boxRects.removeAll(keepingCapacity: true)
         var selectedRect: CGRect?
 
-        for (index, s) in subs.enumerated() where s.end >= viewStart && s.start <= viewEnd {
+        for (index, s) in subs.enumerated() where (model.liveSpotEnd(for: s.id) ?? s.end) >= viewStart && s.start <= viewEnd {
             let lane = lanes[s.id] ?? 0
             let height = lane == 0 ? baseHeight : baseHeight - laneShift
             let y = rect.midY - height / 2 + CGFloat(lane) * laneShift
-            let r = CGRect(x: x(s.start), y: y, width: max(2, x(s.end) - x(s.start)), height: height)
+            let end = model.liveSpotEnd(for: s.id) ?? s.end
+            let r = CGRect(x: x(s.start), y: y, width: max(2, x(end) - x(s.start)), height: height)
             boxRects.append((s.id, r))
 
             let isSel = s.id == selected
@@ -272,7 +273,7 @@ final class WaveformNSView: NSView {
             path.lineWidth = isSel ? 2 : 1
             path.stroke()
 
-            // Label strip: number pill + first words.
+            // Number pill, then the full title text (all lines), wrapped inside the box.
             NSGraphicsContext.saveGraphicsState()
             NSBezierPath(roundedRect: r.insetBy(dx: 1, dy: 1), xRadius: 5, yRadius: 5).addClip()
             let numberText = "\(index + 1)"
@@ -282,11 +283,23 @@ final class WaveformNSView: NSView {
             (isSel ? Palette.amber : base).setFill()
             NSBezierPath(roundedRect: pill, xRadius: 7.5, yRadius: 7.5).fill()
             drawText(numberText, at: CGPoint(x: pill.minX + 5, y: pill.minY + 1), font: font, color: Palette.background)
-            let snippet = s.firstLine
-            if !snippet.isEmpty {
-                drawText(snippet, at: CGPoint(x: pill.maxX + 5, y: r.minY + 4),
-                         font: NSFont.systemFont(ofSize: 11, weight: .medium),
-                         color: Palette.text.withAlphaComponent(0.9))
+            let fullText = s.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Beside the number pill when there's room; otherwise underneath it.
+            let besidePill = r.maxX - pill.maxX - 9 >= 40
+            let textRect = besidePill
+                ? CGRect(x: pill.maxX + 5, y: r.minY + 3, width: r.maxX - pill.maxX - 9, height: r.height - 6)
+                : CGRect(x: r.minX + 4, y: pill.maxY + 2, width: r.width - 8, height: r.maxY - pill.maxY - 4)
+            if !fullText.isEmpty, textRect.width > 6, textRect.height > 8 {
+                let para = NSMutableParagraphStyle()
+                para.lineBreakMode = .byWordWrapping
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+                    .foregroundColor: Palette.text.withAlphaComponent(0.9),
+                    .paragraphStyle: para
+                ]
+                (fullText as NSString).draw(with: textRect,
+                                            options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                            attributes: attrs)
             }
             NSGraphicsContext.restoreGraphicsState()
 
@@ -349,12 +362,37 @@ final class WaveformNSView: NSView {
     override func cursorUpdate(with event: NSEvent) { updateCursor(event) }
     override func mouseMoved(with event: NSEvent) { updateCursor(event) }
 
+    /// Command held over a box: the split cursor.
+    private var flagsMonitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let m = flagsMonitor { NSEvent.removeMonitor(m); flagsMonitor = nil }
+        guard window != nil else { return }
+        flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] e in
+            MainActor.assumeIsolated {
+                guard let self, let window = self.window, e.window === window else { return }
+                let p = self.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+                if self.bounds.contains(p) { self.updateCursor(at: p, flags: e.modifierFlags) }
+            }
+            return e
+        }
+    }
+
     private func updateCursor(_ event: NSEvent) {
-        let p = convert(event.locationInWindow, from: nil)
+        updateCursor(at: convert(event.locationInWindow, from: nil), flags: event.modifierFlags)
+    }
+
+    private static func isSplitClick(_ flags: NSEvent.ModifierFlags) -> Bool {
+        flags.intersection([.command, .shift, .control, .option]) == [.command]
+    }
+
+    private func updateCursor(at p: CGPoint, flags: NSEvent.ModifierFlags) {
         if p.y < rulerHeight { NSCursor.pointingHand.set(); return }
+        let split = Self.isSplitClick(flags)
         switch hit(p) {
-        case .edge: NSCursor.resizeLeftRight.set()
-        case .body: NSCursor.openHand.set()
+        case .edge: (split ? NSCursor.split : NSCursor.resizeLeftRight).set()
+        case .body: (split ? NSCursor.split : NSCursor.openHand).set()
         case .empty: NSCursor.crosshair.set()
         }
     }
@@ -370,8 +408,21 @@ final class WaveformNSView: NSView {
 
         if p.y < rulerHeight {
             drag = .ruler
-            model.seek(t(p.x))
+            model.placePlayhead(t(p.x))
             return
+        }
+
+        // ⌘-click on a box: split it there.
+        if Self.isSplitClick(event.modifierFlags) {
+            switch hit(p) {
+            case let .edge(id, _), let .body(id):
+                model.splitTitle(id, at: t(p.x))
+                drag = .none
+                needsDisplay = true
+                return
+            case .empty:
+                break
+            }
         }
 
         switch hit(p) {
@@ -410,7 +461,7 @@ final class WaveformNSView: NSView {
         case .none:
             break
         case .ruler:
-            model.seek(t(p.x))
+            model.placePlayhead(t(p.x))
         case let .creating(t0, _):
             drag = .creating(t0: t0, t1: t(p.x))
         case let .moving(id, grab, length):
@@ -439,12 +490,12 @@ final class WaveformNSView: NSView {
             if didDrag, abs(t1 - t0) >= 0.15 {
                 model.createTitle(start: min(t0, t1), end: max(t0, t1))
             } else {
-                model.seek(t0)
+                model.placePlayhead(t0)
             }
         case let .moving(id, _, _):
             model.doc.commitLive()
             if didDrag, let s = model.doc.subtitle(id) {
-                model.engine.play(from: max(0, s.start - 0.5), to: s.end)
+                model.playRange(from: max(0, s.start - 0.5), to: s.end)
             }
         case let .resizing(id, edge):
             model.doc.commitLive()
@@ -484,7 +535,7 @@ final class WaveformNSView: NSView {
 
     @objc private func menuPlay(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID, let s = model?.doc.subtitle(id) else { return }
-        model?.engine.play(from: s.start, to: s.end)
+        model?.playRange(from: s.start, to: s.end)
     }
 
     @objc private func menuEdit(_ sender: NSMenuItem) {
@@ -574,4 +625,38 @@ final class WaveformNSView: NSView {
     private func drawText(_ s: String, at p: CGPoint, font: NSFont, color: NSColor) {
         (s as NSString).draw(at: p, withAttributes: [.font: font, .foregroundColor: color])
     }
+}
+
+extension NSCursor {
+    /// Scissors with a split line, shown while ⌘ is held over a title box.
+    static let split: NSCursor = {
+        let size = NSSize(width: 24, height: 24)
+        let image = NSImage(size: size, flipped: false) { rect in
+            let line = NSBezierPath()
+            line.move(to: NSPoint(x: 12, y: 1))
+            line.line(to: NSPoint(x: 12, y: 23))
+            line.lineWidth = 3
+            NSColor.black.withAlphaComponent(0.7).setStroke()
+            line.stroke()
+            line.lineWidth = 1
+            NSColor.white.setStroke()
+            line.stroke()
+            let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .bold)
+                .applying(.init(paletteColors: [.white]))
+            if let scissors = NSImage(systemSymbolName: "scissors", accessibilityDescription: "Split")?
+                .withSymbolConfiguration(config) {
+                let s = scissors.size
+                let r = NSRect(x: 13, y: 12 - s.height / 2, width: s.width, height: s.height)
+                NSGraphicsContext.current?.saveGraphicsState()
+                let shadow = NSShadow()
+                shadow.shadowColor = .black
+                shadow.shadowBlurRadius = 2
+                shadow.set()
+                scissors.draw(in: r)
+                NSGraphicsContext.current?.restoreGraphicsState()
+            }
+            return true
+        }
+        return NSCursor(image: image, hotSpot: NSPoint(x: 12, y: 12))
+    }()
 }

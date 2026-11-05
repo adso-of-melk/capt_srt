@@ -41,6 +41,12 @@ struct CardPane: View {
                     guard let id else { return }
                     withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .center) }
                 }
+                .onChange(of: model.cardScrollTarget) { _, id in
+                    guard let id else { return }
+                    withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .center) }
+                    // Clear it so the same target scrolls again next time.
+                    model.cardScrollTarget = nil
+                }
             }
         }
         .background(Theme.panel)
@@ -60,9 +66,14 @@ struct CardPane: View {
                 }
             }
         }
-        .onChange(of: focused) { _, id in
-            if model.focusRequest != id { model.focusRequest = id }
-            if let id { doc.selectedID = id }
+        .onChange(of: focused) { old, id in
+            if let id {
+                if model.focusRequest != id { model.focusRequest = id }
+                doc.selectedID = id
+            } else if model.focusRequest == old {
+                // Focus really left the card (not a hand-over to another card via Tab).
+                model.focusRequest = nil
+            }
         }
     }
 }
@@ -167,8 +178,9 @@ struct CardView: View {
         }
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded {
-            // Clicking a card selects it and puts the cursor at the end of its text.
-            model.select(sub.id, seekToStart: !isSelected)
+            // Clicking a card selects it, takes the playhead to its start,
+            // and puts the cursor at the end of its text.
+            model.select(sub.id, seekToStart: true)
             model.focusRequest = sub.id
         })
     }

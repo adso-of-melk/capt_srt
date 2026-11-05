@@ -7,13 +7,17 @@ struct TitlesApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        Window("Titles", id: "main") {
+        Window("KPTN.SRT", id: "main") {
             MainView(model: model, doc: model.doc)
                 .frame(minWidth: 960, minHeight: 600)
                 .onAppear { appDelegate.attach(model) }
         }
         .defaultSize(width: 1440, height: 900)
         .commands { TitlesCommands(model: model) }
+
+        Settings {
+            SettingsView(model: model)
+        }
     }
 }
 
@@ -50,14 +54,21 @@ struct TitlesCommands: Commands {
                 .keyboardShortcut("o", modifiers: [.command, .option])
             Button("Open Subtitles…") { model.openSubtitlesPanel() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
+            Divider()
+            Button("Back to Home") { model.goHome() }
+                .keyboardShortcut("h", modifiers: [.command, .shift])
+                .disabled(model.showHome)
         }
         CommandGroup(replacing: .saveItem) {
-            Button("Save") { model.save() }
-                .keyboardShortcut("s")
-            Button("Save As…") { model.saveAs() }
-                .keyboardShortcut("s", modifiers: [.command, .shift])
-            Button("Export WebVTT…") { model.exportVTT() }
-                .keyboardShortcut("e", modifiers: [.command, .shift])
+            Group {
+                Button("Save") { model.save() }
+                    .keyboardShortcut("s")
+                Button("Save As…") { model.saveAs() }
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
+                Button("Export…") { model.export() }
+                    .keyboardShortcut("e", modifiers: [.command, .shift])
+            }
+            .disabled(model.showHome)
         }
         CommandGroup(replacing: .undoRedo) {
             Button("Undo") { model.doc.undo() }
@@ -67,6 +78,8 @@ struct TitlesCommands: Commands {
         }
         CommandMenu("Title") {
             Button("Play / Pause") { model.togglePlay() }
+            Button("Split at Playhead  (or ⌘-click a box)") { model.splitAtPlayhead() }
+                .keyboardShortcut("b")
             Button("Delete Title  (⌫ when not typing)") { model.deleteSelected() }
             Divider()
             Picker("Spotting Mode", selection: $model.spotMode) {

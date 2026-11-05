@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import UniformTypeIdentifiers
 
 /// Card pane on the left; video top right; title bar and waveform bottom right.
@@ -8,6 +9,33 @@ struct MainView: View {
     @State private var urlText = ""
 
     var body: some View {
+        Group {
+            if model.showHome {
+                HomeView(model: model)
+            } else {
+                editor
+            }
+        }
+        .background(Theme.background)
+        .background(WindowAccessor { model.mainWindow = $0 })
+        .preferredColorScheme(.dark)
+        .tint(Theme.amber)
+        .navigationTitle(model.showHome ? "KPTN.SRT" : model.windowTitle)
+        .dropDestination(for: URL.self) { urls, _ in
+            model.handleDrop(urls)
+            return !urls.isEmpty
+        }
+        .sheet(isPresented: $model.showURLSheet) {
+            OpenURLSheet(text: $urlText) { string in
+                model.showURLSheet = false
+                model.openURLString(string)
+            } cancel: {
+                model.showURLSheet = false
+            }
+        }
+    }
+
+    private var editor: some View {
         HSplitView {
             CardPane(model: model, doc: doc)
                 .frame(minWidth: 320, idealWidth: 400, maxWidth: 520)
@@ -22,22 +50,6 @@ struct MainView: View {
                 .frame(minHeight: 170, idealHeight: 240)
             }
             .frame(minWidth: 560)
-        }
-        .background(Theme.background)
-        .preferredColorScheme(.dark)
-        .tint(Theme.amber)
-        .navigationTitle(model.windowTitle)
-        .dropDestination(for: URL.self) { urls, _ in
-            model.handleDrop(urls)
-            return !urls.isEmpty
-        }
-        .sheet(isPresented: $model.showURLSheet) {
-            OpenURLSheet(text: $urlText) { string in
-                model.showURLSheet = false
-                model.openURLString(string)
-            } cancel: {
-                model.showURLSheet = false
-            }
         }
     }
 }
@@ -68,5 +80,22 @@ private struct OpenURLSheet: View {
         .padding(20)
         .frame(width: 460)
         .background(Theme.panel)
+    }
+}
+
+/// Reports the NSWindow hosting this view.
+private struct WindowAccessor: NSViewRepresentable {
+    let onWindow: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { [weak view] in
+            if let window = view?.window { onWindow(window) }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let window = nsView.window { onWindow(window) }
     }
 }

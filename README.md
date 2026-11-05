@@ -1,6 +1,8 @@
-# Titles — build 1
+# KPTN.SRT (working name)
 
 A focused subtitle editor for macOS: the card list on the left, the video at top right, and the title bar and waveform at bottom right.
+
+The code and Swift package are still called `Titles`; the working name only shows in the app for now.
 
 ## Build and run
 
@@ -17,7 +19,9 @@ Or, from Terminal in this folder: `swift run -c release`.
 | --- | --- |
 | Video in | MP4, MOV, M4V (H.264, HEVC, ProRes), plus https links and HLS streams via ⌥⌘O. MKV, WebM and AVI come with the libmpv engine in build 2. |
 | Subtitles in | SRT, WebVTT. Encoding is detected (UTF-8, UTF-16, Windows-1252, Latin-1). |
-| Subtitles out | SRT (⌘S), WebVTT (⇧⌘E). Always written as UTF-8. |
+| Subtitles out | Save writes SRT (⌘S). File ▸ Export… (⇧⌘E) asks for the format: SRT or WebVTT. Always written as UTF-8. |
+
+The app opens on a home screen listing recent films with their subtitle files; click one to carry on where you left off. **Home** at the left of the title bar (or File ▸ Back to Home, ⇧⌘H) closes the film, asking to save changes first, and goes back there.
 
 You can also drop a video and/or an `.srt` file onto the window. Files that are only in iCloud Drive download automatically first, with progress shown in the title bar. Anything that can't be opened shows an alert explaining why.
 
@@ -32,7 +36,8 @@ When playback stops, the title under the playhead becomes the selected title.
 | Draw a title | Drag across empty waveform. Its card opens for typing straight away. Drag again to make the next one. |
 | Live spotting, Hold mode (default) | While the video plays, hold **↓** while a line is spoken. Key down sets the start and key up sets the end. |
 | Live spotting, Tap mode | **↓** ends the current title and starts the next. **↑** ends the current title and leaves a gap. |
-| Reaction offset | 250 ms is subtracted from every spotting key press. |
+| Spotting offsets | A title starts exactly where you press ↓, and ends 250 ms before you release it. Both can be changed in Settings (⌘,). |
+| Split a title | Hold ⌘ over a box (the cursor turns into scissors) and click where it should split, or press ⌘B to split the title under the playhead. A gap of the preset's minimum (2 frames) is left, half on each side, and the text is divided at the nearest line break or word. |
 
 **Fine-tuning**
 
@@ -52,11 +57,14 @@ Dragging the body of a box moves the whole title. After adjusting either edge, t
 
 | Key | Action |
 | --- | --- |
-| Space | Play / pause |
+| Shift+Space | Play / pause, from anywhere, even while typing (Space alone only types) |
+| Tab / Shift+Tab | Next / previous title. The playhead jumps to it, and editing carries over if you were typing |
 | ← / → | Step one frame back / forward (Shift: one second) |
 | ↑ / ↓ while paused | Select the previous / next title and jump to it |
 | Return, or just start typing | Edit the selected card's text (cursor at the end) |
-| Click a card | Select it and edit its text, with the cursor at the end |
+
+During playback, the last title the playhead reached stays highlighted, and the card list scrolls to keep it centred. Starting playback leaves text editing.
+| Click a card | Select it, move the playhead to its start, and edit its text with the cursor at the end |
 | Esc | Leave text editing |
 | ⌫ (when not typing) | Delete the selected title |
 | ⌘Z / ⇧⌘Z | Undo / redo |
@@ -65,7 +73,9 @@ Dragging the body of a box moves the whole title. After adjusting either edge, t
 | Click the ruler | Seek |
 | Right-click a box | Play, edit text, delete |
 
-**Waveform display.** The **Scale** slider makes quiet passages larger. The **dB** toggle shows loudness in decibels, so whispers stay visible next to loud sounds.
+**Settings (⌘,).** Jog speed (how fast Control/Option + mouse moves an edge), spotting mode, reaction offset, timing preset and the trackpad swipe option.
+
+**Waveform display.** Boxes show the full text of each title, wrapped to fit. The **Scale** slider makes quiet passages larger. The **dB** toggle shows loudness in decibels, so whispers stay visible next to loud sounds.
 
 **Timing colours.** Periwinkle means OK, amber means close to the limit, and red means over the limit, for both reading speed (CPS) and duration. Change the preset under Title ▸ Timing Preset.
 
@@ -86,4 +96,4 @@ Sources/Titles/
 - Only the formats AVFoundation supports will play (see above).
 - It runs as a Swift package, so it isn't sandboxed and isn't packaged for the App Store yet.
 - Audio is decoded to 16 kHz mono in memory, about 230 MB for a 2-hour film.
-- Settings (preset, spotting mode, offset) aren't saved between launches yet.
+- The timing preset isn't saved between launches yet.

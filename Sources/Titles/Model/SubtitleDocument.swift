@@ -11,6 +11,9 @@ import Combine
 final class SubtitleDocument: ObservableObject {
     @Published private(set) var subtitles: [Subtitle] = []
     @Published var selectedID: UUID?
+    /// The playhead time, so a lost selection (after undo or delete) can fall back to the
+    /// title just before the playhead rather than the first title.
+    var playheadTime: (() -> Double)?
     @Published private(set) var isDirty = false
 
     private var undoStack: [[Subtitle]] = []
@@ -205,7 +208,8 @@ final class SubtitleDocument: ObservableObject {
 
     private func fixSelection() {
         if let id = selectedID, index(of: id) == nil {
-            selectedID = subtitles.first?.id
+            let t = playheadTime?() ?? 0
+            selectedID = (subtitles.last(where: { $0.start <= t + 0.001 }) ?? subtitles.first)?.id
         }
     }
 }

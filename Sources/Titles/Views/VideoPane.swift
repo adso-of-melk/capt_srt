@@ -27,9 +27,13 @@ struct VideoPane: View {
                         Group {
                         if let name = model.loadingName {
                             ProgressView().controlSize(.small)
-                            ConsoleLabel(text: model.isDownloadingFromICloud ? "Downloading from iCloud" : "Opening",
+                            ConsoleLabel(text: model.isDownloadingFromICloud ? "Waiting for iCloud" : "Opening",
                                          color: Theme.teal, size: 12)
                             Text(name)
+                            if model.isDownloadingFromICloud {
+                                Button("Cancel") { model.cancelICloudWait() }
+                                    .buttonStyle(.link)
+                            }
                         } else {
                             ConsoleLabel(text: "Awaiting picture", color: Theme.periwinkle, size: 12)
                             Text("Drop a video here or press ⌘O")
@@ -51,6 +55,15 @@ struct VideoPane: View {
                         .background(RoundedRectangle(cornerRadius: 4).fill(Color.black.opacity(0.55)))
                         .padding(.bottom, 28)
                         .padding(.horizontal, 40)
+                        .allowsHitTesting(false)
+                } else if overlayText != nil || model.isSpotting {
+                    // A title with no text yet (or one being spotted): a faint frosted placeholder.
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(.ultraThinMaterial)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.14), lineWidth: 1))
+                        .frame(width: 280, height: 56)
+                        .opacity(0.75)
+                        .padding(.bottom, 28)
                         .allowsHitTesting(false)
                 }
             }

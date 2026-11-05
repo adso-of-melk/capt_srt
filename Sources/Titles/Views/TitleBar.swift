@@ -8,6 +8,10 @@ struct TitleBar: View {
 
     var body: some View {
         HStack(spacing: 14) {
+            HomeButton { model.goHome() }
+
+            divider
+
             // Timecode readout
             HStack(spacing: 8) {
                 Capsule().fill(Theme.amber).frame(width: 34, height: 22)
@@ -17,7 +21,7 @@ struct TitleBar: View {
                             .foregroundStyle(Theme.background)
                     )
                     .onTapGesture { model.togglePlay() }
-                    .help("Play / pause (Space)")
+                    .help("Play / pause (Shift+Space)")
                 Text(Timecode.frames(clock.time, fps: model.engine.frameRate))
                     .font(Theme.mono(17, .semibold))
                     .foregroundStyle(Theme.peach)
@@ -62,13 +66,18 @@ struct TitleBar: View {
             if let name = model.loadingName {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    ConsoleLabel(text: model.isDownloadingFromICloud ? "Downloading from iCloud" : "Opening",
+                    ConsoleLabel(text: model.isDownloadingFromICloud ? "Waiting for iCloud" : "Opening",
                                  color: Theme.teal, size: 9)
                     Text(name)
                         .font(Theme.label(11, .medium))
                         .foregroundStyle(Theme.textDim)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                    if model.isDownloadingFromICloud {
+                        Button("Cancel") { model.cancelICloudWait() }
+                            .buttonStyle(.link)
+                            .font(Theme.label(11, .semibold))
+                    }
                 }
             } else if let msg = model.statusMessage {
                 Text(msg)
@@ -126,5 +135,29 @@ struct TitleBar: View {
             get: { (log(model.pixelsPerSecond) - log(8)) / (log(1600) - log(8)) },
             set: { model.pixelsPerSecond = exp(log(8) + $0 * (log(1600) - log(8))) }
         )
+    }
+}
+
+/// Leaves the film for the home screen, asking to save unsaved changes first.
+private struct HomeButton: View {
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: "chevron.left").font(.system(size: 9, weight: .bold))
+                Text("HOME").font(Theme.label(10, .bold)).tracking(1.4)
+            }
+            .foregroundStyle(hover ? Theme.background : Theme.teal)
+            .padding(.horizontal, 9)
+            .frame(height: 22)
+            .background(Capsule().fill(hover ? Theme.teal : Theme.teal.opacity(0.12)))
+            .overlay(Capsule().stroke(Theme.teal.opacity(0.4), lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help("Back to the home screen to choose another film (⇧⌘H)")
     }
 }
