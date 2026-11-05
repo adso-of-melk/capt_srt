@@ -1,6 +1,7 @@
 import SwiftUI
+import AppKit
 
-/// The start screen: open a film, or pick up a recent one where you left off.
+/// The start screen: start a project, open one, or pick up a recent one where you left off.
 struct HomeView: View {
     @ObservedObject var model: AppModel
 
@@ -13,7 +14,7 @@ struct HomeView: View {
                         Capsule().fill(Theme.amber).frame(width: 46, height: 16)
                         Capsule().fill(Theme.periwinkle).frame(width: 18, height: 16)
                     }
-                    Text("KPTN.SRT")
+                    Text("KPTN.SUB")
                         .font(Theme.label(38, .heavy))
                         .tracking(5)
                         .foregroundStyle(Theme.peach)
@@ -21,11 +22,14 @@ struct HomeView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
-                    HomeAction(title: "Open Video…", shortcut: "⌘O", color: Theme.amber) { model.openVideoPanel() }
-                    HomeAction(title: "Open Video Link…", shortcut: "⌥⌘O", color: Theme.periwinkle) { model.showURLSheet = true }
+                    HomeAction(title: "New Project…", shortcut: "⌘N", color: Theme.amber) {
+                        model.newProjectVideo = nil
+                        model.sheet = .newProject
+                    }
+                    HomeAction(title: "Open Project…", shortcut: "⌘O", color: Theme.periwinkle) { model.openProjectPanel() }
                 }
 
-                Text("You can also drop a video, and its .srt file, onto this window.")
+                Text("One project per film. It holds the film's videos and every language. You can also drop a video or a .kptnsub file onto this window.")
                     .font(Theme.label(12, .regular))
                     .foregroundStyle(Theme.textFaint)
                     .fixedSize(horizontal: false, vertical: true)
@@ -59,12 +63,12 @@ struct HomeView: View {
 
             // Right: recent films
             VStack(spacing: 0) {
-                PaneHeader(title: "Recent films", color: Theme.teal)
+                PaneHeader(title: "Recent projects", color: Theme.teal)
                     .padding(.top, 14)
-                if model.recents.isEmpty {
+                if model.recentProjects.isEmpty {
                     VStack(spacing: 8) {
                         ConsoleLabel(text: "Nothing here yet", color: Theme.peach, size: 11)
-                        Text("Films you open appear here, with their subtitle files.")
+                        Text("Projects you create or open appear here.")
                             .font(Theme.label(13, .regular))
                             .foregroundStyle(Theme.textDim)
                     }
@@ -72,11 +76,17 @@ struct HomeView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 8) {
-                            ForEach(model.recents) { film in
-                                RecentRow(film: film) { model.openRecent(film) }
+                            ForEach(model.recentProjects) { recent in
+                                RecentRow(recent: recent) { model.openRecent(recent) }
                                     .contextMenu {
-                                        Button("Open") { model.openRecent(film) }
-                                        Button("Remove from List") { model.removeRecent(film) }
+                                        Button("Open") { model.openRecent(recent) }
+                                        if let path = recent.path {
+                                            Button("Show in Finder") {
+                                                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                                            }
+                                        }
+                                        Divider()
+                                        Button("Remove from List") { model.removeRecent(recent) }
                                     }
                             }
                         }
@@ -121,7 +131,7 @@ private struct HomeAction: View {
 }
 
 private struct RecentRow: View {
-    let film: RecentFilm
+    let recent: RecentProject
     let open: () -> Void
     @State private var hover = false
 
@@ -130,7 +140,7 @@ private struct RecentRow: View {
             HStack(spacing: 12) {
                 Capsule().fill(hover ? Theme.amber : Theme.rule).frame(width: 6, height: 34)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(film.name)
+                    Text(recent.name)
                         .font(Theme.label(14, .semibold))
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
@@ -142,7 +152,7 @@ private struct RecentRow: View {
                         .truncationMode(.middle)
                 }
                 Spacer()
-                Text(film.opened, format: .relative(presentation: .named))
+                Text(recent.opened, format: .relative(presentation: .named))
                     .font(Theme.label(11, .medium))
                     .foregroundStyle(Theme.textFaint)
             }
@@ -154,12 +164,12 @@ private struct RecentRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
-        .help(film.videoURL?.isFileURL == true ? film.videoURL!.path : film.video)
+        .help(recent.path ?? recent.name)
     }
 
     private var detail: String {
-        let subs = film.subtitleURL?.lastPathComponent ?? "No subtitle file yet"
-        if let url = film.videoURL, !url.isFileURL { return "Link · \(subs)" }
-        return subs
+        let videos = recent.videoCount == 1 ? "1 video" : "\(recent.videoCount) videos"
+        let langs = recent.languages.isEmpty ? "no languages yet" : recent.languages.joined(separator: " · ")
+        return "\(videos) · \(langs)"
     }
 }

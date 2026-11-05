@@ -10,19 +10,7 @@ final class PlayheadClock: ObservableObject {
     @Published var isPlaying = false
 }
 
-/// A film opened before, shown on the home screen. URLs are stored as strings so links work too.
-struct RecentFilm: Codable, Identifiable, Equatable {
-    var video: String
-    var subtitles: String?
-    var opened: Date
-
-    var id: String { video }
-    var videoURL: URL? { URL(string: video) }
-    var subtitleURL: URL? { subtitles.flatMap(URL.init(string:)) }
-    var name: String { videoURL?.deletingPathExtension().lastPathComponent ?? video }
-}
-
-enum ExportFormat: String, CaseIterable {
+enum ExportFormat: String, CaseIterable, Codable, Sendable {
     case srt, vtt
     var title: String { self == .srt ? "SubRip (.srt)" : "WebVTT (.vtt)" }
     var type: UTType { UTType(filenameExtension: rawValue) ?? .plainText }
@@ -39,14 +27,14 @@ enum SpotMode: String, CaseIterable, Identifiable {
 /// trackpad all go through the same code.
 @MainActor
 final class AppModel: ObservableObject {
-    let doc = SubtitleDocument()
+    /// The focused language's titles: everything that edits titles acts on this.
+    @Published var doc = SubtitleDocument()
     let clock = PlayheadClock()
     let audio = AudioStore()
     let engine: PlaybackEngine
     private let scrub = ScrubAudioPlayer()
 
-    @Published private(set) var videoURL: URL?
-    @Published private(set) var subtitleURL: URL?
+    @Published var videoURL: URL?
     @Published var spotMode: SpotMode = .hold {
         didSet { UserDefaults.standard.set(spotMode.rawValue, forKey: "spotMode") }
     }
@@ -54,13 +42,12 @@ final class AppModel: ObservableObject {
     @Published var jogSpeed: Double = 1 {
         didSet { UserDefaults.standard.set(jogSpeed, forKey: "jogSpeed") }
     }
-    @Published var preset: TimingPreset = .general
     /// Live spotting: subtracted from the key press (title start). 0 = exactly where you press.
     @Published var spotStartOffset: Double = 0 {
         didSet { UserDefaults.standard.set(spotStartOffset, forKey: "spotStartOffset") }
     }
     /// Live spotting: subtracted from the key release (title end), allowing for reaction time.
-    @Published var spotEndOffset: Double = 0.25 {
+    @Published var spotEndOffset: Double = 0 {
         didSet { UserDefaults.standard.set(spotEndOffset, forKey: "spotEndOffset") }
     }
     @Published var pixelsPerSecond: Double = 120
@@ -76,11 +63,46 @@ final class AppModel: ObservableObject {
     /// The card whose text field should have keyboard focus (nil = none).
     @Published var focusRequest: UUID?
     @Published var statusMessage: String?
-    @Published var showURLSheet = false
-    /// The start screen for choosing a film. Shown at launch and after Back to Home.
+    /// The start screen for choosing a project. Shown at launch and after Back to Home.
     @Published var showHome = true
-    @Published private(set) var recents: [RecentFilm] = []
-    private var pendingSubtitles: URL?
+
+    // MARK: Project state (see AppModel+Project.swift)
+
+    @Published var project: Project?
+    @Published var video: VideoItem?
+    /// Side-by-side rows for the open languages, rebuilt whenever any language changes.
+    @Published var rows: [CardRow] = []
+    /// Row index of every visible title, by title id.
+    var rowOfSub: [UUID: Int] = [:]
+    /// The focused language has no title in this row, and that empty slot is selected.
+    @Published var emptySlotRow: UUID?
+    /// Bumped on every change to any language, so views that draw several languages redraw.
+    @Published var revision = 0
+    /// A non-blocking notice under the top strip (e.g. working from the local copy).
+    @Published var banner: String?
+    @Published var sheet: SheetKind?
+    @Published var recentProjects: [RecentProject] = []
+    /// Video chosen before a project exists (dropped on the home screen).
+    @Published var newProjectVideo: URL?
+    /// A subtitle file waiting for its language to be chosen.
+    @Published var pendingImport: URL?
+    @Published var textOnly = false {
+        didSet { UserDefaults.standard.set(textOnly, forKey: "textOnly") }
+    }
+    @Published var replayAfterJog = true {
+        didSet { UserDefaults.standard.set(replayAfterJog, forKey: "replayAfterJog") }
+    }
+    @Published var replayAfterResize = true {
+        didSet { UserDefaults.standard.set(replayAfterResize, forKey: "replayAfterResize") }
+    }
+    var undoOrder: [UUID] = []
+    var redoOrder: [UUID] = []
+    var isSyncingLocks = false
+    var refreshScheduled = false
+    var autosaveTask: Task<Void, Never>?
+    var lastBackup = Date.distantPast
+    var originalWriteInFlight = false
+    var selectionWatchers: [Any] = []
 
     @Published private(set) var spottingID: UUID?
     private var nudgeCommit: Task<Void, Never>?
@@ -95,8 +117,10 @@ final class AppModel: ObservableObject {
         if defaults.object(forKey: "jogSpeed") != nil { jogSpeed = defaults.double(forKey: "jogSpeed") }
         if defaults.object(forKey: "spotStartOffset") != nil { spotStartOffset = defaults.double(forKey: "spotStartOffset") }
         if defaults.object(forKey: "spotEndOffset") != nil { spotEndOffset = defaults.double(forKey: "spotEndOffset") }
-        if let data = defaults.data(forKey: "recentFilms"),
-           let list = try? JSONDecoder().decode([RecentFilm].self, from: data) { recents = list }
+        if defaults.object(forKey: "textOnly") != nil { textOnly = defaults.bool(forKey: "textOnly") }
+        if defaults.object(forKey: "replayAfterJog") != nil { replayAfterJog = defaults.bool(forKey: "replayAfterJog") }
+        if defaults.object(forKey: "replayAfterResize") != nil { replayAfterResize = defaults.bool(forKey: "replayAfterResize") }
+        loadRecentProjects()
         doc.playheadTime = { [weak self] in self?.clock.time ?? 0 }
         engine.onTimeChange = { [weak self] t in self?.tick(t) }
         engine.onPlayStateChange = { [weak self] playing in
@@ -116,24 +140,37 @@ final class AppModel: ObservableObject {
 
     // MARK: Derived
 
-    var frameDuration: Double { 1 / max(1, engine.frameRate) }
+    /// Frames per second: the project's setting, or the video's own.
+    var fps: Double { project?.settings.frameRate ?? engine.frameRate }
+    var frameDuration: Double { 1 / max(1, fps) }
     var minGap: Double { Double(preset.minGapFrames) * frameDuration }
     var hasMedia: Bool { videoURL != nil }
 
+    /// The project's standard, with the focused language's own overrides.
+    var preset: TimingPreset {
+        let base = project?.settings.standard ?? .general
+        return focusedTrack?.standard(from: base) ?? base
+    }
+
+    func preset(for track: Track) -> TimingPreset {
+        track.standard(from: project?.settings.standard ?? .general)
+    }
+
+    /// A time as shown in the app: frames or milliseconds, plus the project's start timecode.
+    func tc(_ t: Double) -> String {
+        let shown = t + (project?.settings.startTimecode ?? 0)
+        return project?.settings.timecodeDisplay == .milliseconds ? Timecode.srt(shown) : Timecode.frames(shown, fps: fps)
+    }
+
     var windowTitle: String {
-        let name = subtitleURL?.lastPathComponent ?? videoURL.map { $0.deletingPathExtension().lastPathComponent + ".srt" } ?? "Untitled"
-        return doc.isDirty ? "\(name) — Edited" : name
+        guard let project else { return "KPTN.SUB" }
+        if let video, project.videos.count > 1 { return "\(project.name) — \(video.name)" }
+        return project.name
     }
 
     // MARK: Files
 
-    func openVideoPanel() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.movie, .video, .audiovisualContent, .mpeg4Movie, .quickTimeMovie, .audio]
-        panel.allowsMultipleSelection = false
-        if panel.runModal() == .OK, let url = panel.url { openVideo(url) }
-    }
-
+    /// Loads a video into the player (the project decides which).
     func openVideo(_ url: URL) {
         ensureLocal(url) { [weak self] local in self?.loadVideo(local) }
     }
@@ -147,107 +184,17 @@ final class AppModel: ObservableObject {
                 videoURL = url
                 clock.time = 0
                 audio.load(url: url)
-                showHome = false
-                if let subs = pendingSubtitles {
-                    pendingSubtitles = nil
-                    openSubtitles(subs)
-                }
-                rememberFilm()
                 if !url.isFileURL { flash("Streaming: the waveform appears once the audio has been read.") }
             } catch {
-                pendingSubtitles = nil
                 showError("Couldn't open \(url.lastPathComponent)", error.localizedDescription)
             }
         }
     }
 
-    // MARK: Home screen and recent films
-
-    /// Asks to save unsaved changes, then closes the film and shows the home screen.
-    func goHome() {
-        guard !showHome, confirmDiscardChanges() else { return }
-        closeFilm()
-        showHome = true
-    }
-
-    func openRecent(_ film: RecentFilm) {
-        guard let url = film.videoURL else { return }
-        if url.isFileURL && !FileManager.default.fileExists(atPath: url.path) {
-            removeRecent(film)
-            showError("Can't find \(url.lastPathComponent)",
-                      "It may have been moved, renamed or deleted, so it has been taken off the list. Open it again with ⌘O.")
-            return
-        }
-        if let subs = film.subtitleURL, !subs.isFileURL || FileManager.default.fileExists(atPath: subs.path) {
-            pendingSubtitles = subs
-        }
-        openVideo(url)
-    }
-
-    func removeRecent(_ film: RecentFilm) {
-        recents.removeAll { $0.id == film.id }
-        storeRecents()
-    }
-
-    /// Records the open video, and its subtitle file once there is one.
-    private func rememberFilm() {
-        guard let video = videoURL else { return }
-        let key = video.absoluteString
-        var entry = recents.first { $0.video == key } ?? RecentFilm(video: key, subtitles: nil, opened: Date())
-        if let subs = subtitleURL { entry.subtitles = subs.absoluteString }
-        entry.opened = Date()
-        recents.removeAll { $0.video == key }
-        recents.insert(entry, at: 0)
-        if recents.count > 12 { recents.removeLast(recents.count - 12) }
-        storeRecents()
-    }
-
-    private func storeRecents() {
-        if let data = try? JSONEncoder().encode(recents) {
-            UserDefaults.standard.set(data, forKey: "recentFilms")
-        }
-    }
-
-    /// true when it's fine to throw the current titles away.
-    private func confirmDiscardChanges() -> Bool {
-        guard doc.isDirty else { return true }
-        let alert = NSAlert()
-        alert.messageText = "Save changes to \(suggestedName(ext: "srt"))?"
-        alert.informativeText = "Your changes will be lost if you don't save them."
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Don't Save")
-        alert.addButton(withTitle: "Cancel")
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
-            save()
-            return !doc.isDirty   // false if the save panel was cancelled
-        case .alertSecondButtonReturn:
-            return true
-        default:
-            return false
-        }
-    }
-
-    private func closeFilm() {
-        finishSpotting()
-        previewUntil = nil
-        focusRequest = nil
-        mainWindow?.makeFirstResponder(nil)
-        engine.unload()
-        clock.isPlaying = false
-        clock.time = 0
-        audio.clear()
-        doc.replaceAll([])
-        doc.selectedID = nil
-        videoURL = nil
-        subtitleURL = nil
-        pendingSubtitles = nil
-    }
-
     // MARK: iCloud and errors
 
     /// Name of the file waiting on iCloud or opening (shown in the title bar and on the home screen).
-    @Published private(set) var loadingName: String?
+    @Published var loadingName: String?
     @Published private(set) var isDownloadingFromICloud = false
     private var iCloudWaits: [URL: Task<Void, Never>] = [:]
 
@@ -256,8 +203,10 @@ final class AppModel: ObservableObject {
     /// Makes sure a file is on this Mac before it's opened, downloading it from iCloud Drive
     /// if it's only in the cloud. Every iCloud query and download request runs off the main
     /// thread with a timeout: iCloud can stall on a cloud-only file, and the app must stay usable.
-    private func ensureLocal(_ url: URL, then completion: @escaping (URL) -> Void) {
+    func ensureLocal(_ url: URL, then completion: @escaping (URL) -> Void) {
         guard url.isFileURL else { completion(url); return }
+        // Fast path: a file whose contents are on this Mac opens straight away, without asking iCloud.
+        if !ProjectStore.isDataless(url) { completion(url); return }
         iCloudWaits[url]?.cancel()
         iCloudWaits[url] = Task { [weak self] in
             let started = Date()
@@ -284,7 +233,6 @@ final class AppModel: ObservableObject {
                 self.isDownloadingFromICloud = true
                 if Date().timeIntervalSince(started) > 90 {
                     self.finishICloudWait(url)
-                    self.pendingSubtitles = nil
                     self.showError("iCloud hasn't delivered \(url.lastPathComponent)",
                                    "It's stored only in iCloud Drive and hasn't downloaded yet. In Finder, right-click it and choose Download Now, then open it again once it has downloaded.")
                     return
@@ -298,7 +246,6 @@ final class AppModel: ObservableObject {
     func cancelICloudWait() {
         iCloudWaits.values.forEach { $0.cancel() }
         iCloudWaits.removeAll()
-        pendingSubtitles = nil
         isDownloadingFromICloud = false
         loadingName = nil
     }
@@ -320,7 +267,7 @@ final class AppModel: ObservableObject {
     }
 
     /// Runs blocking work on a background queue (not the Swift concurrency pool, which it could starve).
-    private nonisolated static func offMain<T: Sendable>(_ work: @escaping @Sendable () -> T) -> Task<T, Never> {
+    nonisolated static func offMain<T: Sendable>(_ work: @escaping @Sendable () -> T) -> Task<T, Never> {
         Task.detached {
             await withCheckedContinuation { continuation in
                 DispatchQueue.global(qos: .userInitiated).async { continuation.resume(returning: work()) }
@@ -329,7 +276,7 @@ final class AppModel: ObservableObject {
     }
 
     /// The task's result, or nil if it takes longer than `timeout` (the task keeps running).
-    private static func value<T: Sendable>(of task: Task<T, Never>, timeout: Double) async -> T? {
+    static func value<T: Sendable>(of task: Task<T, Never>, timeout: Double) async -> T? {
         let once = ResumeOnce()
         return await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
             Task {
@@ -361,112 +308,26 @@ final class AppModel: ObservableObject {
                       "Use a direct link to a video file (https://…/film.mp4) or an HLS stream (.m3u8).")
             return
         }
-        openVideo(url)
+        addVideo(url)
     }
 
-    func openSubtitlesPanel() {
-        let panel = NSOpenPanel()
-        let types: [UTType?] = [UTType(filenameExtension: "srt"), UTType(filenameExtension: "vtt"), UTType.plainText]
-        panel.allowedContentTypes = types.compactMap { $0 }
-        panel.allowsMultipleSelection = false
-        if panel.runModal() == .OK, let url = panel.url { openSubtitles(url) }
-    }
-
-    func openSubtitles(_ url: URL) {
-        ensureLocal(url) { [weak self] local in self?.readSubtitles(local) }
-    }
-
-    /// The file is read off the main thread, so a slow disk or iCloud can't freeze the app.
-    private func readSubtitles(_ url: URL) {
-        loadingName = url.lastPathComponent
-        let reading = Self.offMain { () -> Result<[Subtitle], SubtitleReadError> in
-            do { return .success(try SubtitleFormats.read(url: url)) }
-            catch { return .failure(SubtitleReadError(message: error.localizedDescription)) }
-        }
-        Task {
-            let result = await reading.value
-            if loadingName == url.lastPathComponent { loadingName = nil }
-            switch result {
-            case .success(let subs):
-                doc.replaceAll(subs)
-                subtitleURL = url.pathExtension.lowercased() == "srt" ? url : nil
-                rememberFilm()
-                flash("Loaded \(subs.count) titles from \(url.lastPathComponent)")
-            case .failure(let error):
-                showError("Couldn't read \(url.lastPathComponent)", error.message)
+    /// Reads a subtitle file off the main thread, so a slow disk or iCloud can't freeze the app.
+    func readSubtitleFile(_ url: URL, then completion: @escaping ([Subtitle]) -> Void) {
+        ensureLocal(url) { [weak self] local in
+            guard let self else { return }
+            self.loadingName = local.lastPathComponent
+            let reading = Self.offMain { () -> Result<[Subtitle], SubtitleReadError> in
+                do { return .success(try SubtitleFormats.read(url: local)) }
+                catch { return .failure(SubtitleReadError(message: error.localizedDescription)) }
             }
-        }
-    }
-
-    func handleDrop(_ urls: [URL]) {
-        for url in urls {
-            let ext = url.pathExtension.lowercased()
-            if ["srt", "vtt"].contains(ext) { openSubtitles(url) } else { openVideo(url) }
-        }
-    }
-
-    func save() {
-        if let url = subtitleURL { write(SubtitleFormats.srt(doc.subtitles), to: url) } else { saveAs() }
-    }
-
-    func saveAs() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "srt") ?? .plainText]
-        panel.nameFieldStringValue = suggestedName(ext: "srt")
-        if panel.runModal() == .OK, let url = panel.url {
-            if write(SubtitleFormats.srt(doc.subtitles), to: url) {
-                subtitleURL = url
-                rememberFilm()
+            Task {
+                let result = await reading.value
+                if self.loadingName == local.lastPathComponent { self.loadingName = nil }
+                switch result {
+                case .success(let subs): completion(subs)
+                case .failure(let error): self.showError("Couldn't read \(local.lastPathComponent)", error.message)
+                }
             }
-        }
-    }
-
-    /// File ▸ Export…: a save panel with a Format menu. Exporting doesn't change the file ⌘S saves to.
-    func export() {
-        let defaults = UserDefaults.standard
-        let initial = defaults.string(forKey: "exportFormat").flatMap(ExportFormat.init(rawValue:)) ?? .srt
-        let panel = NSSavePanel()
-        panel.title = "Export Subtitles"
-        panel.prompt = "Export"
-        panel.allowedContentTypes = [initial.type]
-        panel.nameFieldStringValue = suggestedName(ext: initial.rawValue)
-
-        let switcher = ExportFormatSwitcher(panel: panel)
-        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-        ExportFormat.allCases.forEach { popup.addItem(withTitle: $0.title) }
-        popup.selectItem(at: ExportFormat.allCases.firstIndex(of: initial) ?? 0)
-        popup.target = switcher
-        popup.action = #selector(ExportFormatSwitcher.formatChanged(_:))
-        let stack = NSStackView(views: [NSTextField(labelWithString: "Format:"), popup])
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 10, left: 20, bottom: 10, right: 20)
-        stack.setFrameSize(stack.fittingSize)
-        panel.accessoryView = stack
-
-        let response = withExtendedLifetime(switcher) { panel.runModal() }
-        guard response == .OK, let url = panel.url else { return }
-        let format = ExportFormat.allCases[max(0, popup.indexOfSelectedItem)]
-        defaults.set(format.rawValue, forKey: "exportFormat")
-        let text = format == .srt ? SubtitleFormats.srt(doc.subtitles) : SubtitleFormats.vtt(doc.subtitles)
-        write(text, to: url, markSaved: false)
-    }
-
-    private func suggestedName(ext: String) -> String {
-        let base = subtitleURL?.deletingPathExtension().lastPathComponent
-            ?? videoURL?.deletingPathExtension().lastPathComponent ?? "Untitled"
-        return "\(base).\(ext)"
-    }
-
-    @discardableResult
-    private func write(_ text: String, to url: URL, markSaved: Bool = true) -> Bool {
-        do {
-            try text.write(to: url, atomically: true, encoding: .utf8)
-            if markSaved { doc.markSaved() }
-            flash("Saved \(url.lastPathComponent)")
-            return true
-        } catch {
-            showError("Couldn't save \(url.lastPathComponent)", error.localizedDescription)
-            return false
         }
     }
 
@@ -586,41 +447,84 @@ final class AppModel: ObservableObject {
         doc.selectedID = s.id
     }
 
+    /// Something to type into: a selected title, or a selected empty slot.
+    var hasTypingTarget: Bool { doc.selectedID != nil || emptySlotRow != nil }
+
     /// Typing while a title is selected (and nothing is being edited) starts editing it.
+    /// On an empty slot, it creates the title there first.
     func typeIntoSelected(_ characters: String) {
+        if doc.selectedID == nil, let key = emptySlotRow {
+            createInRow(key, text: characters)
+            return
+        }
         guard let id = doc.selectedID, let s = doc.subtitle(id) else { return }
         doc.setText(id, s.text + characters)
         focusRequest = id
     }
 
-    /// Moves to the next/previous title and puts the playhead at its start.
+    /// Return: edit the selected title, or create one in the selected empty slot.
+    func editSelected() {
+        if doc.selectedID == nil, let key = emptySlotRow { createInRow(key); return }
+        if let id = doc.selectedID { focusRequest = id }
+    }
+
+    /// Tab / Shift-Tab, ↑ / ↓: the next or previous row in the focused language, empty slots
+    /// included, with the playhead at its start. The other languages stay side by side.
     func selectAdjacent(_ delta: Int, keepEditing: Bool = false) {
-        guard !doc.subtitles.isEmpty else { return }
+        guard !rows.isEmpty, let track = focusedTrack else { return }
         let i: Int
-        if let sel = doc.index(of: doc.selectedID) {
-            i = sel
+        if let cur = currentRowIndex {
+            i = cur
         } else {
-            // Nothing selected (playhead in a gap): step from the playhead's position in the list.
+            // Nothing selected (playhead in a gap): step from the playhead's position.
             let t = clock.time
-            let k = doc.subtitles.lastIndex(where: { $0.start <= t }) ?? -1
+            let k = rows.lastIndex(where: { $0.time <= t }) ?? -1
             i = delta > 0 ? k : k + 1
         }
-        let j = min(max(0, i + delta), doc.subtitles.count - 1)
-        let id = doc.subtitles[j].id
+        let j = min(max(0, i + delta), rows.count - 1)
+        let row = rows[j]
         if engine.isPlaying { engine.pause() }
-        select(id, seekToStart: true)
-        if keepEditing { focusRequest = id }
+        if let s = row.cells[track.id] {
+            select(s.id, seekToStart: true)
+            if keepEditing { focusRequest = s.id }
+        } else {
+            doc.selectedID = nil
+            emptySlotRow = row.key
+            seek(row.time)
+            cardScrollTarget = row.key
+            if keepEditing {
+                focusRequest = nil
+                mainWindow?.makeFirstResponder(nil)
+            }
+        }
+    }
+
+    var focusedIsLocked: Bool { focusedTrack?.locked ?? false }
+
+    /// Locked languages keep the master's timing: only their text can change.
+    func refuseIfLocked() -> Bool {
+        guard focusedIsLocked else { return false }
+        flash("\(focusedTrack?.language.name ?? "This language") is locked to the master: only its text can change.")
+        return true
     }
 
     func deleteSelected() {
-        guard let id = doc.selectedID else { return }
+        guard let id = doc.selectedID, !refuseIfLocked() else { return }
         doc.delete(id)
     }
 
     /// Creates a title (used by click-drag) and opens its card for typing.
+    /// In a translation, it's linked to the master title it overlaps.
     func createTitle(start: Double, end: Double) {
-        let id = doc.add(start: start, end: end)
+        guard !refuseIfLocked() else { return }
+        let id = doc.add(start: start, end: end, link: autoLink(start: start, end: end))
         focusRequest = id
+    }
+
+    /// Plays one title from its start to its end.
+    func playTitle(_ id: UUID) {
+        guard let s = doc.subtitle(id) else { return }
+        playRange(from: s.start, to: s.end)
     }
 
     // MARK: Fine-tuning (shared by jog, wheel, trackpad and nudge keys)
@@ -629,7 +533,7 @@ final class AppModel: ObservableObject {
     /// Must be called between `doc.beginLive()` and `doc.commitLive()`.
     @discardableResult
     func moveEdge(_ edge: Edge, of id: UUID, to t: Double, clamp: Bool) -> Double? {
-        guard let s = doc.subtitle(id) else { return nil }
+        guard !focusedIsLocked, let s = doc.subtitle(id) else { return nil }
         let minLength = 0.1
         var value = t
         switch edge {
@@ -660,8 +564,12 @@ final class AppModel: ObservableObject {
 
     /// After an adjustment: start edges play from 1 s before to 1 s after;
     /// end edges play from 1 s before to 0.5 s after.
-    func preview(_ edge: Edge, of id: UUID) {
+    enum ReplayAfter { case jog, resize }
+
+    func preview(_ edge: Edge, of id: UUID, after kind: ReplayAfter = .jog) {
         // Either edge: play the whole title, from 1 s before it starts to just after it ends.
+        // Each kind of adjustment can be switched off in the Title menu.
+        guard kind == .jog ? replayAfterJog : replayAfterResize else { return }
         guard hasMedia, let s = doc.subtitle(id) else { return }
         playRange(from: max(0, s.start - 1), to: s.end + 0.25)
     }
@@ -670,6 +578,7 @@ final class AppModel: ObservableObject {
     /// during these, so the title being worked on stays selected.
     private var previewUntil: Double?
     var isPreviewing: Bool { previewUntil != nil }
+    func previewUntilReset() { previewUntil = nil }
 
     func playRange(from: Double, to: Double) {
         guard hasMedia else { return }
@@ -680,7 +589,7 @@ final class AppModel: ObservableObject {
     /// Keyboard, wheel and trackpad nudges: frame steps, coalesced into one undo
     /// step, previewed once the input pauses.
     func nudge(_ edge: Edge, frames: Int) {
-        guard let id = doc.selectedID, let s = doc.subtitle(id) else { return }
+        guard let id = doc.selectedID, let s = doc.subtitle(id), !refuseIfLocked() else { return }
         doc.beginLive()
         let current = edge == .start ? s.start : s.end
         if let t = moveEdge(edge, of: id, to: current + Double(frames) * frameDuration, clamp: true) {
@@ -717,7 +626,7 @@ final class AppModel: ObservableObject {
 
     /// Hold mode: key down. Tap mode: "end this, start next".
     func spotDown(eventTimestamp: TimeInterval? = nil) {
-        guard hasMedia, engine.isPlaying else { return }
+        guard hasMedia, engine.isPlaying, !refuseIfLocked() else { return }
         let t = spotTime(eventTimestamp: eventTimestamp, offset: spotStartOffset)
         if spotMode == .tap, spottingID != nil {
             finishSpotting(at: spotTime(eventTimestamp: eventTimestamp, offset: spotEndOffset))
@@ -745,7 +654,7 @@ final class AppModel: ObservableObject {
     /// Splits a title at `t`, leaving the minimum gap (half each side of the split point).
     /// The text is divided at the line break or word nearest the split.
     func splitTitle(_ id: UUID, at t: Double) {
-        guard let s = doc.subtitle(id) else { return }
+        guard let s = doc.subtitle(id), !refuseIfLocked() else { return }
         let half = minGap / 2
         let firstEnd = t - half
         let secondStart = t + half
@@ -797,7 +706,9 @@ final class AppModel: ObservableObject {
         guard let id = spottingID else { return }
         spottingID = nil
         if let t, let s = doc.subtitle(id) {
-            doc.liveUpdate(id) { $0.end = max(s.start + 0.3, t) }
+            let end = max(s.start + 0.3, t)
+            let link = autoLink(start: s.start, end: end)
+            doc.liveUpdate(id) { $0.end = end; $0.link = link }
         }
         doc.commitLive()
     }

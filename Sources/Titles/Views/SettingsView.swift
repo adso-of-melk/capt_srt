@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Titles ▸ Settings… (⌘,). Kept deliberately short.
+/// KPTN.SUB ▸ Settings… (⌘,). Kept deliberately short. Reading speed and line rules
+/// live per project (File ▸ Project Settings…).
 struct SettingsView: View {
     @ObservedObject var model: AppModel
 
@@ -47,22 +48,14 @@ struct SettingsView: View {
             }
 
             Section {
-                Picker("Timing preset", selection: presetBinding) {
-                    ForEach(TimingPreset.all) { Text($0.name).tag($0.id) }
-                }
                 Toggle("Trackpad swipe over a title adjusts its edges", isOn: $model.swipeOverTitleAdjusts)
+                Toggle("Replay title after jog or nudge", isOn: $model.replayAfterJog)
+                Toggle("Replay title after drag-resize", isOn: $model.replayAfterResize)
             }
         }
         .formStyle(.grouped)
         .frame(width: 520)
         .tint(Theme.amber)
         .preferredColorScheme(.dark)
-    }
-
-    private var presetBinding: Binding<String> {
-        Binding(
-            get: { model.preset.id },
-            set: { id in model.preset = TimingPreset.all.first { $0.id == id } ?? .general }
-        )
     }
 }

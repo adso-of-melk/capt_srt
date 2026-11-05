@@ -11,6 +11,7 @@ struct WaveformPane: View {
     var body: some View {
         WaveformRepresentable(model: model, revision: Revision(
             subtitles: doc.subtitles, selected: doc.selectedID, time: clock.time,
+            revision: model.revision, focused: model.video?.focusedTrackID,
             pps: model.pixelsPerSecond, gain: model.waveGain, db: model.dbScale,
             hasWave: audio.waveform != nil, loading: audio.isLoading))
             .background(Theme.background)
@@ -21,6 +22,8 @@ struct WaveformPane: View {
         var subtitles: [Subtitle]
         var selected: UUID?
         var time: Double
+        var revision: Int
+        var focused: UUID?
         var pps: Double
         var gain: Double
         var db: Bool
@@ -58,6 +61,9 @@ final class WaveformNSView: NSView {
     private let rulerHeight: CGFloat = 20
     private let edgeGrab: CGFloat = 6
     private var boxRects: [(id: UUID, rect: CGRect)] = []
+    /// Boxes of the other open languages, in their slim lanes under the waveform.
+    private var laneBoxes: [(track: UUID, id: UUID, rect: CGRect)] = []
+    private var laneRects: [(track: UUID, rect: CGRect)] = []
 
     // Interaction
     private enum Drag {
@@ -98,8 +104,20 @@ final class WaveformNSView: NSView {
     private func x(_ t: Double) -> CGFloat { CGFloat((t - viewStart) * pps) }
     private func t(_ x: CGFloat) -> Double { max(0, viewStart + Double(x) / pps) }
     private var visibleDuration: Double { Double(bounds.width) / pps }
+    /// The other open languages, each drawn as a slim read-only lane at the bottom.
+    private var laneTracks: [Track] {
+        guard let model else { return [] }
+        return model.openTracks.filter { $0.id != model.video?.focusedTrackID }
+    }
+
+    private var lanesHeight: CGFloat {
+        let n = CGFloat(laneTracks.count)
+        guard n > 0 else { return 0 }
+        return min(n * 20, max(0, bounds.height - rulerHeight) * 0.45)
+    }
+
     private var waveRect: CGRect {
-        CGRect(x: 0, y: rulerHeight, width: bounds.width, height: max(0, bounds.height - rulerHeight))
+        CGRect(x: 0, y: rulerHeight, width: bounds.width, height: max(0, bounds.height - rulerHeight - lanesHeight))
     }
 
     /// Keeps the playhead in view and keeps zoom anchored on it.
@@ -140,6 +158,11 @@ final class WaveformNSView: NSView {
         drawRuler(ctx, width: w)
         drawWaveform(ctx, in: wave, model: model)
         drawBoxes(ctx, in: wave, model: model)
+        drawLanes(model: model, top: wave.maxY)
+        if model.focusedIsLocked {
+            drawText("LOCKED TO MASTER: TEXT ONLY", at: CGPoint(x: bounds.width - 190, y: wave.minY + 6),
+                     font: labelFont(9), color: Palette.lilac)
+        }
 
         if case let .creating(t0, t1) = drag {
             let r = CGRect(x: x(min(t0, t1)), y: wave.minY + 6,
@@ -276,7 +299,7 @@ final class WaveformNSView: NSView {
             // Number pill, then the full title text (all lines), wrapped inside the box.
             NSGraphicsContext.saveGraphicsState()
             NSBezierPath(roundedRect: r.insetBy(dx: 1, dy: 1), xRadius: 5, yRadius: 5).addClip()
-            let numberText = "\(index + 1)"
+            let numberText = model.rowNumber(of: s.id).map(String.init) ?? "\(index + 1)"
             let font = labelFont(11)
             let numWidth = (numberText as NSString).size(withAttributes: [.font: font]).width + 10
             let pill = CGRect(x: r.minX + 4, y: r.minY + 4, width: numWidth, height: 15)
@@ -312,6 +335,52 @@ final class WaveformNSView: NSView {
             for gx in [r.minX, r.maxX] {
                 NSBezierPath(roundedRect: CGRect(x: gx - 2, y: r.midY - 9, width: 4, height: 18), xRadius: 2, yRadius: 2).fill()
             }
+        }
+    }
+
+    /// Slim lanes for the other open languages: boxes and numbers, no text. The row selected
+    /// in the card pane is outlined in every lane, so drift between languages is easy to see.
+    private func drawLanes(model: AppModel, top: CGFloat) {
+        laneBoxes.removeAll(keepingCapacity: true)
+        laneRects.removeAll(keepingCapacity: true)
+        let tracks = laneTracks
+        guard !tracks.isEmpty else { return }
+        let laneH = lanesHeight / CGFloat(tracks.count)
+        let viewEnd = viewStart + visibleDuration
+        let selectedRow = model.selectedRowKey
+        let masterID = model.video?.masterTrackID
+        for (i, track) in tracks.enumerated() {
+            let lane = CGRect(x: 0, y: top + CGFloat(i) * laneH, width: bounds.width, height: laneH)
+            laneRects.append((track.id, lane))
+            Palette.background.withAlphaComponent(0.6).setFill()
+            lane.fill()
+            Palette.rule.setFill()
+            CGRect(x: 0, y: lane.minY, width: bounds.width, height: 1).fill()
+            let preset = model.preset(for: track)
+            for s in track.doc.subtitles where s.end >= viewStart && s.start <= viewEnd {
+                let r = CGRect(x: x(s.start), y: lane.minY + 2, width: max(2, x(s.end) - x(s.start)), height: max(4, laneH - 4))
+                laneBoxes.append((track.id, s.id, r))
+                let color = Palette.status(preset.status(s))
+                let path = NSBezierPath(roundedRect: r, xRadius: 3, yRadius: 3)
+                color.withAlphaComponent(0.16).setFill()
+                path.fill()
+                let inRow = selectedRow != nil && RowBuilder.key(of: s, inMaster: track.id == masterID) == selectedRow
+                (inRow ? Palette.amber : color.withAlphaComponent(0.6)).setStroke()
+                path.lineWidth = inRow ? 1.5 : 1
+                path.stroke()
+                if r.width > 22, laneH >= 12, let n = model.rowNumber(of: s.id) {
+                    drawText("\(n)", at: CGPoint(x: r.minX + 4, y: r.minY + (r.height - 11) / 2),
+                             font: labelFont(9), color: Palette.text.withAlphaComponent(0.7))
+                }
+            }
+            // Language code tag at the left edge.
+            let tag = track.language.code.uppercased() + (track.locked ? " 🔒" : "")
+            let font = labelFont(9)
+            let tw = (tag as NSString).size(withAttributes: [.font: font]).width + 10
+            let tagRect = CGRect(x: 4, y: lane.minY + (laneH - 13) / 2, width: tw, height: 13)
+            Palette.panelRaised.setFill()
+            NSBezierPath(roundedRect: tagRect, xRadius: 6, yRadius: 6).fill()
+            drawText(tag, at: CGPoint(x: tagRect.minX + 5, y: tagRect.minY + 1), font: font, color: Palette.periwinkle)
         }
     }
 
@@ -388,7 +457,8 @@ final class WaveformNSView: NSView {
     }
 
     private func updateCursor(at p: CGPoint, flags: NSEvent.ModifierFlags) {
-        if p.y < rulerHeight { NSCursor.pointingHand.set(); return }
+        if p.y < rulerHeight || laneRects.contains(where: { $0.rect.contains(p) }) { NSCursor.pointingHand.set(); return }
+        if model?.focusedIsLocked == true { NSCursor.arrow.set(); return }
         let split = Self.isSplitClick(flags)
         switch hit(p) {
         case .edge: (split ? NSCursor.split : NSCursor.resizeLeftRight).set()
@@ -409,6 +479,33 @@ final class WaveformNSView: NSView {
         if p.y < rulerHeight {
             drag = .ruler
             model.placePlayhead(t(p.x))
+            return
+        }
+
+        // Another language's lane: focus that language (and the title clicked).
+        if let lane = laneRects.first(where: { $0.rect.contains(p) }) {
+            drag = .none
+            model.focusTrack(lane.track, edit: false)
+            if let box = laneBoxes.first(where: { $0.track == lane.track && $0.rect.insetBy(dx: -2, dy: 0).contains(p) }) {
+                model.select(box.id, seekToStart: true)
+            } else {
+                model.placePlayhead(t(p.x))
+            }
+            needsDisplay = true
+            return
+        }
+
+        // A locked language keeps the master's timing: clicks only select and seek.
+        if model.focusedIsLocked {
+            drag = .none
+            switch hit(p) {
+            case let .edge(id, _), let .body(id):
+                model.select(id, seekToStart: event.clickCount == 2)
+                if event.clickCount == 2 { model.focusRequest = id }
+            case .empty:
+                model.placePlayhead(t(p.x))
+            }
+            needsDisplay = true
             return
         }
 
@@ -499,7 +596,7 @@ final class WaveformNSView: NSView {
             }
         case let .resizing(id, edge):
             model.doc.commitLive()
-            if didDrag { model.preview(edge, of: id) }
+            if didDrag { model.preview(edge, of: id, after: .resize) }
         }
     }
 
@@ -544,8 +641,8 @@ final class WaveformNSView: NSView {
     }
 
     @objc private func menuDelete(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? UUID else { return }
-        model?.doc.delete(id)
+        guard let id = sender.representedObject as? UUID, let model, !model.refuseIfLocked() else { return }
+        model.doc.delete(id)
     }
 
     // MARK: Wheel and trackpad

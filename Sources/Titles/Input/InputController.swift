@@ -57,7 +57,7 @@ final class InputController {
             return e
         }
         // The home screen has no titles to edit.
-        if model.showHome { return e }
+        if model.showHome || model.project == nil { return e }
         let flags = e.modifierFlags.intersection([.shift, .control, .option, .command])
 
         switch e.type {
@@ -200,7 +200,7 @@ final class InputController {
             model.stepFrames(flags.contains(.shift) ? Int(model.engine.frameRate.rounded()) : 1)
             return nil
         case Key.returnKey, Key.enter:
-            if let id = model.doc.selectedID { model.focusRequest = id }
+            model.editSelected()
             return nil
         case Key.delete, Key.forwardDelete:
             model.deleteSelected()
@@ -209,7 +209,7 @@ final class InputController {
             // Typing while a title is selected starts editing it (the keystroke isn't lost).
             if let chars = e.characters, let scalar = chars.unicodeScalars.first,
                scalar.value >= 0x20, scalar.value != 0x7F, !(0xF700...0xF8FF).contains(scalar.value),
-               model.doc.selectedID != nil {
+               model.hasTypingTarget {
                 model.typeIntoSelected(chars)
                 return nil
             }

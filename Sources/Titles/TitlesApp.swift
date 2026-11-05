@@ -7,7 +7,7 @@ struct TitlesApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        Window("KPTN.SRT", id: "main") {
+        Window("KPTN.SUB", id: "main") {
             MainView(model: model, doc: model.doc)
                 .frame(minWidth: 960, minHeight: 600)
                 .onAppear { appDelegate.attach(model) }
@@ -46,57 +46,109 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct TitlesCommands: Commands {
     @ObservedObject var model: AppModel
 
+    private var noProject: Bool { model.showHome || model.project == nil }
+
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("Open Video…") { model.openVideoPanel() }
+            Button("New Project…") {
+                model.newProjectVideo = nil
+                model.sheet = .newProject
+            }
+            .keyboardShortcut("n")
+            Button("Open Project…") { model.openProjectPanel() }
                 .keyboardShortcut("o")
-            Button("Open Video Link…") { model.showURLSheet = true }
-                .keyboardShortcut("o", modifiers: [.command, .option])
-            Button("Open Subtitles…") { model.openSubtitlesPanel() }
-                .keyboardShortcut("o", modifiers: [.command, .shift])
+            Divider()
+            Group {
+                Button("Add Video…") { model.addVideoPanel() }
+                    .keyboardShortcut("n", modifiers: [.command, .option])
+                Button("Add Video Link…") { model.sheet = .openLink }
+                    .keyboardShortcut("o", modifiers: [.command, .option])
+            }
+            .disabled(noProject)
             Divider()
             Button("Back to Home") { model.goHome() }
                 .keyboardShortcut("h", modifiers: [.command, .shift])
-                .disabled(model.showHome)
+                .disabled(noProject)
         }
         CommandGroup(replacing: .saveItem) {
             Group {
-                Button("Save") { model.save() }
+                Button("Save") { model.saveProject(announce: true) }
                     .keyboardShortcut("s")
-                Button("Save As…") { model.saveAs() }
-                    .keyboardShortcut("s", modifiers: [.command, .shift])
-                Button("Export…") { model.export() }
+                Button("Export…") { model.sheet = .export }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
+                Divider()
+                Button("Project Settings…") { model.sheet = .projectSettings }
+                    .keyboardShortcut(",", modifiers: [.command, .option])
             }
-            .disabled(model.showHome)
+            .disabled(noProject)
         }
         CommandGroup(replacing: .undoRedo) {
-            Button("Undo") { model.doc.undo() }
+            Button("Undo") { model.undo() }
                 .keyboardShortcut("z")
-            Button("Redo") { model.doc.redo() }
+                .disabled(noProject)
+            Button("Redo") { model.redo() }
                 .keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(noProject)
+        }
+        CommandGroup(after: .toolbar) {
+            Toggle("Text Only", isOn: $model.textOnly)
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .disabled(noProject)
+        }
+        CommandMenu("Language") {
+            Group {
+                Button("Next Language") { model.focusAdjacentTrack(1) }
+                    .keyboardShortcut("l")
+                Button("Previous Language") { model.focusAdjacentTrack(-1) }
+                    .keyboardShortcut("l", modifiers: [.command, .shift])
+                Divider()
+                ForEach(Array(model.openTracks.prefix(9).enumerated()), id: \.element.id) { i, track in
+                    Button(columnTitle(track)) { model.focusTrack(atColumn: i) }
+                        .keyboardShortcut(KeyEquivalent(Character("\(i + 1)")))
+                }
+                Divider()
+                Button("New Language from Master…") { model.sheet = .newLanguage }
+                Button("Import Language…") { model.importLanguagePanel() }
+                if let track = model.focusedTrack {
+                    Divider()
+                    if track.id != model.masterTrack?.id {
+                        Button(track.locked ? "Unlock \(track.language.name)" : "Lock \(track.language.name) to Master") {
+                            model.setLocked(track, !track.locked)
+                        }
+                        Button("Make \(track.language.name) the Master") { model.setMaster(track) }
+                    }
+                    if model.openTracks.count > 1 {
+                        Button("Close \(track.language.name) Column") { model.closeColumn(track) }
+                    }
+                }
+            }
+            .disabled(noProject)
         }
         CommandMenu("Title") {
-            Button("Play / Pause") { model.togglePlay() }
-            Button("Split at Playhead  (or ⌘-click a box)") { model.splitAtPlayhead() }
-                .keyboardShortcut("b")
-            Button("Delete Title  (⌫ when not typing)") { model.deleteSelected() }
+            Group {
+                Button("Play / Pause  (⇧Space)") { model.togglePlay() }
+                Button("Split at Playhead  (or ⌘-click a box)") { model.splitAtPlayhead() }
+                    .keyboardShortcut("b")
+                Button("Delete Title  (⌫ when not typing)") { model.deleteSelected() }
+            }
+            .disabled(noProject)
+            Divider()
+            Toggle("Replay Title After Jog or Nudge", isOn: $model.replayAfterJog)
+            Toggle("Replay Title After Drag-Resize", isOn: $model.replayAfterResize)
             Divider()
             Picker("Spotting Mode", selection: $model.spotMode) {
                 ForEach(SpotMode.allCases) { Text($0.rawValue).tag($0) }
-            }
-            Picker("Timing Preset", selection: presetBinding) {
-                ForEach(TimingPreset.all) { Text($0.name).tag($0.id) }
             }
             Toggle("Follow Playhead", isOn: $model.followPlayhead)
             Toggle("Trackpad Swipe Over a Title Adjusts Its Edges", isOn: $model.swipeOverTitleAdjusts)
         }
     }
 
-    private var presetBinding: Binding<String> {
-        Binding(
-            get: { model.preset.id },
-            set: { id in model.preset = TimingPreset.all.first { $0.id == id } ?? .general }
-        )
+    private func columnTitle(_ track: Track) -> String {
+        var t = track.language.name
+        if track.id == model.masterTrack?.id { t += "  ★" }
+        if track.locked { t += "  (locked)" }
+        if track.id == model.focusedTrack?.id { t = "✓ " + t }
+        return t
     }
 }

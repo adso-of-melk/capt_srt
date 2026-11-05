@@ -78,6 +78,8 @@ struct ConsoleLabel: View {
             .font(Theme.label(size, .bold))
             .tracking(1.6)
             .foregroundStyle(color)
+            .lineLimit(1)
+            .fixedSize()
     }
 }
 

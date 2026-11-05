@@ -2,84 +2,80 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-/// Card pane on the left; video top right; title bar and waveform bottom right.
+/// Top strip above everything. Card pane on the left; video top right; title bar and
+/// waveform bottom right. Text Only mode keeps just the cards and a slim transport.
 struct MainView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var doc: SubtitleDocument
-    @State private var urlText = ""
 
     var body: some View {
         Group {
-            if model.showHome {
+            if model.showHome || model.project == nil {
                 HomeView(model: model)
             } else {
                 editor
             }
         }
         .background(Theme.background)
-        .background(WindowAccessor { model.mainWindow = $0 })
+        .background(WindowAccessor { window in
+            let first = model.mainWindow == nil
+            model.mainWindow = window
+            if first { Self.sizeToFit(window) }
+        })
         .preferredColorScheme(.dark)
         .tint(Theme.amber)
-        .navigationTitle(model.showHome ? "KPTN.SRT" : model.windowTitle)
+        .navigationTitle(model.showHome ? "KPTN.SUB" : model.windowTitle)
         .dropDestination(for: URL.self) { urls, _ in
             model.handleDrop(urls)
             return !urls.isEmpty
         }
-        .sheet(isPresented: $model.showURLSheet) {
-            OpenURLSheet(text: $urlText) { string in
-                model.showURLSheet = false
-                model.openURLString(string)
-            } cancel: {
-                model.showURLSheet = false
-            }
+        .sheet(item: $model.sheet) { kind in
+            SheetHost(model: model, kind: kind)
         }
     }
 
     private var editor: some View {
-        HSplitView {
-            CardPane(model: model, doc: doc)
-                .frame(minWidth: 320, idealWidth: 400, maxWidth: 520)
-
-            VSplitView {
-                VideoPane(model: model, doc: doc, clock: model.clock)
-                    .frame(minHeight: 240)
-                VStack(spacing: 0) {
-                    TitleBar(model: model, clock: model.clock, audio: model.audio)
-                    WaveformPane(model: model, doc: doc, clock: model.clock, audio: model.audio)
-                }
-                .frame(minHeight: 170, idealHeight: 240)
+        VStack(spacing: 0) {
+            TopStrip(model: model)
+            if let text = model.banner {
+                BannerView(text: text) { model.banner = nil }
             }
-            .frame(minWidth: 560)
+            if model.textOnly {
+                VStack(spacing: 0) {
+                    CardPane(model: model, doc: doc)
+                    SlimTransport(model: model, clock: model.clock)
+                }
+            } else {
+                HSplitView {
+                    CardPane(model: model, doc: doc)
+                        .frame(minWidth: 340, idealWidth: 460, maxWidth: .infinity)
+
+                    VSplitView {
+                        VideoPane(model: model, doc: doc, clock: model.clock)
+                            .frame(minHeight: 240)
+                        VStack(spacing: 0) {
+                            TitleBar(model: model, clock: model.clock, audio: model.audio)
+                            WaveformPane(model: model, doc: doc, clock: model.clock, audio: model.audio)
+                        }
+                        .frame(minHeight: 170, idealHeight: 260)
+                    }
+                    .frame(minWidth: 620)
+                }
+            }
         }
     }
-}
 
-private struct OpenURLSheet: View {
-    @Binding var text: String
-    let open: (String) -> Void
-    let cancel: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            PaneHeader(title: "Open video link", color: Theme.periwinkle)
-                .padding(.horizontal, -12)
-            Text("A direct link to a video file (https://…/film.mp4) or an HLS stream (.m3u8).")
-                .font(Theme.label(12, .regular))
-                .foregroundStyle(Theme.textDim)
-            TextField("https://", text: $text)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit { open(text) }
-            HStack {
-                Spacer()
-                Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
-                Button("Open") { open(text) }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(ConsoleButtonStyle())
-            }
-        }
-        .padding(20)
-        .frame(width: 460)
-        .background(Theme.panel)
+    /// Opens the window wide enough that no label in the title bar or headers wraps.
+    private static func sizeToFit(_ window: NSWindow) {
+        guard let screen = window.screen ?? NSScreen.main else { return }
+        let visible = screen.visibleFrame
+        let want = NSSize(width: min(1480, visible.width), height: min(940, visible.height))
+        var frame = window.frame
+        guard frame.width < want.width || frame.height < want.height else { return }
+        frame.size = NSSize(width: max(frame.width, want.width), height: max(frame.height, want.height))
+        frame.origin.x = visible.midX - frame.width / 2
+        frame.origin.y = visible.midY - frame.height / 2
+        window.setFrame(frame, display: true, animate: false)
     }
 }
 

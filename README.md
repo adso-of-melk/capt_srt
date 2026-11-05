@@ -1,4 +1,4 @@
-# KPTN.SRT (working name)
+# KPTN.SUB (working name)
 
 A focused subtitle editor for macOS: the card list on the left, the video at top right, and the title bar and waveform at bottom right.
 
@@ -13,17 +13,38 @@ You need macOS 14 (Sonoma) or later and Xcode 15 or later.
 
 Or, from Terminal in this folder: `swift run -c release`.
 
+## Projects
+
+Everything lives in a **project**, one per film: a single `.kptnsub` file (JSON) holding the film's videos (cuts, reels, trailers) and, for each video, every language.
+
+- **New Project… (⌘N)** asks for a name, a folder (default `~/Movies/KPTN.SUB`, outside iCloud), the video, the master language and, optionally, an existing SRT. Pick a standard (General 17 CPS / 42 chars, Broadcast 15 / 37, Children's 13 / 37); **Advanced** covers reading speed, characters per line, lines, min/max duration, gap, frame rate, start timecode, frames or milliseconds, export format, BOM, line endings and file naming.
+- **File ▸ Project Settings… (⌥⌘,)** changes those later. Each language can override reading speed and characters per line from its column menu.
+- Projects **autosave**. A working copy is also kept in `~/Library/Application Support/KPTN.SUB`, with timestamped backups (the newest 30). If the project file is in iCloud and not downloaded, the app opens the working copy at once and shows a banner instead of waiting; if the two differ, it asks which to keep.
+- The **Home** screen lists recent projects. **HOME** in the top strip (⇧⌘H) goes back there.
+- The **video menu** in the top strip switches videos, adds a video file (⌥⌘N) or link (⌥⌘O), renames or removes one.
+
+## Languages
+
+Each video has a **master** language (★) and any number of others, shown side by side as card columns that scroll sideways.
+
+- **Language ▸ New Language from Master…** makes a new language with the master's timecodes and empty text (or a copy of the text). It can be **free** (default: retime anything) or **locked** (🔒: master timing, text-only edits, follows master changes automatically).
+- **Import Language…** reads an SRT or VTT and links each title to the master title it overlaps most.
+- Rows line up by link, not by number, so an empty slot keeps later rows aligned. Double-click an empty slot, or select it and start typing, to make a title with that row's timing.
+- Column headers have a menu: lock or unlock, make master, reading speed, characters per line, move left or right, close, delete. **+** reopens a closed column or adds one.
+- **⌘L / ⇧⌘L** move focus to the next / previous language (wrapping), and **⌘1–⌘9** jump to a column, even while typing. The focused language is the one you edit, in the cards and the waveform.
+- The waveform shows the other open languages as slim lanes above it. Click a lane to focus that language. The selected row is outlined in every lane.
+- **Text Only (⇧⌘T)** hides picture and waveform, leaving the columns and a slim transport.
+- Undo and redo (⌘Z / ⇧⌘Z) work across all languages in order.
+
 ## Supported files
 
 | What | Formats |
 | --- | --- |
-| Video in | MP4, MOV, M4V (H.264, HEVC, ProRes), plus https links and HLS streams via ⌥⌘O. MKV, WebM and AVI come with the libmpv engine in build 2. |
-| Subtitles in | SRT, WebVTT. Encoding is detected (UTF-8, UTF-16, Windows-1252, Latin-1). |
-| Subtitles out | Save writes SRT (⌘S). File ▸ Export… (⇧⌘E) asks for the format: SRT or WebVTT. Always written as UTF-8. |
+| Video in | MP4, MOV, M4V (H.264, HEVC, ProRes), plus https links and HLS streams. MKV, WebM and AVI come with the libmpv engine later. |
+| Subtitles in | SRT, WebVTT (New Project, Import Language, or drop onto the window). Encoding is detected (UTF-8, UTF-16, Windows-1252, Latin-1). |
+| Subtitles out | **File ▸ Export… (⇧⌘E)**: this language or all languages, this video or all videos, SRT or WebVTT, named by the project pattern (default `{video}.{lang}`). Rows are renumbered on export. UTF-8, with optional BOM and CRLF. |
 
-The app opens on a home screen listing recent films with their subtitle files; click one to carry on where you left off. **Home** at the left of the title bar (or File ▸ Back to Home, ⇧⌘H) closes the film, asking to save changes first, and goes back there.
-
-You can also drop a video and/or an `.srt` file onto the window. Files that are only in iCloud Drive download automatically first, with progress shown in the title bar. Anything that can't be opened shows an alert explaining why.
+You can drop a video, a `.kptnsub` project or a subtitle file onto the window. Anything that can't be opened shows an alert explaining why.
 
 When playback stops, the title under the playhead becomes the selected title.
 
@@ -36,8 +57,8 @@ When playback stops, the title under the playhead becomes the selected title.
 | Draw a title | Drag across empty waveform. Its card opens for typing straight away. Drag again to make the next one. |
 | Live spotting, Hold mode (default) | While the video plays, hold **↓** while a line is spoken. Key down sets the start and key up sets the end. |
 | Live spotting, Tap mode | **↓** ends the current title and starts the next. **↑** ends the current title and leaves a gap. |
-| Spotting offsets | A title starts exactly where you press ↓, and ends 250 ms before you release it. Both can be changed in Settings (⌘,). |
-| Split a title | Hold ⌘ over a box (the cursor turns into scissors) and click where it should split, or press ⌘B to split the title under the playhead. A gap of the preset's minimum (2 frames) is left, half on each side, and the text is divided at the nearest line break or word. |
+| Spotting offsets | A title starts exactly where you press ↓ and ends exactly where you release it. Both can be offset in Settings (⌘,). |
+| Split a title | Hold ⌘ over a box (the cursor turns into scissors) and click where it should split, or press ⌘B to split the title under the playhead. A gap of the standard's minimum (2 frames) is left, half on each side, and the text is divided at the nearest line break or word. |
 
 **Fine-tuning**
 
@@ -51,7 +72,7 @@ When playback stops, the title under the playhead becomes the selected title.
 | Two-finger trackpad swipe over a box, no key (off by default; turn on under Title ▸ Trackpad Swipe Over a Title Adjusts Its Edges) | left half of the box | right half of the box |
 | Mouse drag | box's left edge | box's right edge |
 
-Dragging the body of a box moves the whole title. After adjusting either edge, the whole title plays, from 1 s before its start to just after its end. A plain scroll wheel, trackball or Shift+scroll only pans the waveform and never changes a title. Jogs and nudges stop at the neighbouring title, keeping a 2-frame gap. Mouse drags can overlap a neighbour; overlapping titles turn lilac and are drawn one slightly higher and one slightly lower.
+Dragging the body of a box moves the whole title. After adjusting an edge, the whole title plays from 1 s before its start to just after its end; turn this off separately for jogs/nudges and for drag-resizes in the Title menu. A plain scroll wheel, trackball or Shift+scroll only pans the waveform and never changes a title. Jogs and nudges stop at the neighbouring title, keeping a 2-frame gap. Mouse drags can overlap a neighbour; overlapping titles turn lilac and are drawn one slightly higher and one slightly lower.
 
 **Navigation**
 
@@ -61,9 +82,8 @@ Dragging the body of a box moves the whole title. After adjusting either edge, t
 | Tab / Shift+Tab | Next / previous title. The playhead jumps to it, and editing carries over if you were typing |
 | ← / → | Step one frame back / forward (Shift: one second) |
 | ↑ / ↓ while paused | Select the previous / next title and jump to it |
-| Return, or just start typing | Edit the selected card's text (cursor at the end) |
-
-During playback, the last title the playhead reached stays highlighted, and the card list scrolls to keep it centred. Starting playback leaves text editing.
+| Return, or just start typing | Edit the selected card's text (cursor at the end), or fill a selected empty slot |
+| ⌘L / ⇧⌘L, ⌘1–9 | Focus the next / previous language, or column 1–9 |
 | Click a card | Select it, move the playhead to its start, and edit its text with the cursor at the end |
 | Esc | Leave text editing |
 | ⌫ (when not typing) | Delete the selected title |
@@ -72,28 +92,31 @@ During playback, the last title the playhead reached stays highlighted, and the 
 | ⌘ + scroll, or pinch | Zoom the waveform |
 | Click the ruler | Seek |
 | Right-click a box | Play, edit text, delete |
+| Double-click a card's number | Play that title |
 
-**Settings (⌘,).** Jog speed (how fast Control/Option + mouse moves an edge), spotting mode, reaction offset, timing preset and the trackpad swipe option.
+During playback, the last title the playhead reached stays highlighted, and the card list scrolls to keep it centred. Starting playback leaves text editing.
+
+**Settings (⌘,).** Jog speed (how fast Control/Option + mouse moves an edge), spotting mode, reaction offsets, the trackpad swipe option and the two replay options.
 
 **Waveform display.** Boxes show the full text of each title, wrapped to fit. The **Scale** slider makes quiet passages larger. The **dB** toggle shows loudness in decibels, so whispers stay visible next to loud sounds.
 
-**Timing colours.** Periwinkle means OK, amber means close to the limit, and red means over the limit, for both reading speed (CPS) and duration. Change the preset under Title ▸ Timing Preset.
+**Timing colours.** Periwinkle means OK, amber means close to the limit, and red means over the limit, for both reading speed (CPS) and duration. Limits come from the project's standard and each language's overrides.
 
 ## Code layout
 
 ```
 Sources/Titles/
   TitlesApp.swift            app, window, menus
-  Model/                     Subtitle, document + undo, SRT/VTT, AppModel (all editing actions)
+  Model/                     Subtitle, document + undo, SRT/VTT, Project/Track/rows, ProjectStore, AppModel
   Playback/                  PlaybackEngine protocol + AVFoundation engine (libmpv slots in here)
   Audio/                     audio decoding, waveform pyramid, scrub-audio grains
   Input/InputController.swift  modifier jog, nudges, wheel, spotting keys
-  Views/                     theme, card pane, video pane, title bar, waveform
+  Views/                     theme, top strip, home, sheets, card columns, video pane, title bar, waveform
 ```
 
-## Known limits of build 1
+## Known limits
 
 - Only the formats AVFoundation supports will play (see above).
 - It runs as a Swift package, so it isn't sandboxed and isn't packaged for the App Store yet.
 - Audio is decoded to 16 kHz mono in memory, about 230 MB for a 2-hour film.
-- The timing preset isn't saved between launches yet.
+- Columns are reordered from the column menu (Move Left / Right), not by dragging.

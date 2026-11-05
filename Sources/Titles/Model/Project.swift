@@ -1,0 +1,271 @@
+import Foundation
+import Combine
+
+// MARK: - Languages
+
+struct Language: Hashable, Identifiable, Codable, Sendable {
+    /// BCP-47 code, used in exported file names (Film.hr.srt).
+    var code: String
+    var name: String
+    var id: String { code }
+
+    static let common: [Language] = [
+        ("en", "English"), ("en-GB", "English (UK)"), ("hr", "Croatian"), ("sr-Latn", "Serbian (Latin)"),
+        ("sr-Cyrl", "Serbian (Cyrillic)"), ("bs", "Bosnian"), ("sl", "Slovenian"), ("mk", "Macedonian"),
+        ("sq", "Albanian"), ("de", "German"), ("fr", "French"), ("it", "Italian"), ("es", "Spanish"),
+        ("es-419", "Spanish (Latin America)"), ("pt-PT", "Portuguese (Portugal)"), ("pt-BR", "Portuguese (Brazil)"),
+        ("ca", "Catalan"), ("eu", "Basque"), ("gl", "Galician"), ("nl", "Dutch"), ("sv", "Swedish"),
+        ("da", "Danish"), ("nb", "Norwegian"), ("fi", "Finnish"), ("is", "Icelandic"), ("et", "Estonian"),
+        ("lv", "Latvian"), ("lt", "Lithuanian"), ("pl", "Polish"), ("cs", "Czech"), ("sk", "Slovak"),
+        ("hu", "Hungarian"), ("ro", "Romanian"), ("bg", "Bulgarian"), ("el", "Greek"), ("tr", "Turkish"),
+        ("ru", "Russian"), ("uk", "Ukrainian"), ("ka", "Georgian"), ("hy", "Armenian"), ("ar", "Arabic"),
+        ("he", "Hebrew"), ("fa", "Persian"), ("hi", "Hindi"), ("bn", "Bengali"), ("ur", "Urdu"),
+        ("th", "Thai"), ("vi", "Vietnamese"), ("id", "Indonesian"), ("ms", "Malay"), ("fil", "Filipino"),
+        ("ja", "Japanese"), ("ko", "Korean"), ("zh-Hans", "Chinese (Simplified)"), ("zh-Hant", "Chinese (Traditional)"),
+        ("sw", "Swahili"), ("af", "Afrikaans")
+    ].map { Language(code: $0.0, name: $0.1) }
+
+    static func named(_ code: String) -> Language {
+        common.first { $0.code.lowercased() == code.lowercased() } ?? Language(code: code, name: code)
+    }
+}
+
+// MARK: - Project settings
+
+enum TimecodeDisplay: String, Codable, CaseIterable, Sendable {
+    case frames, milliseconds
+    var title: String { self == .frames ? "Frames (00:00:00:00)" : "Milliseconds (00:00:00,000)" }
+}
+
+struct ProjectSettings: Codable, Equatable, Sendable {
+    var standard: TimingPreset = .general
+    /// nil = use the video's own frame rate.
+    var frameRate: Double?
+    /// Shown added to every time (e.g. 10:00:00:00 for broadcast). Exports are unaffected.
+    var startTimecode: Double = 0
+    var timecodeDisplay: TimecodeDisplay = .frames
+    var exportFormat: ExportFormat = .srt
+    var utf8BOM = false
+    var crlf = true
+    /// {video} and {lang} are replaced: "Film.hr".
+    var namingPattern = "{video}.{lang}"
+    var masterLanguage = Language.named("en")
+}
+
+// MARK: - File format (JSON, one file per project: Name.kptnsub)
+
+struct TrackFile: Codable, Sendable {
+    var id: UUID
+    var language: Language
+    var locked: Bool
+    var maxCPS: Double?
+    var maxCharsPerLine: Int?
+    var subtitles: [Subtitle]
+}
+
+struct VideoFile: Codable, Sendable {
+    var id: UUID
+    var name: String
+    var url: String?
+    var masterTrackID: UUID
+    var tracks: [TrackFile]
+    var openTrackIDs: [UUID]
+    var focusedTrackID: UUID?
+}
+
+struct ProjectFile: Codable, Sendable {
+    var format = 1
+    var id: UUID
+    var name: String
+    var modified: Date
+    var settings: ProjectSettings
+    var videos: [VideoFile]
+    var currentVideoID: UUID?
+}
+
+// MARK: - Runtime model
+
+/// One language version of one video's titles.
+@MainActor
+final class Track: ObservableObject, Identifiable {
+    let id: UUID
+    @Published var language: Language
+    @Published var locked: Bool
+    @Published var maxCPS: Double?
+    @Published var maxCharsPerLine: Int?
+    let doc = SubtitleDocument()
+
+    init(id: UUID = UUID(), language: Language, locked: Bool = false, subtitles: [Subtitle] = []) {
+        self.id = id
+        self.language = language
+        self.locked = locked
+        doc.replaceAll(subtitles)
+        doc.selectedID = nil
+    }
+
+    convenience init(_ f: TrackFile) {
+        self.init(id: f.id, language: f.language, locked: f.locked, subtitles: f.subtitles)
+        maxCPS = f.maxCPS
+        maxCharsPerLine = f.maxCharsPerLine
+    }
+
+    var file: TrackFile {
+        TrackFile(id: id, language: language, locked: locked, maxCPS: maxCPS,
+                  maxCharsPerLine: maxCharsPerLine, subtitles: doc.subtitles)
+    }
+
+    /// The project standard with this language's own overrides.
+    func standard(from base: TimingPreset) -> TimingPreset {
+        var p = base
+        if let c = maxCPS { p.maxCPS = c }
+        if let l = maxCharsPerLine { p.maxCharsPerLine = l }
+        return p
+    }
+}
+
+@MainActor
+final class VideoItem: ObservableObject, Identifiable {
+    let id: UUID
+    @Published var name: String
+    @Published var url: URL?
+    @Published var masterTrackID: UUID
+    @Published var tracks: [Track]
+    /// Languages shown as columns (and waveform lanes), in order.
+    @Published var openTrackIDs: [UUID]
+    @Published var focusedTrackID: UUID?
+
+    init(id: UUID = UUID(), name: String, url: URL?, master: Track) {
+        self.id = id
+        self.name = name
+        self.url = url
+        self.masterTrackID = master.id
+        self.tracks = [master]
+        self.openTrackIDs = [master.id]
+        self.focusedTrackID = master.id
+    }
+
+    init(_ f: VideoFile) {
+        id = f.id
+        name = f.name
+        url = f.url.flatMap(URL.init(string:))
+        tracks = f.tracks.map(Track.init)
+        masterTrackID = f.masterTrackID
+        let known = Set(f.tracks.map(\.id))
+        openTrackIDs = f.openTrackIDs.filter { known.contains($0) }
+        if openTrackIDs.isEmpty { openTrackIDs = [f.masterTrackID] }
+        focusedTrackID = f.focusedTrackID.flatMap { known.contains($0) ? $0 : nil } ?? openTrackIDs.first
+        if !tracks.contains(where: { $0.id == masterTrackID }), let first = tracks.first { masterTrackID = first.id }
+    }
+
+    var file: VideoFile {
+        VideoFile(id: id, name: name, url: url?.absoluteString, masterTrackID: masterTrackID,
+                  tracks: tracks.map(\.file), openTrackIDs: openTrackIDs, focusedTrackID: focusedTrackID)
+    }
+
+    func track(_ id: UUID?) -> Track? { tracks.first { $0.id == id } }
+    var master: Track? { track(masterTrackID) }
+    var openTracks: [Track] { openTrackIDs.compactMap(track) }
+}
+
+@MainActor
+final class Project: ObservableObject, Identifiable {
+    let id: UUID
+    @Published var name: String
+    @Published var settings: ProjectSettings
+    @Published var videos: [VideoItem]
+    /// Where the person keeps the project (may be in iCloud). A local copy is always kept too.
+    var fileURL: URL?
+
+    init(id: UUID = UUID(), name: String, settings: ProjectSettings, videos: [VideoItem], fileURL: URL?) {
+        self.id = id
+        self.name = name
+        self.settings = settings
+        self.videos = videos
+        self.fileURL = fileURL
+    }
+
+    convenience init(_ f: ProjectFile, fileURL: URL?) {
+        self.init(id: f.id, name: f.name, settings: f.settings, videos: f.videos.map(VideoItem.init), fileURL: fileURL)
+    }
+
+    func file(currentVideoID: UUID?) -> ProjectFile {
+        ProjectFile(id: id, name: name, modified: Date(), settings: settings,
+                    videos: videos.map(\.file), currentVideoID: currentVideoID)
+    }
+
+    func video(_ id: UUID?) -> VideoItem? { videos.first { $0.id == id } }
+}
+
+// MARK: - Rows across languages
+
+/// One row of the side-by-side card pane: a master title and its translations,
+/// or a title that has no partner in the master.
+struct CardRow: Identifiable, Equatable {
+    /// The master title's id (or the unpartnered title's own id).
+    let key: UUID
+    var time: Double
+    var cells: [UUID: Subtitle]   // track id → title
+    var id: UUID { key }
+}
+
+enum RowBuilder {
+    /// The row a title belongs to.
+    static func key(of s: Subtitle, inMaster: Bool) -> UUID {
+        inMaster ? s.id : (s.link ?? s.id)
+    }
+
+    @MainActor
+    static func rows(for video: VideoItem, tracks: [Track]) -> [CardRow] {
+        var byKey: [UUID: CardRow] = [:]
+        var order: [UUID] = []
+        let masterID = video.masterTrackID
+        // Master first, so its rows take its timing.
+        let sorted = tracks.filter { $0.id == masterID } + tracks.filter { $0.id != masterID }
+        for track in sorted {
+            let inMaster = track.id == masterID
+            for s in track.doc.subtitles {
+                var key = key(of: s, inMaster: inMaster)
+                if let existing = byKey[key], existing.cells[track.id] != nil { key = s.id }
+                if var row = byKey[key] {
+                    row.cells[track.id] = s
+                    if !row.cells.keys.contains(masterID) { row.time = min(row.time, s.start) }
+                    byKey[key] = row
+                } else {
+                    byKey[key] = CardRow(key: key, time: s.start, cells: [track.id: s])
+                    order.append(key)
+                }
+            }
+        }
+        return order.compactMap { byKey[$0] }.sorted {
+            $0.time != $1.time ? $0.time < $1.time : $0.key.uuidString < $1.key.uuidString
+        }
+    }
+
+    /// Links titles of an imported or newly created language to the master by overlapping time.
+    /// Each master title is used at most once; titles that overlap nothing stay unlinked.
+    static func linkByOverlap(_ subs: [Subtitle], master: [Subtitle], skip: Set<UUID> = []) -> [Subtitle] {
+        var used = skip
+        var out: [Subtitle] = []
+        var j = 0
+        for var s in subs.sorted(by: { $0.start < $1.start }) {
+            while j < master.count && master[j].end <= s.start { j += 1 }
+            var best: (id: UUID, overlap: Double)?
+            var k = max(0, j - 1)
+            while k < master.count && master[k].start < s.end {
+                let m = master[k]
+                let overlap = min(m.end, s.end) - max(m.start, s.start)
+                let shorter = max(0.001, min(m.duration, s.duration))
+                if overlap / shorter >= 0.3, !used.contains(m.id), overlap > (best?.overlap ?? 0) {
+                    best = (m.id, overlap)
+                }
+                k += 1
+            }
+            if let best {
+                s.link = best.id
+                used.insert(best.id)
+            }
+            out.append(s)
+        }
+        return out
+    }
+}

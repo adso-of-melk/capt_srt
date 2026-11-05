@@ -36,7 +36,7 @@ struct VideoPane: View {
                             }
                         } else {
                             ConsoleLabel(text: "Awaiting picture", color: Theme.periwinkle, size: 12)
-                            Text("Drop a video here or press ⌘O")
+                            Text("Drop a video here, or add one with ⌥⌘N")
                         }
                         }
                             .font(Theme.label(13, .regular))
@@ -57,12 +57,9 @@ struct VideoPane: View {
                         .padding(.horizontal, 40)
                         .allowsHitTesting(false)
                 } else if overlayText != nil || model.isSpotting {
-                    // A title with no text yet (or one being spotted): a faint frosted placeholder.
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(.ultraThinMaterial)
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.14), lineWidth: 1))
+                    // A title with no text yet (or one being spotted): a clear glass placeholder.
+                    GlassPlaceholder()
                         .frame(width: 280, height: 56)
-                        .opacity(0.75)
                         .padding(.bottom, 28)
                         .allowsHitTesting(false)
                 }
@@ -91,4 +88,21 @@ struct EngineSurface: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+/// Clear Mac glass for an empty title: Liquid Glass on macOS 26, a thin material before.
+private struct GlassPlaceholder: View {
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        if #available(macOS 26, *) {
+            Color.clear
+                .glassEffect(.clear, in: shape)
+                .overlay(shape.stroke(Color.white.opacity(0.18), lineWidth: 0.5))
+        } else {
+            shape.fill(.ultraThinMaterial)
+                .opacity(0.55)
+                .overlay(shape.stroke(Color.white.opacity(0.22), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
+        }
+    }
 }
