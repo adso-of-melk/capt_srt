@@ -63,6 +63,7 @@ final class ScrubAudioPlayer {
     private let engine = AVAudioEngine()
     private let node = AVAudioPlayerNode()
     private let format = AVAudioFormat(standardFormatWithSampleRate: AudioDecoder.sampleRate, channels: 1)!
+    /// Lives as long as the app, so the observer is never removed.
     private var configObserver: NSObjectProtocol?
 
     init() {
@@ -78,10 +79,6 @@ final class ScrubAudioPlayer {
             self.engine.disconnectNodeOutput(self.node)
             self.engine.connect(self.node, to: self.engine.mainMixerNode, format: self.format)
         }
-    }
-
-    deinit {
-        if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
     }
 
     func grain(at t: Double, from wf: Waveform, length: Double = 0.07) {
