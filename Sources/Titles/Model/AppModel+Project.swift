@@ -848,6 +848,17 @@ extension AppModel {
         if broken != sub.text { track.doc.setText(id, broken) }
     }
 
+    /// After a paste: break the whole title by the rules, ignoring line breaks that came
+    /// with the pasted text.
+    func autoBreakAfterPaste(_ id: UUID) {
+        guard autoLineBreaks, let track = video?.tracks.first(where: { $0.doc.subtitle(id) != nil }),
+              let sub = track.doc.subtitle(id) else { return }
+        let rules = preset(for: track)
+        let broken = LineBreaker.breakLines(sub.text, maxChars: rules.maxCharsPerLine,
+                                            maxLines: rules.maxLines, language: track.language.code)
+        if broken != sub.text { track.doc.setText(id, broken) }
+    }
+
     /// Title ▸ Re-break Lines: re-breaks the selected title from scratch.
     func rebreakSelected() {
         guard let track = focusedTrack, let sub = doc.selected else { return }

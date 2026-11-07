@@ -4,6 +4,10 @@ A focused subtitle editor for macOS: the card list on the left, the video at top
 
 The code and Swift package are still called `Titles`; the working name only shows in the app for now.
 
+## Standalone app for testing
+
+`scripts/package-app.sh [folder]` builds a universal (Apple Silicon + Intel) release, wraps it as `KPTN.SUB.app`, self-signs it and zips it (default: Desktop). Copy it to any Mac with macOS 14 or later, no Xcode needed. The first launch on each Mac is blocked until you choose System Settings ▸ Privacy & Security ▸ Open Anyway.
+
 ## Build and run
 
 You need macOS 14 (Sonoma) or later and Xcode 15 or later.
@@ -79,7 +83,7 @@ Dragging the body of a box moves the whole title. After adjusting an edge, the w
 
 | Key | Action |
 | --- | --- |
-| Shift+Space | Play / pause, from anywhere, even while typing (Space alone only types) |
+| Shift+Space | Play / pause, from anywhere. While typing, press Shift on its own and hold it a moment first, so a capital followed by a space just types |
 | Tab / Shift+Tab | Next / previous title. The playhead jumps to it, and editing carries over if you were typing |
 | ← / → | Step one frame back / forward (Shift: one second) |
 | ↑ / ↓ while paused | Select the previous / next title and jump to it |
@@ -101,7 +105,7 @@ During playback, the last title the playhead reached stays highlighted, and the 
 
 **Settings (⌘,).** Jog speed (how fast Control/Option + mouse moves an edge), spotting mode, reaction offsets, the trackpad swipe option and the two replay options.
 
-**Line breaks.** With Title ▸ Break Long Lines Automatically (on by default), a title too long for one line is broken when you leave its card, following the Netflix and BBC guides: break after punctuation or before a conjunction or preposition, never after an article, pronoun, auxiliary or preposition, keep names together, and prefer a shorter top line. English and Croatian (also Bosnian and Serbian) have word lists; other languages break at punctuation and for balance. Titles with your own line breaks are left alone.
+**Line breaks.** With Title ▸ Break Long Lines Automatically (on by default), a title too long for one line is broken when you leave its card, following the Netflix and BBC guides: break after punctuation or before a conjunction or preposition, never after an article, pronoun, auxiliary or preposition, keep names together, and prefer a shorter top line. English and Croatian (also Bosnian and Serbian) have word lists; other languages break at punctuation and for balance. Titles with your own line breaks are left alone; pasted text (⌘V) is always re-broken. Cards keep the on-screen line breaks: a line too wide for the card shrinks instead of wrapping.
 
 **Waveform display.** Boxes show the full text of each title, wrapped to fit. The **Scale** slider makes quiet passages larger. The **dB** toggle shows loudness in decibels, so whispers stay visible next to loud sounds.
 

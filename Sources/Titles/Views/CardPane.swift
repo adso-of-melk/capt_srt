@@ -85,7 +85,7 @@ struct CardPane: View {
                     ForEach(Array(model.rows.enumerated()), id: \.element.key) { index, row in
                         HStack(alignment: .top, spacing: gap) {
                             ForEach(tracks) { track in
-                                cell(row: row, number: index + 1, track: track, isFocusedColumn: track.id == focusedID,
+                                cell(row: row, number: index + 1, track: track, width: width, isFocusedColumn: track.id == focusedID,
                                      inSelectedRow: row.key == selectedRow, overlaps: overlaps)
                                     .frame(width: width)
                             }
@@ -113,7 +113,7 @@ struct CardPane: View {
     }
 
     @ViewBuilder
-    private func cell(row: CardRow, number: Int, track: Track, isFocusedColumn: Bool,
+    private func cell(row: CardRow, number: Int, track: Track, width: CGFloat, isFocusedColumn: Bool,
                       inSelectedRow: Bool, overlaps: Set<UUID>) -> some View {
         if let sub = row.cells[track.id] {
             CardView(
@@ -126,6 +126,7 @@ struct CardPane: View {
                 isOverlapping: isFocusedColumn && overlaps.contains(sub.id),
                 preset: model.preset(for: track),
                 compact: model.openTracks.count > 1,
+                width: width,
                 text: Binding(
                     get: { track.doc.subtitle(sub.id)?.text ?? "" },
                     set: { track.doc.setText(sub.id, $0) }
@@ -310,6 +311,18 @@ private struct EmptyCards: View {
 }
 
 struct CardView: View {
+    static let baseFontSize: CGFloat = 15
+
+    /// The largest size (up to 15 pt) at which the longest line fits on one line.
+    static func fittingSize(for text: String, width: CGFloat) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: baseFontSize, weight: .medium)
+        let widest = text.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { (String($0) as NSString).size(withAttributes: [.font: font]).width }
+            .max() ?? 0
+        guard widest > 0, width > 20, widest > width else { return baseFontSize }
+        return max(baseFontSize * 0.55, (baseFontSize * width / widest).rounded(.down))
+    }
+
     @ObservedObject var model: AppModel
     let track: Track
     let sub: Subtitle
@@ -319,6 +332,8 @@ struct CardView: View {
     let isOverlapping: Bool
     let preset: TimingPreset
     let compact: Bool
+    /// The card's width, so the text can shrink to keep the on-screen line breaks.
+    let width: CGFloat
     @Binding var text: String
     var focused: FocusState<UUID?>.Binding
 
@@ -367,6 +382,9 @@ struct CardView: View {
             // Title box: the text, centred, styled like it appears over the video.
             // Only the selected card is editable, so no other card can keep a stale
             // text selection or cursor.
+            // Lines break exactly where they do on screen: when a line is too wide for the
+            // card, the text shrinks instead of wrapping (down to 55 %, then it wraps).
+            let fontSize = Self.fittingSize(for: isSelected ? text : sub.text, width: width - 40)
             Group {
                 if isSelected {
                     TextField("Type the title…", text: $text, axis: .vertical)
@@ -377,10 +395,10 @@ struct CardView: View {
                         .frame(maxWidth: .infinity)
                 }
             }
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(size: fontSize, weight: .medium))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(Theme.text)
-                .lineLimit(1...4)
+                .lineLimit(1...8)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 9)
                 .frame(maxWidth: .infinity, minHeight: 48)

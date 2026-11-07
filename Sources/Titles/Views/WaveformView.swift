@@ -281,6 +281,9 @@ final class WaveformNSView: NSView {
         let lanes = laneOffsets(subs)
         let overlaps = doc.overlappingIDs
         let selected = doc.selectedID
+        let langTag = (model.focusedTrack?.language.code ?? "").split(separator: "-").first.map { $0.uppercased() } ?? ""
+        let tagFont = labelFont(9)
+        let tagSize = (langTag as NSString).size(withAttributes: [.font: tagFont])
         let viewEnd = viewStart + visibleDuration
         let baseHeight = rect.height * 0.74
         let laneShift = rect.height * 0.11
@@ -345,6 +348,15 @@ final class WaveformNSView: NSView {
                 (fullText as NSString).draw(with: textRect,
                                             options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
                                             attributes: attrs)
+            }
+            // Which language this is: a quiet tag in the lower right corner.
+            if !langTag.isEmpty, r.width >= pill.width + tagSize.width + 24, r.height >= 40 {
+                let tag = CGRect(x: r.maxX - tagSize.width - 12, y: r.maxY - 17,
+                                 width: tagSize.width + 8, height: 13)
+                base.withAlphaComponent(0.16).setFill()
+                NSBezierPath(roundedRect: tag, xRadius: 3, yRadius: 3).fill()
+                drawText(langTag, at: CGPoint(x: tag.minX + 4, y: tag.minY + 1), font: tagFont,
+                         color: base.withAlphaComponent(0.6))
             }
             NSGraphicsContext.restoreGraphicsState()
 

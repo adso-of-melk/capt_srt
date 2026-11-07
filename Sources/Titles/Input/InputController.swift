@@ -23,6 +23,12 @@ final class InputController {
     private var jogAccumulator: CGFloat = 0
     private var wheelAccumulator: CGFloat = 0
 
+    // Shift+Space while typing: only a deliberate press plays (Shift alone, held a moment,
+    // nothing typed with it). Typing "I am" fast just types the space.
+    private var shiftDownAt: TimeInterval = 0
+    private var typedSinceShift = false
+    private var shiftHeld = false
+
     init(model: AppModel) {
         self.model = model
     }
@@ -62,6 +68,9 @@ final class InputController {
 
         switch e.type {
         case .flagsChanged:
+            let shiftNow = e.modifierFlags.contains(.shift)
+            if shiftNow && !shiftHeld { shiftDownAt = e.timestamp; typedSinceShift = false }
+            shiftHeld = shiftNow
             window.acceptsMouseMovedEvents = true
             let edge = Self.edge(for: flags)
             if jogEdge != nil && edge != jogEdge { endJog(commit: true) }
@@ -145,8 +154,12 @@ final class InputController {
 
         let plain = flags.subtracting(.shift).isEmpty
 
-        // Shift+Space: play/pause from anywhere, including while typing in a card.
-        if e.keyCode == Key.space, flags == [.shift] {
+        if e.keyCode != Key.space { typedSinceShift = true }
+
+        // Shift+Space: play/pause from anywhere. While typing in a card, only when Shift was
+        // pressed on its own and held about 150 ms; otherwise it's a space after a capital.
+        if e.keyCode == Key.space, flags == [.shift],
+           !isEditingText || (!typedSinceShift && e.timestamp - shiftDownAt >= 0.15) {
             if !e.isARepeat { model.togglePlay() }
             return nil
         }
@@ -165,6 +178,12 @@ final class InputController {
         }
 
         if isEditingText {
+            // ⌘V: once the paste lands, break the title's lines by the rules.
+            if flags == [.command], e.charactersIgnoringModifiers?.lowercased() == "v",
+               let id = model.doc.selectedID {
+                DispatchQueue.main.async { [weak model] in model?.autoBreakAfterPaste(id) }
+                return e
+            }
             // Return (or Shift+Return) is a line break inside the title, not "done".
             if e.keyCode == Key.returnKey || e.keyCode == Key.enter, flags.subtracting(.shift).isEmpty,
                let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
