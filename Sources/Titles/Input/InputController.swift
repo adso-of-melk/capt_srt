@@ -23,6 +23,12 @@ final class InputController {
     private var jogAccumulator: CGFloat = 0
     private var wheelAccumulator: CGFloat = 0
 
+    // Shift+Space while typing: only a deliberate press plays (Shift alone, held a moment,
+    // nothing typed with it). Typing "I am" fast just types the space.
+    private var shiftDownAt: TimeInterval = 0
+    private var typedSinceShift = false
+    private var shiftHeld = false
+
     init(model: AppModel) {
         self.model = model
     }
@@ -51,11 +57,21 @@ final class InputController {
 
     private func handle(_ e: NSEvent) -> NSEvent? {
         guard let model else { return e }
+        // Only the editor window. Settings and sheets get their keys untouched.
+        guard let window = e.window, window === model.mainWindow else {
+            if jogEdge != nil { endJog(commit: true) }
+            return e
+        }
+        // The home screen has no titles to edit.
+        if model.showHome || model.project == nil { return e }
         let flags = e.modifierFlags.intersection([.shift, .control, .option, .command])
 
         switch e.type {
         case .flagsChanged:
-            e.window?.acceptsMouseMovedEvents = true
+            let shiftNow = e.modifierFlags.contains(.shift)
+            if shiftNow && !shiftHeld { shiftDownAt = e.timestamp; typedSinceShift = false }
+            shiftHeld = shiftNow
+            window.acceptsMouseMovedEvents = true
             let edge = Self.edge(for: flags)
             if jogEdge != nil && edge != jogEdge { endJog(commit: true) }
             armedEdge = edge
@@ -70,7 +86,15 @@ final class InputController {
 
         case .leftMouseDown, .rightMouseDown:
             // Control+click is right-click on the Mac; ignore clicks while jogging.
-            return jogEdge != nil ? nil : e
+            if jogEdge != nil { return nil }
+            // A click in the card being typed in goes to the field editor, so the card never
+            // sees it. Still take the playhead back to that title's start.
+            if e.type == .leftMouseDown, let editor = window.firstResponder as? NSTextView,
+               editor.bounds.contains(editor.convert(e.locationInWindow, from: nil)),
+               let s = model.doc.subtitle(model.doc.selectedID) {
+                model.seek(s.start)
+            }
+            return e
 
         case .scrollWheel:
             guard let edge = Self.edge(for: flags), model.doc.selectedID != nil else { return e }
@@ -82,7 +106,7 @@ final class InputController {
 
         case .keyUp:
             if e.keyCode == Key.down, model.spotMode == .hold, model.isSpotting {
-                model.spotUp()
+                model.spotUp(eventTimestamp: e.timestamp)
                 return nil
             }
             return e
@@ -108,6 +132,7 @@ final class InputController {
 
     private enum Key {
         static let space: UInt16 = 49
+        static let tab: UInt16 = 48
         static let returnKey: UInt16 = 36
         static let enter: UInt16 = 76
         static let escape: UInt16 = 53
@@ -127,6 +152,24 @@ final class InputController {
             return nil
         }
 
+        let plain = flags.subtracting(.shift).isEmpty
+
+        if e.keyCode != Key.space { typedSinceShift = true }
+
+        // Shift+Space: play/pause from anywhere. While typing in a card, only when Shift was
+        // pressed on its own and held about 150 ms; otherwise it's a space after a capital.
+        if e.keyCode == Key.space, flags == [.shift],
+           !isEditingText || (!typedSinceShift && e.timestamp - shiftDownAt >= 0.15) {
+            if !e.isARepeat { model.togglePlay() }
+            return nil
+        }
+
+        // Tab / Shift+Tab: next / previous title, from anywhere. Keeps editing if you were.
+        if e.keyCode == Key.tab, plain {
+            model.selectAdjacent(flags.contains(.shift) ? -1 : 1, keepEditing: isEditingText)
+            return nil
+        }
+
         // Control/Option + [ or ]: nudge one frame (Shift: 10). Works while typing too.
         if e.keyCode == Key.leftBracket || e.keyCode == Key.rightBracket, let edge = Self.edge(for: flags) {
             let dir = e.keyCode == Key.leftBracket ? -1 : 1
@@ -135,6 +178,18 @@ final class InputController {
         }
 
         if isEditingText {
+            // ⌘V: once the paste lands, break the title's lines by the rules.
+            if flags == [.command], e.charactersIgnoringModifiers?.lowercased() == "v",
+               let id = model.doc.selectedID {
+                DispatchQueue.main.async { [weak model] in model?.autoBreakAfterPaste(id) }
+                return e
+            }
+            // Return (or Shift+Return) is a line break inside the title, not "done".
+            if e.keyCode == Key.returnKey || e.keyCode == Key.enter, flags.subtracting(.shift).isEmpty,
+               let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
+                editor.insertNewlineIgnoringFieldEditor(nil)
+                return nil
+            }
             if e.keyCode == Key.escape {
                 model.focusRequest = nil
                 e.window?.makeFirstResponder(nil)
@@ -147,18 +202,18 @@ final class InputController {
 
         switch e.keyCode {
         case Key.space:
-            if !e.isARepeat { model.togglePlay() }
+            // Space alone does nothing outside a card; Shift+Space plays and pauses.
             return nil
         case Key.down:
             if model.clock.isPlaying {
-                if !e.isARepeat { model.spotDown() }
+                if !e.isARepeat { model.spotDown(eventTimestamp: e.timestamp) }
             } else {
                 model.selectAdjacent(1)
             }
             return nil
         case Key.up:
             if model.clock.isPlaying {
-                if model.spotMode == .tap && !e.isARepeat { model.spotUp() }
+                if model.spotMode == .tap && !e.isARepeat { model.spotUp(eventTimestamp: e.timestamp) }
             } else {
                 model.selectAdjacent(-1)
             }
@@ -170,7 +225,7 @@ final class InputController {
             model.stepFrames(flags.contains(.shift) ? Int(model.engine.frameRate.rounded()) : 1)
             return nil
         case Key.returnKey, Key.enter:
-            if let id = model.doc.selectedID { model.focusRequest = id }
+            model.editSelected()
             return nil
         case Key.delete, Key.forwardDelete:
             model.deleteSelected()
@@ -179,7 +234,7 @@ final class InputController {
             // Typing while a title is selected starts editing it (the keystroke isn't lost).
             if let chars = e.characters, let scalar = chars.unicodeScalars.first,
                scalar.value >= 0x20, scalar.value != 0x7F, !(0xF700...0xF8FF).contains(scalar.value),
-               model.doc.selectedID != nil {
+               model.hasTypingTarget {
                 model.typeIntoSelected(chars)
                 return nil
             }
@@ -205,8 +260,9 @@ final class InputController {
         guard let model, let edge = jogEdge, let id = jogID else { return }
         // Speed-sensitive: slow movement = single frames, fast = bigger jumps.
         let speed = abs(dx)
-        let framesPerPoint: CGFloat = speed < 2 ? 0.12 : speed < 6 ? 0.25 : speed < 15 ? 0.5 : 1.0
-        jogAccumulator += dx * framesPerPoint * (coarse ? 5 : 1)
+        // Base rate is half of build 1's; the Jog Speed setting scales it (1 = default).
+        let framesPerPoint: CGFloat = speed < 2 ? 0.06 : speed < 6 ? 0.12 : speed < 15 ? 0.25 : 0.5
+        jogAccumulator += dx * framesPerPoint * CGFloat(model.jogSpeed) * (coarse ? 5 : 1)
         let whole = Int(jogAccumulator)
         guard whole != 0 else { return }
         jogAccumulator -= CGFloat(whole)

@@ -9,8 +9,18 @@ import Combine
 ///   spotting): many updates, one undo step, and `cancelLive` restores the original.
 @MainActor
 final class SubtitleDocument: ObservableObject {
-    @Published private(set) var subtitles: [Subtitle] = []
+    @Published private(set) var subtitles: [Subtitle] = [] {
+        didSet { if subtitles != oldValue { onChange?() } }
+    }
+    /// Called after any change to the titles (edits, undo, live gestures, sync).
+    var onChange: (() -> Void)?
+    /// Called when a new undo step is recorded (not for undo/redo themselves), so the
+    /// project can keep one undo history across all languages.
+    var onUndoStep: (() -> Void)?
     @Published var selectedID: UUID?
+    /// The playhead time, so a lost selection (after undo or delete) can fall back to the
+    /// title just before the playhead rather than the first title.
+    var playheadTime: (() -> Double)?
     @Published private(set) var isDirty = false
 
     private var undoStack: [[Subtitle]] = []
@@ -84,6 +94,14 @@ final class SubtitleDocument: ObservableObject {
 
     func markSaved() { isDirty = false }
 
+    /// Replaces the titles without an undo step (locked languages following their master).
+    func syncReplace(_ subs: [Subtitle]) {
+        let sorted = subs.sorted { $0.start < $1.start }
+        guard sorted != subtitles else { return }
+        subtitles = sorted
+        fixSelection()
+    }
+
     // MARK: Undoable changes
 
     func perform(coalesce key: String? = nil, _ change: (inout [Subtitle]) -> Void) {
@@ -104,8 +122,8 @@ final class SubtitleDocument: ObservableObject {
     }
 
     @discardableResult
-    func add(start: Double, end: Double, text: String = "", select: Bool = true) -> UUID {
-        let s = Subtitle(start: start, end: max(end, start + 0.1), text: text)
+    func add(start: Double, end: Double, text: String = "", link: UUID? = nil, select: Bool = true) -> UUID {
+        let s = Subtitle(start: start, end: max(end, start + 0.1), text: text, link: link)
         perform { $0.append(s) }
         if select { selectedID = s.id }
         return s.id
@@ -199,13 +217,15 @@ final class SubtitleDocument: ObservableObject {
     }
 
     private func pushUndo(_ state: [Subtitle]) {
+        onUndoStep?()
         undoStack.append(state)
         if undoStack.count > undoLimit { undoStack.removeFirst(undoStack.count - undoLimit) }
     }
 
     private func fixSelection() {
         if let id = selectedID, index(of: id) == nil {
-            selectedID = subtitles.first?.id
+            let t = playheadTime?() ?? 0
+            selectedID = (subtitles.last(where: { $0.start <= t + 0.001 }) ?? subtitles.first)?.id
         }
     }
 }

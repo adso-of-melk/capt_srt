@@ -78,6 +78,8 @@ struct ConsoleLabel: View {
             .font(Theme.label(size, .bold))
             .tracking(1.6)
             .foregroundStyle(color)
+            .lineLimit(1)
+            .fixedSize()
     }
 }
 
@@ -128,15 +130,51 @@ struct Chip: View {
 }
 
 /// Pill-shaped console button.
+/// A console capsule. The primary one is filled; `secondary` (Cancel and the like) is
+/// the same shape and type, outlined.
 struct ConsoleButtonStyle: ButtonStyle {
     var color: Color = Theme.amber
+    var secondary = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(Theme.label(11, .bold))
             .tracking(1.2)
-            .foregroundStyle(Theme.background)
+            .foregroundStyle(secondary ? color : Theme.background)
             .padding(.horizontal, 12)
             .frame(height: 22)
-            .background(Capsule().fill(color.opacity(configuration.isPressed ? 0.7 : 1)))
+            .background(Capsule().fill(secondary
+                ? color.opacity(configuration.isPressed ? 0.25 : 0.08)
+                : color.opacity(configuration.isPressed ? 0.7 : 1)))
+            .overlay(Capsule().stroke(secondary ? color.opacity(0.6) : .clear, lineWidth: 1))
+            .contentShape(Capsule())
+    }
+}
+
+extension SpotTimerStatus {
+    var nsColor: NSColor {
+        switch self {
+        case .short, .near: return Palette.amber
+        case .ok: return Palette.periwinkle
+        case .over: return Palette.red
+        }
+    }
+    var color: Color { Color(nsColor: nsColor) }
+}
+
+/// The spotting timer: a small console readout, filled with its status colour.
+struct SpotTimerPill: View {
+    let text: String
+    let status: SpotTimerStatus
+    var body: some View {
+        HStack(spacing: 4) {
+            Capsule().fill(Theme.background.opacity(0.55)).frame(width: 6, height: 8)
+            Text(text).font(Theme.mono(11, .bold)).tracking(0.5)
+        }
+        .foregroundStyle(Theme.background)
+        .padding(.horizontal, 7)
+        .frame(height: 16)
+        .background(Capsule().fill(status.color))
+        .fixedSize()
+        .animation(.easeOut(duration: 0.2), value: status)
     }
 }

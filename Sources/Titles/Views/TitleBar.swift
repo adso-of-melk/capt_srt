@@ -17,12 +17,16 @@ struct TitleBar: View {
                             .foregroundStyle(Theme.background)
                     )
                     .onTapGesture { model.togglePlay() }
-                    .help("Play / pause (Space)")
-                Text(Timecode.frames(clock.time, fps: model.engine.frameRate))
+                    .help("Play / pause (Shift+Space)")
+                Text(model.tc(clock.time))
+                    .lineLimit(1)
+                    .fixedSize()
                     .font(Theme.mono(17, .semibold))
                     .foregroundStyle(Theme.peach)
                     .monospacedDigit()
-                Text("/ " + Timecode.frames(model.engine.duration, fps: model.engine.frameRate))
+                Text("/ " + model.tc(model.engine.duration))
+                    .lineLimit(1)
+                    .fixedSize()
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.textFaint)
             }
@@ -62,13 +66,18 @@ struct TitleBar: View {
             if let name = model.loadingName {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    ConsoleLabel(text: model.isDownloadingFromICloud ? "Downloading from iCloud" : "Opening",
+                    ConsoleLabel(text: model.isDownloadingFromICloud ? "Waiting for iCloud" : "Opening",
                                  color: Theme.teal, size: 9)
                     Text(name)
                         .font(Theme.label(11, .medium))
                         .foregroundStyle(Theme.textDim)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                    if model.isDownloadingFromICloud {
+                        Button("Cancel") { model.cancelICloudWait() }
+                            .buttonStyle(.link)
+                            .font(Theme.label(11, .semibold))
+                    }
                 }
             } else if let msg = model.statusMessage {
                 Text(msg)

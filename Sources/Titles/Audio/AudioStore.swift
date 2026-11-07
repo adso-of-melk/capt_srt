@@ -63,16 +63,29 @@ final class ScrubAudioPlayer {
     private let engine = AVAudioEngine()
     private let node = AVAudioPlayerNode()
     private let format = AVAudioFormat(standardFormatWithSampleRate: AudioDecoder.sampleRate, channels: 1)!
-    private var started = false
+    /// Lives as long as the app, so the observer is never removed.
+    private var configObserver: NSObjectProtocol?
 
     init() {
         engine.attach(node)
         engine.connect(node, to: engine.mainMixerNode, format: format)
+        // macOS stops the engine when the audio output changes (another device, a new
+        // sample rate after video playback, headphones). Reconnect so grains keep sounding.
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.node.stop()
+            self.engine.disconnectNodeOutput(self.node)
+            self.engine.connect(self.node, to: self.engine.mainMixerNode, format: self.format)
+        }
     }
 
     func grain(at t: Double, from wf: Waveform, length: Double = 0.07) {
-        if !started {
-            do { try engine.start(); started = true } catch { return }
+        // Check the engine itself each time: it can be stopped behind our back.
+        if !engine.isRunning {
+            engine.prepare()
+            do { try engine.start() } catch { return }
         }
         let n = Int(length * wf.sampleRate)
         guard n > 16, let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(n)),

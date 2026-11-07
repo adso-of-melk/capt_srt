@@ -76,6 +76,17 @@ enum SubtitleFormats {
         return out
     }
 
+    /// A file's bytes: UTF-8 (optionally with a byte-order mark), CRLF or LF line endings.
+    static func data(_ subs: [Subtitle], format: ExportFormat, bom: Bool, crlf: Bool) -> Data {
+        var text = format == .srt ? srt(subs) : vtt(subs)
+        text = text.replacingOccurrences(of: "\r\n", with: "\n")
+        if crlf { text = text.replacingOccurrences(of: "\n", with: "\r\n") }
+        var data = Data()
+        if bom { data.append(contentsOf: [0xEF, 0xBB, 0xBF]) }
+        data.append(Data(text.utf8))
+        return data
+    }
+
     static func vtt(_ subs: [Subtitle]) -> String {
         var out = "WEBVTT\n\n"
         for (i, s) in subs.enumerated() {

@@ -1,17 +1,21 @@
 import Foundation
 
 /// One subtitle ("title"). Times are in seconds from the start of the video.
-struct Subtitle: Identifiable, Equatable, Hashable {
+struct Subtitle: Identifiable, Equatable, Hashable, Codable, Sendable {
     let id: UUID
     var start: Double
     var end: Double
     var text: String
+    /// In a language other than the master: the master title this one translates.
+    /// Linked titles share a row in the side-by-side card pane.
+    var link: UUID?
 
-    init(id: UUID = UUID(), start: Double, end: Double, text: String = "") {
+    init(id: UUID = UUID(), start: Double, end: Double, text: String = "", link: UUID? = nil) {
         self.id = id
         self.start = start
         self.end = end
         self.text = text
+        self.link = link
     }
 
     var duration: Double { max(0, end - start) }
@@ -48,27 +52,34 @@ enum TimingStatus {
     }
 }
 
-/// One preset sets every timing rule at once, instead of a page of settings.
-struct TimingPreset: Equatable, Identifiable {
-    let id: String
-    let name: String
-    let warnCPS: Double
-    let maxCPS: Double
-    let minDuration: Double
-    let maxDuration: Double
+/// A subtitling standard: every timing and layout rule at once. Projects pick one
+/// (General, Broadcast, Children's) and can override any value, which makes it Custom.
+struct TimingPreset: Equatable, Identifiable, Hashable, Codable, Sendable {
+    var id: String
+    var name: String
+    var maxCPS: Double
+    var maxCharsPerLine: Int
+    var maxLines: Int
+    var minDuration: Double
+    var maxDuration: Double
     /// Minimum gap between titles, in frames.
-    let minGapFrames: Int
+    var minGapFrames: Int
 
-    static let general = TimingPreset(id: "general", name: "General (17 CPS)",
-                                      warnCPS: 15, maxCPS: 17, minDuration: 0.833,
-                                      maxDuration: 7, minGapFrames: 2)
-    static let streaming = TimingPreset(id: "streaming", name: "Streaming (20 CPS)",
-                                        warnCPS: 17, maxCPS: 20, minDuration: 0.833,
-                                        maxDuration: 7, minGapFrames: 2)
-    static let children = TimingPreset(id: "children", name: "Children (13 CPS)",
-                                       warnCPS: 11, maxCPS: 13, minDuration: 1.5,
-                                       maxDuration: 7, minGapFrames: 2)
-    static let all: [TimingPreset] = [.general, .streaming, .children]
+    /// Reading speed turns amber this close to the limit.
+    var warnCPS: Double { maxCPS - 2 }
+
+    static let general = TimingPreset(id: "general", name: "General", maxCPS: 17, maxCharsPerLine: 42,
+                                      maxLines: 2, minDuration: 0.833, maxDuration: 7, minGapFrames: 2)
+    static let broadcast = TimingPreset(id: "broadcast", name: "Broadcast", maxCPS: 15, maxCharsPerLine: 37,
+                                        maxLines: 2, minDuration: 1.0, maxDuration: 7, minGapFrames: 2)
+    static let children = TimingPreset(id: "children", name: "Children's", maxCPS: 13, maxCharsPerLine: 37,
+                                       maxLines: 2, minDuration: 1.5, maxDuration: 7, minGapFrames: 2)
+    static let all: [TimingPreset] = [.general, .broadcast, .children]
+
+    var summary: String {
+        "\(Int(maxCPS)) CPS · \(maxCharsPerLine) characters · \(maxLines) lines · "
+            + String(format: "%.2g–%.2g s · %d-frame gap", minDuration, maxDuration, minGapFrames)
+    }
 
     func cpsStatus(_ s: Subtitle) -> TimingStatus {
         if s.characterCount == 0 { return .ok }
@@ -83,8 +94,19 @@ struct TimingPreset: Equatable, Identifiable {
         return .ok
     }
 
+    /// Too many lines, or a line longer than the limit.
+    func lineStatus(_ s: Subtitle) -> TimingStatus {
+        let lines = s.text.split(separator: "\n", omittingEmptySubsequences: false)
+        if lines.count > maxLines { return .bad }
+        if lines.contains(where: { $0.count > maxCharsPerLine }) { return .bad }
+        return .ok
+    }
+
+    func longestLine(_ s: Subtitle) -> Int {
+        s.text.split(separator: "\n").map(\.count).max() ?? 0
+    }
+
     func status(_ s: Subtitle) -> TimingStatus {
-        let a = cpsStatus(s), b = durationStatus(s)
-        return a.rank >= b.rank ? a : b
+        [cpsStatus(s), durationStatus(s), lineStatus(s)].max { $0.rank < $1.rank } ?? .ok
     }
 }
