@@ -790,7 +790,7 @@ final class WaveformNSView: NSView {
     }
 
     /// Edit ▸ Select All (⌘A) while the waveform has focus: every title in this language.
-    @objc func selectAll(_ sender: Any?) {
+    override func selectAll(_ sender: Any?) {
         model?.selectAllTitles()
         needsDisplay = true
     }
