@@ -45,6 +45,10 @@ Each video has a **master** language (★) and any number of others, shown side 
 - **Rows by time.** Card rows are built from timing alone: titles from different languages that start within 0.25 s, or overlap for half their length, share a row. Moving a title never reorders another language. Each language is numbered on its own.
 - **Formatting.** `<i>`, `<b>` and `<u>` show as italic, bold and underline in cards and on the video; tags don't count towards CPS or characters per line. ⌘I wraps the selection in `<i>…</i>` while typing.
 - **Typing.** Shift+Space plays unless you typed a letter while holding Shift (a capital then a space). Tab puts the cursor at the end of the next card. Hover a column's coloured cap to close it.
+- **Formatting.** Cards show and edit italics, bold and underline as they look (⌘I toggles italic); the file keeps the tags.
+- **Line breaks while typing.** When a line runs past the limit, the title is re-broken by the rules as you type; leaving the card evens the lines out, unless you broke them yourself with Return. Title ▸ Re-break All Lines (⇧⌥⌘B) does every title in the focused language.
+- **Waveform.** Clicking a title moves the playhead to its start. A dragged title stops at the minimum gap from its neighbour; pull on further to overlap. Double-click the timecode to type a time to go to (Tab between fields). The scroll bar under the waveform scrolls through the film.
+- **New Project** takes several subtitle files at once (one per language; the language is guessed from the file name or text).
 - **Several titles at once.** Shift-click boxes on the waveform, or Shift-drag on empty waveform to draw a selection box; ⌘A (waveform focused) selects every title. Drag any selected box to move the group. Title ▸ Shift Titles… (⌥⌘T) moves the selection, a whole language, or all languages by an offset (seconds or timecode).
 - **Videos.** New videos are added in the project view (PROJECT in the top strip, ⇧⌘P). In the editor a video can only be replaced (Replace Video File…, or drop a file), keeping its titles. A missing video shows a banner with Locate…, and a file with the same name next to the project is found automatically.
 - **Recovery.** File ▸ Reload Project from File… and Restore from Backup….
@@ -96,12 +100,13 @@ Dragging the body of a box moves the whole title. After adjusting an edge, the w
 | Key | Action |
 | --- | --- |
 | Shift+Space | Play / pause, from anywhere. While typing, press Shift on its own and hold it a moment first, so a capital followed by a space just types |
-| Tab / Shift+Tab | Next / previous title. The playhead jumps to it, and editing carries over if you were typing |
+| Tab / Shift+Tab | Next / previous title in the focused language (rows where it has no title are skipped). The playhead jumps to it, and editing carries over if you were typing. With a group selected, Tab lets go of it and moves past it |
 | ← / → | Step one frame back / forward (Shift: one second) |
 | ↑ / ↓ while paused | Select the previous / next title and jump to it |
 | Return, or just start typing | Edit the selected card's text (cursor at the end), or fill a selected empty slot |
 | Return while typing | New line in the title (Esc or Tab leaves the card) |
 | ⌥⌘B | Re-break the selected title's lines |
+| ⇧⌥⌘B | Re-break every title in the focused language |
 | ⌘L / ⇧⌘L, ⌘1–9 | Focus the next / previous language, or column 1–9 |
 | Click a card | Select it, move the playhead to its start, and edit its text with the cursor at the end |
 | Esc | Leave text editing |

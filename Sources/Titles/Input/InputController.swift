@@ -64,6 +64,8 @@ final class InputController {
         }
         // The home screen has no titles to edit.
         if model.showHome || model.project == nil || model.showProjectView { return e }
+        // Typing a timecode to go to: its fields get every key (Tab, Return, Esc).
+        if model.editingTimecode { return e }
         let flags = e.modifierFlags.intersection([.shift, .control, .option, .command])
 
         switch e.type {
@@ -76,6 +78,10 @@ final class InputController {
             if jogEdge != nil && edge != jogEdge { endJog(commit: true) }
             armedEdge = edge
             jogAccumulator = 0
+            // Control / Option let go: a nudge made while holding them plays now.
+            if !e.modifierFlags.contains(.control) && !e.modifierFlags.contains(.option) {
+                model.modifiersReleased()
+            }
             return e
 
         case .mouseMoved:
@@ -177,7 +183,12 @@ final class InputController {
         }
 
         if isEditingText {
-            // ⌘I: italic. Wraps the selection in <i>…</i>, or starts an italic run.
+            // ⌘I: italic on or off (in a card it shows as italic; it's saved as <i>…</i>).
+            if flags == [.command], e.charactersIgnoringModifiers?.lowercased() == "i",
+               let editor = NSApp.keyWindow?.firstResponder as? TitleTextView {
+                editor.toggle(RichMarkup.italic)
+                return nil
+            }
             if flags == [.command], e.charactersIgnoringModifiers?.lowercased() == "i",
                let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
                 let range = editor.selectedRange()

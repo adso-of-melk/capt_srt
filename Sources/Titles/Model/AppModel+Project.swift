@@ -245,8 +245,8 @@ extension AppModel {
 
     // MARK: Creating and opening projects
 
-    func createProject(name: String, folder: URL, video videoURL: URL?, settings: ProjectSettings, subtitles: URL?,
-                       extraLanguages: [Language] = []) {
+    func createProject(name: String, folder: URL, video videoURL: URL?, settings: ProjectSettings,
+                       subtitleFiles: [(url: URL, language: Language)] = [], extraLanguages: [Language] = []) {
         let clean = ProjectStore.sanitize(name).isEmpty ? "Untitled" : ProjectStore.sanitize(name)
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -266,19 +266,40 @@ extension AppModel {
         let project = Project(name: clean, settings: settings, videos: [item], fileURL: fileURL)
         load(project, currentVideoID: item.id)
         saveProject()
-        // Further languages start from the master's timing (blank), once its titles are in.
-        let extras = extraLanguages.filter { $0 != settings.masterLanguage }
-        if let subtitles {
-            readSubtitleFile(subtitles) { [weak self] subs in
+        // The file in the master language fills the master first; every other file then
+        // becomes its own language, matched to the master by time. Languages asked for
+        // without a file start blank from the master's timing.
+        let masterFile = subtitleFiles.first { $0.language == settings.masterLanguage }
+        let others = subtitleFiles.filter { $0.url != masterFile?.url }
+        let covered = Set(subtitleFiles.map(\.language) + [settings.masterLanguage])
+        let extras = extraLanguages.filter { !covered.contains($0) }
+        let finish: () -> Void = { [weak self] in
+            self?.importFiles(others) {
+                guard let self else { return }
+                for lang in extras { self.addLanguage(lang, locked: false, copyText: false) }
+                self.focusTrack(master.id, edit: false)
+                self.saveProject()
+                if subtitleFiles.count > 1 { self.flash("Imported \(subtitleFiles.count) subtitle files") }
+            }
+        }
+        if let masterFile {
+            readSubtitleFile(masterFile.url) { [weak self] subs in
                 master.doc.replaceAll(subs)
                 master.doc.selectedID = nil
-                for lang in extras { self?.addLanguage(lang, locked: false, copyText: false) }
+                self?.rebuildRows()
                 self?.flash("Loaded \(subs.count) titles into \(master.language.name)")
-                self?.saveProject()
+                finish()
             }
         } else {
-            for lang in extras { addLanguage(lang, locked: false, copyText: false) }
-            if !extras.isEmpty { saveProject() }
+            finish()
+        }
+    }
+
+    /// Imports subtitle files one after another (each matched to the master by time).
+    private func importFiles(_ files: [(url: URL, language: Language)], then done: @escaping () -> Void) {
+        guard let first = files.first else { done(); return }
+        importLanguage(from: first.url, as: first.language) { [weak self] in
+            self?.importFiles(Array(files.dropFirst()), then: done)
         }
     }
 
@@ -719,8 +740,9 @@ extension AppModel {
 
     /// Imports a subtitle file as a language. Into an empty language of the same kind it fills
     /// that language; otherwise it becomes a new, free language, linked to the master by time.
-    func importLanguage(from url: URL, as language: Language) {
+    func importLanguage(from url: URL, as language: Language, then done: (() -> Void)? = nil) {
         readSubtitleFile(url) { [weak self] subs in
+            defer { done?() }
             guard let self, let video = self.video else { return }
             let empty = video.tracks.first { $0.language == language && $0.doc.subtitles.isEmpty }
             let isMaster = empty?.id == video.masterTrackID
@@ -973,14 +995,46 @@ extension AppModel {
 extension AppModel {
     /// After typing in a card: if the title is too long for one line and has no line break
     /// of yours, break it by the style-guide rules. Your own breaks are never touched.
-    func autoBreak(_ id: UUID) {
+    /// `rebalance`: the lines were wrapped for you while typing; even them out now.
+    func autoBreak(_ id: UUID, rebalance: Bool = false) {
         guard autoLineBreaks, let track = video?.tracks.first(where: { $0.doc.subtitle(id) != nil }),
-              let sub = track.doc.subtitle(id), !sub.text.contains("\n") else { return }
+              let sub = track.doc.subtitle(id) else { return }
+        guard rebalance || !sub.text.contains("\n") else { return }
         let rules = preset(for: track)
-        guard Markup.plain(sub.text).count > rules.maxCharsPerLine else { return }
+        guard rebalance || Markup.plain(sub.text).count > rules.maxCharsPerLine else { return }
         let broken = LineBreaker.breakLines(sub.text, maxChars: rules.maxCharsPerLine,
                                             maxLines: rules.maxLines, language: track.language.code)
         if broken != sub.text { track.doc.setText(id, broken) }
+    }
+
+    /// While typing: as soon as a line runs past the limit, the title is broken again by the
+    /// rules (a word moves down, like in a word processor). Nil when every line fits.
+    /// A space just typed is kept, so the next word doesn't stick to the last one.
+    func liveBreak(_ text: String, track: Track) -> String? {
+        guard autoLineBreaks else { return nil }
+        let rules = preset(for: track)
+        let lines = Markup.plain(text).split(separator: "\n", omittingEmptySubsequences: false)
+        guard lines.contains(where: { $0.trimmingCharacters(in: .whitespaces).count > rules.maxCharsPerLine }) else { return nil }
+        var broken = LineBreaker.breakLines(text, maxChars: rules.maxCharsPerLine,
+                                            maxLines: rules.maxLines, language: track.language.code)
+        if text.hasSuffix(" ") { broken += " " }
+        return broken
+    }
+
+    /// Title ▸ Re-break All Lines: every title in the focused language, in one undo step.
+    func rebreakAll() {
+        guard let track = focusedTrack else { return }
+        let rules = preset(for: track)
+        var changed = 0
+        track.doc.perform { subs in
+            for i in subs.indices {
+                let broken = LineBreaker.breakLines(subs[i].text, maxChars: rules.maxCharsPerLine,
+                                                    maxLines: rules.maxLines, language: track.language.code)
+                if broken != subs[i].text { subs[i].text = broken; changed += 1 }
+            }
+        }
+        flash(changed == 0 ? "\(track.language.name): every title already breaks by the rules"
+                           : "\(track.language.name): re-broke \(changed) titles (⌘Z to undo)")
     }
 
     /// After a paste: break the whole title by the rules, ignoring line breaks that came

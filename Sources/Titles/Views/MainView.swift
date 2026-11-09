@@ -54,7 +54,9 @@ struct MainView: View {
                 HSplitView {
                     CardPane(model: model, doc: doc)
                         .frame(minWidth: 340, idealWidth: 360, maxWidth: .infinity)
-                        .overlay(alignment: .trailing) { DividerGrip(model: model, width: 7) }
+                        // Only a sliver on the card side, so the cards' scroll bar stays free to drag;
+                        // the wider grab zone is on the picture side.
+                        .overlay(alignment: .trailing) { DividerGrip(model: model, width: 1) }
 
                     VSplitView {
                         VideoPane(model: model, doc: doc, clock: model.clock)
@@ -66,7 +68,7 @@ struct MainView: View {
                         .frame(minHeight: 170, idealHeight: 260)
                     }
                     .frame(minWidth: 620)
-                    .overlay(alignment: .leading) { DividerGrip(model: model, width: 4) }
+                    .overlay(alignment: .leading) { DividerGrip(model: model, width: 9) }
                 }
                 .onAppear { sizeCardPane() }
             }

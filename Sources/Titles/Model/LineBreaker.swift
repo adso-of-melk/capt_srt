@@ -18,14 +18,14 @@ enum LineBreaker {
             .replacingOccurrences(of: "\n", with: " ")
             .split(separator: " ", omittingEmptySubsequences: true)
             .joined(separator: " ")
-        guard len(flat) > maxChars, maxLines > 1 else { return flat }
-
-        // Two speakers ("- Hi. - Hello."): one line each.
-        if flat.hasPrefix("-"), let r = flat.range(of: " -", options: [], range: flat.index(after: flat.startIndex)..<flat.endIndex) {
+        // Two speakers ("- Hi. - Hello."): one line each, however short.
+        if maxLines > 1, Markup.plain(flat).hasPrefix("-"),
+           let r = flat.range(of: " -", options: [], range: flat.index(after: flat.startIndex)..<flat.endIndex) {
             let a = String(flat[..<r.lowerBound])
             let b = String(flat[flat.index(after: r.lowerBound)...])
             return a + "\n" + b
         }
+        guard len(flat) > maxChars, maxLines > 1 else { return flat }
 
         let words = flat.split(separator: " ").map(String.init)
         guard words.count > 1 else { return flat }

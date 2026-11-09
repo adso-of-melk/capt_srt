@@ -4,7 +4,7 @@ import Foundation
 /// The text keeps its tags (they're exported as written); these helpers show it formatted
 /// and count only the characters a viewer reads.
 enum Markup {
-    private static let tagPattern = try! NSRegularExpression(
+    static let tagPattern = try! NSRegularExpression(
         pattern: #"<\s*(/?)\s*([a-zA-Z]+)[^>]*>|\{\\[^}]*\}"#)
 
     /// The text without any tags.

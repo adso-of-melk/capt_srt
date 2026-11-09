@@ -155,6 +155,8 @@ struct TitlesCommands: Commands {
                 Button("Delete Title  (⌫ when not typing)") { model.deleteSelected() }
                 Button("Re-break Lines") { model.rebreakSelected() }
                     .keyboardShortcut("b", modifiers: [.command, .option])
+                Button("Re-break All Lines in \(model.focusedTrack?.language.name ?? "This Language")") { model.rebreakAll() }
+                    .keyboardShortcut("b", modifiers: [.command, .option, .shift])
                 Button("Shift Titles…") { model.sheet = .shiftTitles }
                     .keyboardShortcut("t", modifiers: [.command, .option])
             }

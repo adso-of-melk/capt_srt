@@ -59,6 +59,8 @@ final class WaveformNSView: NSView {
 
     // Layout
     private let rulerHeight: CGFloat = 20
+    /// The scroll bar along the bottom: the whole film, with the visible part as a handle.
+    private let scrollbarHeight: CGFloat = 12
     private let edgeGrab: CGFloat = 6
     private var boxRects: [(id: UUID, rect: CGRect)] = []
     /// Number pills, for double-click-to-play.
@@ -76,6 +78,7 @@ final class WaveformNSView: NSView {
         case movingGroup(grab: Double, originals: [UUID: Double])
         case marquee(from: CGPoint, to: CGPoint)
         case resizing(id: UUID, edge: Edge)
+        case scrolling(grab: CGFloat)
     }
     private var drag: Drag = .none
 
@@ -85,6 +88,8 @@ final class WaveformNSView: NSView {
     private var barrierUpper: Double?
     private var holdingLower = false, holdingUpper = false
     private var brokeLower = false, brokeUpper = false
+    /// Where the pointer was when the title stopped at a barrier.
+    private var heldLowerAt: Double?, heldUpperAt: Double?
     private var downPoint: CGPoint = .zero
     private var didDrag = false
     private var swipeAccumulator: CGFloat = 0
@@ -124,11 +129,64 @@ final class WaveformNSView: NSView {
     private var lanesHeight: CGFloat {
         let n = CGFloat(laneTracks.count)
         guard n > 0 else { return 0 }
-        return min(n * 20, max(0, bounds.height - rulerHeight) * 0.45)
+        return min(n * 20, max(0, bounds.height - rulerHeight - scrollbarHeight) * 0.45)
     }
 
     private var waveRect: CGRect {
-        CGRect(x: 0, y: rulerHeight, width: bounds.width, height: max(0, bounds.height - rulerHeight - lanesHeight))
+        CGRect(x: 0, y: rulerHeight, width: bounds.width,
+               height: max(0, bounds.height - rulerHeight - lanesHeight - scrollbarHeight))
+    }
+
+    // MARK: Scroll bar
+
+    private var scrollbarRect: CGRect {
+        CGRect(x: 0, y: bounds.height - scrollbarHeight, width: bounds.width, height: scrollbarHeight)
+    }
+
+    /// The length the scroll bar stands for: the video, or the titles if there's no video yet.
+    private var totalDuration: Double {
+        guard let model else { return 60 }
+        if model.engine.duration > 0 { return model.engine.duration }
+        return max(60, (model.doc.subtitles.last?.end ?? 0) + 10)
+    }
+
+    private var thumbRect: CGRect {
+        let track = scrollbarRect
+        let total = max(totalDuration, visibleDuration)
+        let w = max(28, track.width * CGFloat(visibleDuration / total))
+        let x = (track.width - w) * CGFloat(viewStart / max(0.001, total - visibleDuration))
+        return CGRect(x: min(max(0, x), track.width - w), y: track.minY + 2, width: w, height: track.height - 4)
+    }
+
+    private func scroll(thumbX: CGFloat) {
+        let track = scrollbarRect
+        let w = thumbRect.width
+        let span = max(1, track.width - w)
+        let fraction = Double(min(max(0, thumbX), span) / span)
+        viewStart = max(0, fraction * max(0, totalDuration - visibleDuration))
+        needsDisplay = true
+    }
+
+    private func drawScrollbar(model: AppModel) {
+        let track = scrollbarRect
+        Palette.panel.setFill()
+        track.fill()
+        Palette.rule.setFill()
+        CGRect(x: 0, y: track.minY, width: track.width, height: 1).fill()
+        let total = max(totalDuration, visibleDuration)
+        // Where the titles are, as faint marks, so you can find your way along the film.
+        Palette.textFaint.withAlphaComponent(0.35).setFill()
+        let scale = track.width / CGFloat(total)
+        for sub in model.doc.subtitles {
+            CGRect(x: CGFloat(sub.start) * scale, y: track.midY - 1, width: max(1, CGFloat(sub.duration) * scale), height: 2).fill()
+        }
+        let thumb = thumbRect
+        let dragging: Bool = { if case .scrolling = drag { return true } else { return false } }()
+        (dragging ? Palette.amber : Palette.periwinkle).withAlphaComponent(dragging ? 0.75 : 0.45).setFill()
+        NSBezierPath(roundedRect: thumb, xRadius: thumb.height / 2, yRadius: thumb.height / 2).fill()
+        // The playhead's place in the film.
+        Palette.amber.setFill()
+        CGRect(x: CGFloat(model.clock.time) * scale - 0.5, y: track.minY + 1, width: 1.5, height: track.height - 1).fill()
     }
 
     /// Keeps the playhead in view and keeps zoom anchored on it.
@@ -170,6 +228,7 @@ final class WaveformNSView: NSView {
         drawWaveform(ctx, in: wave, model: model)
         drawBoxes(ctx, in: wave, model: model)
         drawLanes(model: model, top: wave.maxY)
+        drawScrollbar(model: model)
         if case let .marquee(a, b) = drag {
             let r = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
             Palette.amber.withAlphaComponent(0.08).setFill()
@@ -383,8 +442,7 @@ final class WaveformNSView: NSView {
         }
     }
 
-    /// Slim lanes for the other open languages: boxes and numbers, no text. The row selected
-    /// in the card pane is outlined in every lane, so drift between languages is easy to see.
+    /// Slim lanes for the other open languages: boxes and numbers, no text, never highlighted.
     private func drawLanes(model: AppModel, top: CGFloat) {
         laneBoxes.removeAll(keepingCapacity: true)
         laneRects.removeAll(keepingCapacity: true)
@@ -392,8 +450,6 @@ final class WaveformNSView: NSView {
         guard !tracks.isEmpty else { return }
         let laneH = lanesHeight / CGFloat(tracks.count)
         let viewEnd = viewStart + visibleDuration
-        let selectedRow = model.selectedRowKey
-        let masterID = model.video?.masterTrackID
         for (i, track) in tracks.enumerated() {
             let lane = CGRect(x: 0, y: top + CGFloat(i) * laneH, width: bounds.width, height: laneH)
             laneRects.append((track.id, lane))
@@ -409,9 +465,9 @@ final class WaveformNSView: NSView {
                 let path = NSBezierPath(roundedRect: r, xRadius: 3, yRadius: 3)
                 color.withAlphaComponent(0.16).setFill()
                 path.fill()
-                let inRow = selectedRow != nil && model.rowKey(ofSub: s.id) == selectedRow
-                (inRow ? Palette.amber : color.withAlphaComponent(0.6)).setStroke()
-                path.lineWidth = inRow ? 1.5 : 1
+                // Never highlighted: only the language in focus shows a selection.
+                color.withAlphaComponent(0.6).setStroke()
+                path.lineWidth = 1
                 path.stroke()
                 if r.width > 22, laneH >= 12, let n = model.rowNumber(of: s.id) {
                     drawText("\(n)", at: CGPoint(x: r.minX + 4, y: r.minY + (r.height - 11) / 2),
@@ -502,6 +558,7 @@ final class WaveformNSView: NSView {
     }
 
     private func updateCursor(at p: CGPoint, flags: NSEvent.ModifierFlags) {
+        if scrollbarRect.contains(p) { NSCursor.arrow.set(); return }
         if p.y < rulerHeight || laneRects.contains(where: { $0.rect.contains(p) }) { NSCursor.pointingHand.set(); return }
         if model?.focusedIsLocked == true { NSCursor.arrow.set(); return }
         let split = Self.isSplitClick(flags)
@@ -524,6 +581,19 @@ final class WaveformNSView: NSView {
         if p.y < rulerHeight {
             drag = .ruler
             model.placePlayhead(t(p.x))
+            return
+        }
+
+        // The scroll bar: drag the handle, or click anywhere along it to jump there.
+        if scrollbarRect.contains(p) {
+            let thumb = thumbRect
+            if thumb.insetBy(dx: 0, dy: -3).contains(p) {
+                drag = .scrolling(grab: p.x - thumb.minX)
+            } else {
+                drag = .scrolling(grab: thumb.width / 2)
+                scroll(thumbX: p.x - thumb.width / 2)
+            }
+            needsDisplay = true
             return
         }
 
@@ -581,7 +651,7 @@ final class WaveformNSView: NSView {
             drag = .none
             switch hit(p) {
             case let .edge(id, _), let .body(id):
-                model.select(id, seekToStart: event.clickCount == 2)
+                model.select(id, seekToStart: true)
                 if event.clickCount == 2 { model.focusRequest = id }
             case .empty:
                 model.placePlayhead(t(p.x))
@@ -611,7 +681,8 @@ final class WaveformNSView: NSView {
             model.doc.beginLive()
             drag = .resizing(id: id, edge: edge)
         case let .body(id):
-            model.select(id)
+            // Clicking a title takes the playhead to its start, so play starts there.
+            model.select(id, seekToStart: true)
             if event.clickCount == 2, let s = model.doc.subtitle(id) {
                 model.seek(s.start)
                 model.focusRequest = id
@@ -634,11 +705,17 @@ final class WaveformNSView: NSView {
         guard let model else { return }
         let p = convert(event.locationInWindow, from: nil)
         if hypot(p.x - downPoint.x, p.y - downPoint.y) > 3 { didDrag = true }
+        if case let .scrolling(grab) = drag {
+            scroll(thumbX: p.x - grab)
+            return
+        }
         guard didDrag else { return }
         autoscroll(for: p)
 
         switch drag {
         case .none:
+            break
+        case .scrolling:
             break
         case let .marquee(from, _):
             drag = .marquee(from: from, to: p)
@@ -681,7 +758,7 @@ final class WaveformNSView: NSView {
             updateCursor(event)
         }
         switch drag {
-        case .none, .ruler:
+        case .none, .ruler, .scrolling:
             break
         case let .marquee(a, b):
             let r = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
@@ -702,7 +779,11 @@ final class WaveformNSView: NSView {
             }
         case let .resizing(id, edge):
             model.doc.commitLive()
-            if didDrag { model.preview(edge, of: id, after: .resize) }
+            if didDrag {
+                model.preview(edge, of: id, after: .resize)
+            } else if let s = model.doc.subtitle(id) {
+                model.seek(s.start)
+            }
         }
     }
 
@@ -710,6 +791,7 @@ final class WaveformNSView: NSView {
     private func setBarriers(around id: UUID, model: AppModel) {
         holdingLower = false; holdingUpper = false
         brokeLower = false; brokeUpper = false
+        heldLowerAt = nil; heldUpperAt = nil
         barrierLower = nil; barrierUpper = nil
         guard let s = model.doc.subtitle(id) else { return }
         let gap = model.minGap
@@ -721,20 +803,30 @@ final class WaveformNSView: NSView {
         }
     }
 
-    /// Holds a dragged time at the barrier until it's pulled about 12 px past it.
+    /// Holds a dragged title at the minimum gap from its neighbour, however fast it was
+    /// dragged there. Pull on about 16 px further (into the neighbour) and it lets go, so
+    /// titles can still overlap on purpose.
     private func stick(_ value: Double, lower: Bool) -> Double {
-        let breakDistance = 12.0 / Double(pps)
+        let breakDistance = 16.0 / Double(pps)
         if lower {
             guard let b = barrierLower, !brokeLower else { return value }
-            if value >= b { holdingLower = false; return value }
-            if b - value > breakDistance { brokeLower = true; tick(); return value }
-            if !holdingLower { holdingLower = true; tick() }
+            if value >= b { holdingLower = false; heldLowerAt = nil; return value }
+            guard let from = heldLowerAt else {
+                heldLowerAt = value; holdingLower = true; tick()
+                return b
+            }
+            if from - value > breakDistance { brokeLower = true; tick(); return value }
+            heldLowerAt = max(from, value)
             return b
         } else {
             guard let b = barrierUpper, !brokeUpper else { return value }
-            if value <= b { holdingUpper = false; return value }
-            if value - b > breakDistance { brokeUpper = true; tick(); return value }
-            if !holdingUpper { holdingUpper = true; tick() }
+            if value <= b { holdingUpper = false; heldUpperAt = nil; return value }
+            guard let from = heldUpperAt else {
+                heldUpperAt = value; holdingUpper = true; tick()
+                return b
+            }
+            if value - from > breakDistance { brokeUpper = true; tick(); return value }
+            heldUpperAt = min(from, value)
             return b
         }
     }

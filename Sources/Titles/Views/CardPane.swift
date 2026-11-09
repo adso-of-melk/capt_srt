@@ -8,7 +8,6 @@ struct CardPane: View {
     @ObservedObject var model: AppModel
     /// The focused language's titles.
     @ObservedObject var doc: SubtitleDocument
-    @FocusState private var focused: UUID?
 
     var body: some View {
         let tracks = model.openTracks
@@ -57,26 +56,6 @@ struct CardPane: View {
             }
         }
         .background(Theme.panel)
-        .onChange(of: focused) { old, new in
-            // Leaving a card: break its lines if it's too long for one.
-            if let old, old != new { model.autoBreak(old) }
-        }
-        .onChange(of: model.focusRequest) { _, id in
-            // Already focused by a click inside the field: leave the cursor where it was put.
-            if focused == id { return }
-            // Slight delay so a just-created card exists before it takes focus.
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 50_000_000)
-                if focused != model.focusRequest { focused = model.focusRequest }
-                // Put the text cursor at the end instead of selecting everything.
-                model.focusRequest = nil
-                try? await Task.sleep(nanoseconds: 30_000_000)
-                if let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
-                    let end = (editor.string as NSString).length
-                    editor.setSelectedRange(NSRange(location: end, length: 0))
-                }
-            }
-        }
     }
 
     @ViewBuilder
@@ -90,8 +69,10 @@ struct CardPane: View {
                     ForEach(Array(model.rows.enumerated()), id: \.element.key) { index, row in
                         HStack(alignment: .top, spacing: gap) {
                             ForEach(tracks) { track in
+                                                // Only the focused language is highlighted, so it's always clear
+                                // which language a change goes to.
                                 cell(row: row, number: index + 1, track: track, width: width, isFocusedColumn: track.id == focusedID,
-                                     inSelectedRow: row.key == selectedRow, overlaps: overlaps)
+                                     inSelectedRow: row.key == selectedRow && track.id == focusedID, overlaps: overlaps)
                                     .frame(width: width)
                             }
                         }
@@ -135,8 +116,7 @@ struct CardPane: View {
                 text: Binding(
                     get: { track.doc.subtitle(sub.id)?.text ?? "" },
                     set: { track.doc.setText(sub.id, $0) }
-                ),
-                focused: $focused
+                )
             )
         } else {
             EmptySlot(isSelected: isFocusedColumn && model.emptySlotRow == row.key && doc.selectedID == nil,
@@ -356,7 +336,6 @@ struct CardView: View {
     /// The card's width, so the text can shrink to keep the on-screen line breaks.
     let width: CGFloat
     @Binding var text: String
-    var focused: FocusState<UUID?>.Binding
 
     var body: some View {
         let cps = preset.cpsStatus(sub)
@@ -405,12 +384,18 @@ struct CardView: View {
             // text selection or cursor.
             // Lines break exactly where they do on screen: when a line is too wide for the
             // card, the text shrinks instead of wrapping (down to 55 %, then it wraps).
-            let fontSize = Self.fittingSize(for: isSelected ? text : Markup.plain(sub.text), width: width - 40)
+            // Edited formatted, as it looks: italics show as italics, never as <i> tags.
+            let fontSize = Self.fittingSize(for: Markup.plain(isSelected ? text : sub.text), width: width - 40)
             Group {
                 if isSelected {
-                    TextField("Type the title…", text: $text, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .focused(focused, equals: sub.id)
+                    TitleEditor(
+                        text: $text,
+                        fontSize: fontSize,
+                        focusNow: model.focusRequest == sub.id,
+                        onFocusTaken: { if model.focusRequest != nil { model.focusRequest = nil } },
+                        onEndEditing: { rebalance in model.autoBreak(sub.id, rebalance: rebalance) },
+                        liveBreak: { model.liveBreak($0, track: track) }
+                    )
                 } else {
                     Text(sub.text.isEmpty ? AttributedString(" ") : Markup.attributed(sub.text))
                         .frame(maxWidth: .infinity)

@@ -39,12 +39,19 @@ struct ExtraLanguage: Identifiable {
     var language: Language
 }
 
+/// A subtitle file picked in New Project, and the language it's in.
+struct SubtitleFilePick: Identifiable {
+    let id = UUID()
+    let url: URL
+    var language: Language
+}
+
 struct NewProjectSheet: View {
     @ObservedObject var model: AppModel
     @State private var name = ""
     @State private var folder = ProjectStore.defaultProjectsFolder
     @State private var video: URL?
-    @State private var subtitles: URL?
+    @State private var subtitleFiles: [SubtitleFilePick] = []
     @State private var settings = ProjectSettings()
     @State private var videoLink = ""
     @State private var extraLanguages: [ExtraLanguage] = []
@@ -89,9 +96,28 @@ struct NewProjectSheet: View {
                 }
                 LabeledContent("Existing subtitles") {
                     HStack {
-                        Text(subtitles?.lastPathComponent ?? "None (optional .srt or .vtt)")
-                            .lineLimit(1).truncationMode(.middle).foregroundStyle(Theme.textDim)
-                        Button("Choose…") { chooseSubtitles() }
+                        Text(subtitleFiles.isEmpty ? "None (optional .srt or .vtt, one per language)"
+                                                   : "\(subtitleFiles.count) file\(subtitleFiles.count == 1 ? "" : "s")")
+                            .foregroundStyle(Theme.textDim)
+                        Button(subtitleFiles.isEmpty ? "Choose…" : "Add More…") { chooseSubtitles() }
+                    }
+                }
+                ForEach($subtitleFiles) { $file in
+                    HStack {
+                        Text(file.url.lastPathComponent)
+                            .lineLimit(1).truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        LanguagePicker(title: "", selection: $file.language)
+                            .labelsHidden()
+                            .frame(width: 190)
+                        if file.language == settings.masterLanguage {
+                            Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(Theme.peach)
+                                .help("This file fills the master language")
+                        }
+                        let id = file.id
+                        Button { subtitleFiles.removeAll { $0.id == id } } label: { Image(systemName: "minus.circle") }
+                            .buttonStyle(.plain)
+                            .help("Don't import this file")
                     }
                 }
                 StandardFields(settings: $settings)
@@ -129,7 +155,8 @@ struct NewProjectSheet: View {
         if videoURL == nil, !link.isEmpty, let url = URL(string: link),
            ["http", "https"].contains(url.scheme?.lowercased() ?? "") { videoURL = url }
         model.createProject(name: finalName, folder: folder, video: videoURL, settings: settings,
-                            subtitles: subtitles, extraLanguages: extraLanguages.map(\.language))
+                            subtitleFiles: subtitleFiles.map { ($0.url, $0.language) },
+                            extraLanguages: extraLanguages.map(\.language))
     }
 
     private func chooseFolder() {
@@ -154,7 +181,23 @@ struct NewProjectSheet: View {
         let panel = NSOpenPanel()
         let types: [UTType?] = [UTType(filenameExtension: "srt"), UTType(filenameExtension: "vtt"), .plainText]
         panel.allowedContentTypes = types.compactMap { $0 }
-        if panel.runModal() == .OK, let url = panel.url { subtitles = url }
+        // ⌘- or Shift-click several files; open the panel again to add files from other folders.
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Add"
+        guard panel.runModal() == .OK else { return }
+        let known = Set(subtitleFiles.map { $0.url.standardizedFileURL })
+        for url in panel.urls where !known.contains(url.standardizedFileURL) {
+            let lang = LanguageGuess.language(of: url) ?? settings.masterLanguage
+            subtitleFiles.append(SubtitleFilePick(url: url, language: lang))
+        }
+        // The master is filled from one of the files: if none is in the master language yet,
+        // the first file's language becomes the master (you can change it above).
+        if let first = subtitleFiles.first, !subtitleFiles.contains(where: { $0.language == settings.masterLanguage }) {
+            settings.masterLanguage = first.language
+        }
+        if name.isEmpty, let first = subtitleFiles.first {
+            name = first.url.deletingPathExtension().lastPathComponent
+        }
     }
 }
 

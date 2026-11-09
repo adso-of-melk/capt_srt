@@ -62,6 +62,10 @@ final class AppModel: ObservableObject {
     }
     /// The card whose text field should have keyboard focus (nil = none).
     @Published var focusRequest: UUID?
+    /// The timecode readout is being typed into (go to a time).
+    @Published var editingTimecode = false
+    /// A nudge made while Control/Option is still held plays once they're let go.
+    var pendingPreview: (edge: Edge, id: UUID)?
     @Published var statusMessage: String?
     /// The start screen for choosing a project. Shown at launch and after Back to Home.
     @Published var showHome = true
@@ -479,10 +483,18 @@ final class AppModel: ObservableObject {
         if let id = doc.selectedID { focusRequest = id }
     }
 
-    /// Tab / Shift-Tab, ↑ / ↓: the next or previous row in the focused language, empty slots
-    /// included, with the playhead at its start. The other languages stay side by side.
+    /// Tab / Shift-Tab, ↑ / ↓: the next or previous title in the focused language, with the
+    /// playhead at its start. Rows where only another language has a title are skipped
+    /// (click an empty slot to add one there). With a group selected, the group is let go
+    /// and the title after its last one (or before its first) is selected.
     func selectAdjacent(_ delta: Int, keepEditing: Bool = false) {
         guard !rows.isEmpty, let track = focusedTrack else { return }
+        if !multiSelection.isEmpty {
+            let group = doc.subtitles.filter { multiSelection.contains($0.id) }
+            multiSelection = []
+            if let edge = delta > 0 ? group.last : group.first { doc.selectedID = edge.id }
+            bump()
+        }
         let i: Int
         if let cur = currentRowIndex {
             i = cur
@@ -492,22 +504,14 @@ final class AppModel: ObservableObject {
             let k = rows.lastIndex(where: { $0.time <= t }) ?? -1
             i = delta > 0 ? k : k + 1
         }
-        let j = min(max(0, i + delta), rows.count - 1)
-        let row = rows[j]
+        let step = delta > 0 ? 1 : -1
+        var j = i + step
+        while j >= 0 && j < rows.count && rows[j].cells[track.id] == nil { j += step }
+        guard j >= 0 && j < rows.count, let s = rows[j].cells[track.id] else { return }
         if engine.isPlaying { engine.pause() }
-        if let s = row.cells[track.id] {
-            select(s.id, seekToStart: true)
-            if keepEditing { focusRequest = s.id }
-        } else {
-            doc.selectedID = nil
-            emptySlotRow = row.key
-            seek(row.time)
-            cardScrollTarget = row.key
-            if keepEditing {
-                focusRequest = nil
-                mainWindow?.makeFirstResponder(nil)
-            }
-        }
+        emptySlotRow = nil
+        select(s.id, seekToStart: true)
+        if keepEditing { focusRequest = s.id }
     }
 
     var focusedIsLocked: Bool { focusedTrack?.locked ?? false }
@@ -607,13 +611,27 @@ final class AppModel: ObservableObject {
             scrubTo(t)
         }
         nudgeEdge = edge
+        pendingPreview = nil
         nudgeCommit?.cancel()
         nudgeCommit = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 600_000_000)
             guard !Task.isCancelled, let self else { return }
             self.doc.commitLive()
-            if let e = self.nudgeEdge { self.preview(e, of: id) }
+            guard let e = self.nudgeEdge else { return }
+            // Still holding Control or Option: you're not done yet. Play when they're let go.
+            if !NSEvent.modifierFlags.intersection([.control, .option]).isEmpty {
+                self.pendingPreview = (e, id)
+            } else {
+                self.preview(e, of: id)
+            }
         }
+    }
+
+    /// Called when Control and Option are both up.
+    func modifiersReleased() {
+        guard let p = pendingPreview else { return }
+        pendingPreview = nil
+        preview(p.edge, of: p.id)
     }
 
     /// Same as `nudge` but for a specific title under the pointer (trackpad over a box half).

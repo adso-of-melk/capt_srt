@@ -83,8 +83,10 @@ struct TimingPreset: Equatable, Identifiable, Hashable, Codable, Sendable {
 
     func cpsStatus(_ s: Subtitle) -> TimingStatus {
         if s.characterCount == 0 { return .ok }
-        if s.cps > maxCPS { return .bad }
-        if s.cps > warnCPS { return .warn }
+        // Judge the value as shown (one decimal), so every "15.0 CPS" gets the same colour.
+        let shown = (s.cps * 10).rounded() / 10
+        if shown > maxCPS { return .bad }
+        if shown > warnCPS { return .warn }
         return .ok
     }
 
