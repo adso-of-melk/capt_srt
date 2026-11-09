@@ -134,8 +134,9 @@ extension AppModel {
 
     func bump() { revision &+= 1 }
 
-    /// The narrowest a card column may be so every title shows its lines at full size, as
-    /// over the picture: the widest line plus the card's padding (240 to 440 points).
+    /// The width a card column needs to show every title's lines at full size, as over the
+    /// picture: the widest line plus the card's padding (240 to 440 points). Used when the
+    /// pane opens; narrower than this, the text shrinks to keep the same lines.
     func updateCardColumnWidth() {
         var longest: [String] = []
         for track in openTracks {
@@ -154,13 +155,17 @@ extension AppModel {
         if abs(width - cardColumnMinWidth) > 0.5 { cardColumnMinWidth = width }
     }
 
-    /// The card pane is never narrower than its columns (so their scroll bar stays in view),
-    /// as long as the picture side keeps at least 620 points.
+    /// The narrowest a column gets: where the widest line has shrunk to half size.
+    var cardColumnFloor: CGFloat { max(150, ((cardColumnMinWidth - 44) * 0.5 + 44).rounded()) }
+
+    /// The card pane can't be dragged narrower than its columns at their narrowest, so the
+    /// columns always fit side by side and the scroll bar stays in view. The picture side
+    /// (control bar and waveform) always keeps at least 620 points.
     var cardPaneMinWidth: CGFloat {
         let count = CGFloat(max(1, openTracks.count))
-        let needed = count * cardColumnMinWidth + (count - 1) * 8 + 24 + 16
-        guard let window = mainWindow?.contentView?.bounds.width, window > 0 else { return max(340, needed) }
-        return max(340, min(needed, window - 630))
+        let needed = count * cardColumnFloor + (count - 1) * 8 + 24
+        guard let window = mainWindow?.contentView?.bounds.width, window > 0 else { return max(300, needed) }
+        return max(300, min(needed, window - 640))
     }
 
     /// Locked languages always have exactly the master's titles and timings; text is kept by link.

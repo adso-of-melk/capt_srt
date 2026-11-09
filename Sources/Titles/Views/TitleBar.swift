@@ -1,138 +1,181 @@
 import SwiftUI
 
 /// The strip above the waveform: timecode, transport, spotting mode, zoom and scale.
+/// On a narrow window it switches to a compact layout (no labels, narrower controls),
+/// so play and the timecode are always there.
 struct TitleBar: View {
     @ObservedObject var model: AppModel
     @ObservedObject var clock: PlayheadClock
     @ObservedObject var audio: AudioStore
 
     var body: some View {
-        HStack(spacing: 14) {
-            // Timecode readout
-            HStack(spacing: 8) {
-                Capsule().fill(Theme.amber).frame(width: 34, height: 22)
-                    .overlay(
-                        Image(systemName: clock.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(Theme.background)
-                    )
-                    .onTapGesture { model.togglePlay() }
-                    .help("Play / pause (Shift+Space)")
-                if model.editingTimecode {
-                    TimecodeEntry(model: model, time: clock.time)
-                } else {
-                    Text(model.tc(clock.time))
-                        .lineLimit(1)
-                        .fixedSize()
-                        .font(Theme.mono(17, .semibold))
-                        .foregroundStyle(Theme.peach)
-                        .monospacedDigit()
-                        .contentShape(Rectangle())
-                        .onTapGesture(count: 2) {
-                            if model.clock.isPlaying { model.togglePlay() }
-                            model.editingTimecode = true
-                        }
-                        .help("Double-click to type a time to go to")
-                }
+        ViewThatFits(in: .horizontal) {
+            bar(compact: false)
+            bar(compact: true)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 40)
+        .frame(minWidth: 0, maxWidth: .infinity)
+        .background(Theme.panelRaised)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.rule).frame(height: 1) }
+        .clipped()
+    }
+
+    private func bar(compact: Bool) -> some View {
+        HStack(spacing: compact ? 8 : 14) {
+            transport(compact: compact)
+            if !compact { divider }
+            spot(compact: compact)
+            speed(compact: compact)
+            Spacer(minLength: compact ? 4 : 8)
+            status
+            if !compact { divider }
+            zoom(compact: compact)
+            scale(compact: compact)
+        }
+    }
+
+    // MARK: Pieces
+
+    private func transport(compact: Bool) -> some View {
+        HStack(spacing: compact ? 6 : 8) {
+            Capsule().fill(Theme.amber).frame(width: 34, height: 22)
+                .overlay(
+                    Image(systemName: clock.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Theme.background)
+                )
+                .onTapGesture { model.togglePlay() }
+                .help("Play / pause (Shift+Space)")
+            if model.editingTimecode {
+                TimecodeEntry(model: model, time: clock.time)
+            } else {
+                Text(model.tc(clock.time))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .font(Theme.mono(compact ? 15 : 17, .semibold))
+                    .foregroundStyle(Theme.peach)
+                    .monospacedDigit()
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) {
+                        if model.clock.isPlaying { model.togglePlay() }
+                        model.editingTimecode = true
+                    }
+                    .help("Double-click to type a time to go to")
+            }
+            if !compact {
                 Text("/ " + model.tc(model.engine.duration))
                     .lineLimit(1)
                     .fixedSize()
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.textFaint)
             }
+        }
+    }
 
-            divider
-
-            // Spotting mode
-            HStack(spacing: 6) {
-                ConsoleLabel(text: "Spot", size: 9)
-                Picker("", selection: $model.spotMode) {
-                    ForEach(SpotMode.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 96)
-                .help("Hold: hold ↓ while a line is spoken. Tap: ↓ ends this and starts the next, ↑ ends.")
-                if model.isSpotting {
-                    Circle().fill(Theme.red).frame(width: 8, height: 8)
-                }
+    private func spot(compact: Bool) -> some View {
+        HStack(spacing: 6) {
+            if !compact { ConsoleLabel(text: "Spot", size: 9) }
+            Picker("", selection: $model.spotMode) {
+                ForEach(SpotMode.allCases) { Text($0.rawValue).tag($0) }
             }
-
-            // Speed
-            HStack(spacing: 6) {
-                ConsoleLabel(text: "Speed", size: 9)
-                Picker("", selection: $model.playbackRate) {
-                    Text("0.5×").tag(Float(0.5))
-                    Text("0.75×").tag(Float(0.75))
-                    Text("1×").tag(Float(1))
-                    Text("1.25×").tag(Float(1.25))
-                }
-                .labelsHidden()
-                .frame(width: 70)
-            }
-
-            Spacer(minLength: 8)
-
-            if let name = model.loadingName {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    ConsoleLabel(text: model.isDownloadingFromICloud ? "Waiting for iCloud" : "Opening",
-                                 color: Theme.teal, size: 9)
-                    Text(name)
-                        .font(Theme.label(11, .medium))
-                        .foregroundStyle(Theme.textDim)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if model.isDownloadingFromICloud {
-                        Button("Cancel") { model.cancelICloudWait() }
-                            .buttonStyle(.link)
-                            .font(Theme.label(11, .semibold))
-                    }
-                }
-            } else if let msg = model.statusMessage {
-                Text(msg)
-                    .font(Theme.label(11, .medium))
-                    .foregroundStyle(Theme.peach)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            } else if audio.isLoading {
-                HStack(spacing: 6) {
-                    ConsoleLabel(text: "Reading audio", color: Theme.teal, size: 9)
-                    ProgressView(value: audio.progress)
-                        .progressViewStyle(.linear)
-                        .tint(Theme.teal)
-                        .frame(width: 80)
-                }
-            } else if let err = audio.errorMessage {
-                Text(err).font(Theme.label(11, .medium)).foregroundStyle(Theme.red).lineLimit(1)
-            }
-
-            divider
-
-            // Zoom
-            HStack(spacing: 6) {
-                ConsoleLabel(text: "Zoom", size: 9)
-                Slider(value: zoomBinding, in: 0...1)
-                    .frame(width: 90)
-                    .tint(Theme.periwinkle)
-            }
-            // Waveform scale
-            HStack(spacing: 6) {
-                ConsoleLabel(text: "Scale", size: 9)
-                Slider(value: $model.waveGain, in: 0.5...8)
-                    .frame(width: 80)
-                    .tint(Theme.teal)
-                Toggle(isOn: $model.dbScale) {
-                    Text("dB").font(Theme.label(10, .bold))
-                }
-                .toggleStyle(.button)
-                .help("Show loudness in decibels, so quiet speech is visible next to loud sounds")
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: compact ? 86 : 96)
+            .help("Spotting. Hold: hold ↓ while a line is spoken. Tap: ↓ ends this and starts the next, ↑ ends.")
+            if model.isSpotting {
+                Circle().fill(Theme.red).frame(width: 8, height: 8)
             }
         }
-        .padding(.horizontal, 12)
-        .frame(height: 40)
-        .background(Theme.panelRaised)
-        .overlay(alignment: .top) { Rectangle().fill(Theme.rule).frame(height: 1) }
+    }
+
+    private func speed(compact: Bool) -> some View {
+        HStack(spacing: 6) {
+            if !compact { ConsoleLabel(text: "Speed", size: 9) }
+            Picker("", selection: $model.playbackRate) {
+                Text("0.5×").tag(Float(0.5))
+                Text("0.75×").tag(Float(0.75))
+                Text("1×").tag(Float(1))
+                Text("1.25×").tag(Float(1.25))
+            }
+            .labelsHidden()
+            .frame(width: compact ? 62 : 70)
+            .help("Playback speed")
+        }
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        if let name = model.loadingName {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                ConsoleLabel(text: model.isDownloadingFromICloud ? "Waiting for iCloud" : "Opening",
+                             color: Theme.teal, size: 9)
+                Text(name)
+                    .font(Theme.label(11, .medium))
+                    .foregroundStyle(Theme.textDim)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if model.isDownloadingFromICloud {
+                    Button("Cancel") { model.cancelICloudWait() }
+                        .buttonStyle(.link)
+                        .font(Theme.label(11, .semibold))
+                }
+            }
+            .layoutPriority(-1)
+        } else if let msg = model.statusMessage {
+            Text(msg)
+                .font(Theme.label(11, .medium))
+                .foregroundStyle(Theme.peach)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .layoutPriority(-1)
+        } else if audio.isLoading {
+            HStack(spacing: 6) {
+                ConsoleLabel(text: "Reading audio", color: Theme.teal, size: 9)
+                ProgressView(value: audio.progress)
+                    .progressViewStyle(.linear)
+                    .tint(Theme.teal)
+                    .frame(width: 80)
+            }
+            .layoutPriority(-1)
+        } else if let err = audio.errorMessage {
+            Text(err).font(Theme.label(11, .medium)).foregroundStyle(Theme.red).lineLimit(1)
+                .layoutPriority(-1)
+        }
+    }
+
+    private func zoom(compact: Bool) -> some View {
+        HStack(spacing: 6) {
+            if compact {
+                Image(systemName: "plus.magnifyingglass").font(.system(size: 10)).foregroundStyle(Theme.textDim)
+            } else {
+                ConsoleLabel(text: "Zoom", size: 9)
+            }
+            Slider(value: zoomBinding, in: 0...1)
+                .frame(width: compact ? 64 : 90)
+                .tint(Theme.periwinkle)
+                .help("Zoom (⌘-scroll or pinch on the waveform)")
+        }
+    }
+
+    private func scale(compact: Bool) -> some View {
+        HStack(spacing: 6) {
+            if compact {
+                Image(systemName: "waveform").font(.system(size: 10)).foregroundStyle(Theme.textDim)
+            } else {
+                ConsoleLabel(text: "Scale", size: 9)
+            }
+            Slider(value: $model.waveGain, in: 0.5...8)
+                .frame(width: compact ? 56 : 80)
+                .tint(Theme.teal)
+                .help("Waveform height")
+            Toggle(isOn: $model.dbScale) {
+                Text("dB").font(Theme.label(10, .bold))
+            }
+            .toggleStyle(.button)
+            .help("Show loudness in decibels, so quiet speech is visible next to loud sounds")
+        }
     }
 
     private var divider: some View {

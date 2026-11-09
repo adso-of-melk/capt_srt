@@ -28,7 +28,8 @@ struct CardPane: View {
                 let gap: CGFloat = 8
                 let count = CGFloat(max(1, tracks.count))
                 let usable = geo.size.width - 24 - gap * (count - 1)
-                let width = max(model.cardColumnMinWidth, usable / count)
+                // Columns share the pane; narrower than full size, the text shrinks instead.
+                let width = max(model.cardColumnFloor, usable / count)
                 let total = width * count + gap * (count - 1) + 24
                 ScrollViewReader { hProxy in
                     ScrollView(.horizontal, showsIndicators: total > geo.size.width + 1) {
@@ -321,7 +322,7 @@ struct CardView: View {
             .map { (String($0) as NSString).size(withAttributes: [.font: font]).width }
             .max() ?? 0
         guard widest > 0, width > 20, widest > width else { return baseFontSize }
-        return max(baseFontSize * 0.55, (baseFontSize * width / widest).rounded(.down))
+        return max(baseFontSize * 0.5, (baseFontSize * width / widest * 2).rounded(.down) / 2)
     }
 
     @ObservedObject var model: AppModel

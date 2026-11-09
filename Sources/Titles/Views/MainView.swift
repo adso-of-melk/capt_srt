@@ -56,7 +56,7 @@ struct MainView: View {
                         .frame(minWidth: model.cardPaneMinWidth, idealWidth: 360, maxWidth: .infinity)
                         // Only a sliver on the card side, so the cards' scroll bar stays free to drag;
                         // the wider grab zone is on the picture side.
-                        .overlay(alignment: .trailing) { DividerGrip(model: model, width: 1) }
+                        .overlay(alignment: .trailing) { DividerGrip(model: model, width: 2) }
 
                     VSplitView {
                         VideoPane(model: model, doc: doc, clock: model.clock)
@@ -68,7 +68,7 @@ struct MainView: View {
                         .frame(minHeight: 170, idealHeight: 260)
                     }
                     .frame(minWidth: 620)
-                    .overlay(alignment: .leading) { DividerGrip(model: model, width: 9) }
+                    .overlay(alignment: .leading) { DividerGrip(model: model, width: 6) }
                 }
                 .onAppear { sizeCardPane() }
             }
@@ -79,8 +79,6 @@ struct MainView: View {
         .onChange(of: model.openTracks.count) { old, new in
             if new > old { widenCardPaneForColumns(new) }
         }
-        // Longer lines (or another language): never let the pane be narrower than its columns.
-        .onChange(of: model.cardColumnMinWidth) { _, _ in widenCardPaneForColumns(model.openTracks.count) }
     }
 
     /// Adding a language: widen the card pane so every column fits (about 240 pt each),
@@ -91,7 +89,8 @@ struct MainView: View {
             guard let content = model.mainWindow?.contentView,
                   let split = Self.firstSideBySideSplit(in: content),
                   let pane = split.subviews.first else { return }
-            let needed = model.cardPaneMinWidth
+            let full = CGFloat(count) * model.cardColumnMinWidth + CGFloat(max(0, count - 1)) * 8 + 24
+            let needed = max(full, model.cardPaneMinWidth)
             let limit = split.bounds.width - 620 - split.dividerThickness
             let target = min(needed, limit)
             guard target > pane.frame.width + 1 else { return }
@@ -109,7 +108,7 @@ struct MainView: View {
             let count = CGFloat(max(1, model.openTracks.count))
             let columns = max(count * model.cardColumnMinWidth + (count - 1) * 8 + 24, model.cardPaneMinWidth)
             let limit = split.bounds.width - 620 - split.dividerThickness
-            let width = min(max(340, (split.bounds.width * 0.25).rounded(), columns), max(340, limit))
+            let width = min(max(model.cardPaneMinWidth, (split.bounds.width * 0.25).rounded(), columns), max(model.cardPaneMinWidth, limit))
             split.setPosition(width, ofDividerAt: 0)
         }
     }

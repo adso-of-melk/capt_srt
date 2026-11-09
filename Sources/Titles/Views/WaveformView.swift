@@ -162,7 +162,7 @@ final class WaveformNSView: NSView {
             let r = CGRect(x: 0, y: y, width: area.width, height: max(0, h))
             let code = track.language.code.uppercased() + (track.locked ? " 🔒" : "")
             let tw = (code as NSString).size(withAttributes: [.font: labelFont(9)]).width + 10
-            let label = tracks.count > 1 ? CGRect(x: 4, y: r.minY + 3, width: tw, height: 13) : .zero
+            let label = tracks.count > 1 ? CGRect(x: 10, y: r.minY + 3, width: tw, height: 13) : .zero
             result.append(Band(track: track, rect: r, focused: track.id == focused, label: label))
             y += h
         }
@@ -560,7 +560,7 @@ final class WaveformNSView: NSView {
             let tag = track.language.code.uppercased() + (track.locked ? " 🔒" : "")
             let font = labelFont(9)
             let tw = (tag as NSString).size(withAttributes: [.font: font]).width + 10
-            let tagRect = CGRect(x: 4, y: lane.minY + (laneH - 13) / 2, width: tw, height: 13)
+            let tagRect = CGRect(x: 10, y: lane.minY + (laneH - 13) / 2, width: tw, height: 13)
             laneTags.append((track.id, tagRect.insetBy(dx: -3, dy: -3)))
             Palette.panelRaised.setFill()
             NSBezierPath(roundedRect: tagRect, xRadius: 6, yRadius: 6).fill()
