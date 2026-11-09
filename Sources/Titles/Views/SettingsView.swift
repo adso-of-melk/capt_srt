@@ -48,7 +48,7 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle("Trackpad swipe over a title adjusts its edges", isOn: $model.swipeOverTitleAdjusts)
+                Toggle("Trackpad swipe over the selected title adjusts its edges", isOn: $model.swipeOverTitleAdjusts)
                 Toggle("Replay title after jog or nudge", isOn: $model.replayAfterJog)
                 Toggle("Replay title after drag-resize", isOn: $model.replayAfterResize)
             }

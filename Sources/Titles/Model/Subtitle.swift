@@ -20,9 +20,9 @@ struct Subtitle: Identifiable, Equatable, Hashable, Codable, Sendable {
 
     var duration: Double { max(0, end - start) }
 
-    /// Characters counted for reading speed: everything except line breaks.
+    /// Characters counted for reading speed: everything except line breaks and formatting tags.
     var characterCount: Int {
-        text.filter { $0 != "\n" && $0 != "\r" }.count
+        Markup.plain(text).filter { $0 != "\n" && $0 != "\r" }.count
     }
 
     /// Characters per second.
@@ -96,14 +96,14 @@ struct TimingPreset: Equatable, Identifiable, Hashable, Codable, Sendable {
 
     /// Too many lines, or a line longer than the limit.
     func lineStatus(_ s: Subtitle) -> TimingStatus {
-        let lines = s.text.split(separator: "\n", omittingEmptySubsequences: false)
+        let lines = Markup.plain(s.text).split(separator: "\n", omittingEmptySubsequences: false)
         if lines.count > maxLines { return .bad }
         if lines.contains(where: { $0.count > maxCharsPerLine }) { return .bad }
         return .ok
     }
 
     func longestLine(_ s: Subtitle) -> Int {
-        s.text.split(separator: "\n").map(\.count).max() ?? 0
+        Markup.plain(s.text).split(separator: "\n").map(\.count).max() ?? 0
     }
 
     func status(_ s: Subtitle) -> TimingStatus {

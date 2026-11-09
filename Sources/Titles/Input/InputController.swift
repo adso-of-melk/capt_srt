@@ -63,7 +63,7 @@ final class InputController {
             return e
         }
         // The home screen has no titles to edit.
-        if model.showHome || model.project == nil { return e }
+        if model.showHome || model.project == nil || model.showProjectView { return e }
         let flags = e.modifierFlags.intersection([.shift, .control, .option, .command])
 
         switch e.type {
@@ -156,10 +156,9 @@ final class InputController {
 
         if e.keyCode != Key.space { typedSinceShift = true }
 
-        // Shift+Space: play/pause from anywhere. While typing in a card, only when Shift was
-        // pressed on its own and held about 150 ms; otherwise it's a space after a capital.
-        if e.keyCode == Key.space, flags == [.shift],
-           !isEditingText || (!typedSinceShift && e.timestamp - shiftDownAt >= 0.15) {
+        // Shift+Space: play/pause from anywhere. While typing in a card, only when nothing
+        // was typed while Shift was down; otherwise it's the space after a capital ("I am").
+        if e.keyCode == Key.space, flags == [.shift], !isEditingText || !typedSinceShift {
             if !e.isARepeat { model.togglePlay() }
             return nil
         }
@@ -178,6 +177,17 @@ final class InputController {
         }
 
         if isEditingText {
+            // ⌘I: italic. Wraps the selection in <i>…</i>, or starts an italic run.
+            if flags == [.command], e.charactersIgnoringModifiers?.lowercased() == "i",
+               let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
+                let range = editor.selectedRange()
+                let selected = (editor.string as NSString).substring(with: range)
+                editor.insertText("<i>" + selected + "</i>", replacementRange: range)
+                if range.length == 0 {
+                    editor.setSelectedRange(NSRange(location: range.location + 3, length: 0))
+                }
+                return nil
+            }
             // ⌘V: once the paste lands, break the title's lines by the rules.
             if flags == [.command], e.charactersIgnoringModifiers?.lowercased() == "v",
                let id = model.doc.selectedID {

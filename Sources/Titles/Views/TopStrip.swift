@@ -7,6 +7,10 @@ struct TopStrip: View {
     var body: some View {
         HStack(spacing: 10) {
             HomeButton { model.goHome() }
+            if model.project != nil {
+                StripButton(title: "PROJECT", systemImage: "film.stack", color: Theme.periwinkle,
+                            help: "All of this project's videos; add videos here (⇧⌘P)") { model.showProjectOverview() }
+            }
             if let project = model.project {
                 Text(project.name)
                     .font(Theme.label(12, .semibold))
@@ -66,9 +70,9 @@ private struct VideoSwitcher: View {
                 }
             }
             Divider()
-            Button("Add Video…") { model.addVideoPanel() }
-            Button("Add Video Link…") { model.sheet = .openLink }
+            Button("All Videos (Project View)…") { model.showProjectOverview() }
             if let v = model.video {
+                Button(model.currentVideoMissing ? "Locate Video File…" : "Replace Video File…") { model.replaceVideoPanel() }
                 Divider()
                 Button("Rename “\(v.name)”…") { model.renameVideo(v) }
                 if project.videos.count > 1 {
@@ -89,7 +93,35 @@ private struct VideoSwitcher: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help("Switch video, or add another one to the project")
+        .help("Switch video, or give this one a different file")
+    }
+}
+
+/// A small labelled console button for the top strip.
+struct StripButton: View {
+    let title: String
+    let systemImage: String
+    let color: Color
+    let help: String
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: systemImage).font(.system(size: 9, weight: .bold))
+                Text(title).font(Theme.label(9, .bold)).tracking(1.4)
+            }
+            .foregroundStyle(hover ? Theme.background : color)
+            .padding(.horizontal, 8)
+            .frame(height: 18)
+            .background(RoundedRectangle(cornerRadius: 4).fill(hover ? color : color.opacity(0.1)))
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(color.opacity(0.35), lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help(help)
     }
 }
 

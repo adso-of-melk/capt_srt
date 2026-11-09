@@ -16,6 +16,7 @@ struct SheetHost: View {
             case .importLanguage: LanguageSheet(model: model, importURL: model.pendingImport)
             case .export: ExportSheet(model: model)
             case .openLink: OpenLinkSheet(model: model)
+            case .shiftTitles: ShiftTitlesSheet(model: model)
             }
         }
         .preferredColorScheme(.dark)
@@ -33,6 +34,11 @@ private struct SheetHeader: View {
 
 // MARK: - New project
 
+struct ExtraLanguage: Identifiable {
+    let id = UUID()
+    var language: Language
+}
+
 struct NewProjectSheet: View {
     @ObservedObject var model: AppModel
     @State private var name = ""
@@ -40,6 +46,8 @@ struct NewProjectSheet: View {
     @State private var video: URL?
     @State private var subtitles: URL?
     @State private var settings = ProjectSettings()
+    @State private var videoLink = ""
+    @State private var extraLanguages: [ExtraLanguage] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -60,7 +68,25 @@ struct NewProjectSheet: View {
                         Button("Choose…") { chooseVideo() }
                     }
                 }
+                if video == nil {
+                    TextField("Or a video link", text: $videoLink, prompt: Text("https://…/film.mp4 or .m3u8"))
+                }
                 LanguagePicker(title: "Master language", selection: $settings.masterLanguage)
+                ForEach($extraLanguages) { $extra in
+                    HStack {
+                        LanguagePicker(title: "Also", selection: $extra.language)
+                        let id = extra.id
+                        Button { extraLanguages.removeAll { $0.id == id } } label: { Image(systemName: "minus.circle") }
+                            .buttonStyle(.plain)
+                            .help("Don't add this language")
+                    }
+                }
+                Button("Add Another Language") {
+                    let used = Set([settings.masterLanguage] + extraLanguages.map(\.language))
+                    let next = ["en", "hr", "de", "fr", "es", "it", "sl", "sr"].map(Language.named)
+                        .first { !used.contains($0) } ?? Language.named("en")
+                    extraLanguages.append(ExtraLanguage(language: next))
+                }
                 LabeledContent("Existing subtitles") {
                     HStack {
                         Text(subtitles?.lastPathComponent ?? "None (optional .srt or .vtt)")
@@ -83,7 +109,7 @@ struct NewProjectSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 600, height: 640)
+        .frame(width: 600, height: 700)
         .background(Theme.panel)
         .onAppear {
             if let v = model.newProjectVideo {
@@ -98,7 +124,12 @@ struct NewProjectSheet: View {
             ? (video?.deletingPathExtension().lastPathComponent ?? "Untitled") : name
         model.sheet = nil
         model.newProjectVideo = nil
-        model.createProject(name: finalName, folder: folder, video: video, settings: settings, subtitles: subtitles)
+        var videoURL = video
+        let link = videoLink.trimmingCharacters(in: .whitespacesAndNewlines)
+        if videoURL == nil, !link.isEmpty, let url = URL(string: link),
+           ["http", "https"].contains(url.scheme?.lowercased() ?? "") { videoURL = url }
+        model.createProject(name: finalName, folder: folder, video: videoURL, settings: settings,
+                            subtitles: subtitles, extraLanguages: extraLanguages.map(\.language))
     }
 
     private func chooseFolder() {
@@ -416,3 +447,53 @@ struct OpenLinkSheet: View {
         DispatchQueue.main.async { model.openURLString(t) }
     }
 }
+
+// MARK: - Shift titles
+
+struct ShiftTitlesSheet: View {
+    @ObservedObject var model: AppModel
+    @State private var offset = ""
+    @State private var scope = 0          // 0 = selected, 1 = all in this language
+    @State private var allLanguages = false
+
+    var body: some View {
+        let picked = model.multiSelection.isEmpty ? (model.doc.selectedID == nil ? 0 : 1) : model.multiSelection.count
+        VStack(alignment: .leading, spacing: 12) {
+            SheetHeader(title: "Shift titles")
+            Text("Move titles earlier or later. Seconds (+1.5, -0.25) or a timecode (-00:00:01:12).")
+                .font(Theme.label(12, .regular)).foregroundStyle(Theme.textDim)
+            TextField("Offset", text: $offset, prompt: Text("+1.0"))
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { apply() }
+            Picker("Which titles", selection: $scope) {
+                Text(picked == 1 ? "The selected title" : "The \(picked) selected titles").tag(0)
+                Text("Every title in \(model.focusedTrack?.language.name ?? "this language")").tag(1)
+            }
+            .pickerStyle(.radioGroup)
+            .disabled(picked == 0)
+            if scope == 1 {
+                Toggle("All languages (locked ones follow their master)", isOn: $allLanguages)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { model.sheet = nil }.keyboardShortcut(.cancelAction)
+                    .buttonStyle(ConsoleButtonStyle(secondary: true))
+                Button("Shift") { apply() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(ConsoleButtonStyle())
+                    .disabled(model.parseOffset(offset) == nil)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+        .background(Theme.panel)
+        .onAppear { if picked == 0 { scope = 1 } }
+    }
+
+    private func apply() {
+        guard let value = model.parseOffset(offset) else { return }
+        model.sheet = nil
+        model.shiftTitles(by: value, onlySelected: scope == 0, allLanguages: scope == 1 && allLanguages)
+    }
+}
+

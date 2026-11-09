@@ -5,7 +5,7 @@ import Combine
 
 /// The dialogs the editor can show.
 enum SheetKind: Identifiable, Equatable {
-    case newProject, projectSettings, newLanguage, importLanguage, export, openLink
+    case newProject, projectSettings, newLanguage, importLanguage, export, openLink, shiftTitles
     var id: Self { self }
 }
 
@@ -30,11 +30,13 @@ extension AppModel {
     func rowKey(ofSub id: UUID) -> UUID? { rowOfSub[id].map { rows[$0].key } }
 
     /// The 1-based row number shown on cards and waveform boxes.
-    func rowNumber(of id: UUID) -> Int? { rowOfSub[id].map { $0 + 1 } }
+    /// Each language is numbered on its own, in time order.
+    func rowNumber(of id: UUID) -> Int? { numberOfSub[id] }
 
     /// Moves focus to a language, staying on the same row. Typing carries on in the new column.
     func focusTrack(_ id: UUID, edit: Bool? = nil) {
         guard let video, let track = video.track(id), video.openTrackIDs.contains(id) else { return }
+        if track.id != focusedTrack?.id { multiSelection = [] }
         let wasEditing = edit ?? (mainWindow?.firstResponder is NSTextView)
         let rowKey = selectedRowKey
         finishGesture()
@@ -119,6 +121,11 @@ extension AppModel {
         var map: [UUID: Int] = [:]
         for (i, row) in built.enumerated() { for s in row.cells.values { map[s.id] = i } }
         rowOfSub = map
+        var numbers: [UUID: Int] = [:]
+        for track in video.tracks {
+            for (i, s) in track.doc.subtitles.sorted(by: { $0.start < $1.start }).enumerated() { numbers[s.id] = i + 1 }
+        }
+        numberOfSub = numbers
         if built != rows { rows = built }
         if let key = emptySlotRow, !built.contains(where: { $0.key == key }) { emptySlotRow = nil }
         bump()
@@ -238,7 +245,8 @@ extension AppModel {
 
     // MARK: Creating and opening projects
 
-    func createProject(name: String, folder: URL, video videoURL: URL?, settings: ProjectSettings, subtitles: URL?) {
+    func createProject(name: String, folder: URL, video videoURL: URL?, settings: ProjectSettings, subtitles: URL?,
+                       extraLanguages: [Language] = []) {
         let clean = ProjectStore.sanitize(name).isEmpty ? "Untitled" : ProjectStore.sanitize(name)
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -258,13 +266,19 @@ extension AppModel {
         let project = Project(name: clean, settings: settings, videos: [item], fileURL: fileURL)
         load(project, currentVideoID: item.id)
         saveProject()
+        // Further languages start from the master's timing (blank), once its titles are in.
+        let extras = extraLanguages.filter { $0 != settings.masterLanguage }
         if let subtitles {
             readSubtitleFile(subtitles) { [weak self] subs in
                 master.doc.replaceAll(subs)
                 master.doc.selectedID = nil
+                for lang in extras { self?.addLanguage(lang, locked: false, copyText: false) }
                 self?.flash("Loaded \(subs.count) titles into \(master.language.name)")
                 self?.saveProject()
             }
+        } else {
+            for lang in extras { addLanguage(lang, locked: false, copyText: false) }
+            if !extras.isEmpty { saveProject() }
         }
     }
 
@@ -382,6 +396,8 @@ extension AppModel {
         redoOrder.removeAll()
         project = nil
         video = nil
+        showProjectView = false
+        multiSelection = []
         doc = SubtitleDocument()
         rows = []
         rowOfSub = [:]
@@ -492,6 +508,7 @@ extension AppModel {
         undoOrder.removeAll()
         redoOrder.removeAll()
         video = v
+        multiSelection = []
         let focused = v.track(v.focusedTrackID) ?? v.master ?? v.tracks.first
         if let focused {
             v.focusedTrackID = focused.id
@@ -505,8 +522,117 @@ extension AppModel {
         audio.clear()
         videoURL = nil
         clock.time = 0
-        if let url = v.url { openVideo(url) }
+        if let url = v.url {
+            if let found = findMissingVideo(v) {
+                if found != url { v.url = found; saveProject() }
+                openVideo(found)
+            }
+        }
         rememberProject()
+    }
+
+    /// True when a video's file isn't on this Mac (a link never counts as missing).
+    func videoFileMissing(_ v: VideoItem) -> Bool {
+        guard let url = v.url, url.isFileURL else { return false }
+        return !FileManager.default.fileExists(atPath: url.path)
+    }
+
+    var currentVideoMissing: Bool { video.map(videoFileMissing) ?? false }
+
+    /// The video's file, or a file of the same name next to the project (handy when a
+    /// project and its video are copied to another Mac together). Nil when neither exists.
+    func findMissingVideo(_ v: VideoItem) -> URL? {
+        guard let url = v.url else { return nil }
+        if !url.isFileURL || FileManager.default.fileExists(atPath: url.path) { return url }
+        if let folder = project?.fileURL?.deletingLastPathComponent() {
+            let candidate = folder.appendingPathComponent(url.lastPathComponent)
+            if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+        }
+        return nil
+    }
+
+    /// Points a video at a different file (a new edit, or a moved or lost file). Keeps every title.
+    func replaceVideo(_ v: VideoItem, with url: URL) {
+        v.url = url
+        if v.name.hasPrefix("Video ") { v.name = url.deletingPathExtension().lastPathComponent }
+        if v === video { switchVideo(v) } else { bump() }
+        saveProject()
+    }
+
+    func replaceVideoPanel(for v: VideoItem? = nil) {
+        guard let target = v ?? video else { return }
+        let panel = NSOpenPanel()
+        panel.message = "Choose the video file for \(target.name). Its titles stay as they are."
+        panel.allowedContentTypes = [.movie, .video, .audiovisualContent, .mpeg4Movie, .quickTimeMovie, .audio]
+        panel.directoryURL = project?.fileURL?.deletingLastPathComponent()
+        if panel.runModal() == .OK, let url = panel.url { replaceVideo(target, with: url) }
+    }
+
+    func showProjectOverview() {
+        guard project != nil else { return }
+        finishGesture()
+        if engine.isPlaying { engine.pause() }
+        saveProject()
+        showProjectView = true
+    }
+
+    func openVideoFromOverview(_ v: VideoItem) {
+        showProjectView = false
+        if v !== video { switchVideo(v) }
+    }
+
+    /// File ▸ Reload Project from File: re-reads the saved project file, ignoring this Mac's
+    /// working copy. What's open now is kept as a backup first.
+    func reloadProjectFromFile() {
+        guard let project, let url = project.fileURL else {
+            flash("This project has no project file to reload from.")
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Reload \(project.name) from its project file?"
+        alert.informativeText = "What's open now is replaced by \(url.lastPathComponent). A backup of the current state is kept first (File ▸ Restore from Backup…)."
+        alert.addButton(withTitle: "Reload")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if let data = try? ProjectStore.encode(project.file(currentVideoID: video?.id)) {
+            ProjectStore.writeBackup(data, id: project.id)
+        }
+        let current = video?.id
+        ensureLocal(url) { [weak self] local in
+            guard let self else { return }
+            do {
+                let data = try Data(contentsOf: local)
+                let file = try ProjectStore.decode(data)
+                self.load(Project(file, fileURL: url), currentVideoID: current ?? file.currentVideoID)
+                try? ProjectStore.writeLocalCopy(data, id: file.id)
+                self.flash("Reloaded from \(url.lastPathComponent)")
+            } catch {
+                self.showError("Couldn't reload \(url.lastPathComponent)", error.localizedDescription)
+            }
+        }
+    }
+
+    /// File ▸ Restore from Backup…: picks one of the automatic backups and makes it the project.
+    func restoreFromBackupPanel() {
+        guard let project else { return }
+        let panel = NSOpenPanel()
+        panel.message = "Choose a backup of \(project.name). Newest backups have the latest dates in their names."
+        panel.directoryURL = ProjectStore.backupFolder(project.id)
+        panel.allowedContentTypes = [UTType(filenameExtension: ProjectStore.fileExtension) ?? .json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data = try Data(contentsOf: url)
+            let file = try ProjectStore.decode(data)
+            if let current = try? ProjectStore.encode(project.file(currentVideoID: video?.id)) {
+                ProjectStore.writeBackup(current, id: project.id)
+            }
+            let keepURL = project.fileURL
+            load(Project(file, fileURL: keepURL), currentVideoID: video?.id ?? file.currentVideoID)
+            saveProject(announce: false)
+            flash("Restored the backup from \(url.deletingPathExtension().lastPathComponent)")
+        } catch {
+            showError("Couldn't restore that backup", error.localizedDescription)
+        }
     }
 
     func addVideoPanel() {
@@ -812,8 +938,17 @@ extension AppModel {
                 }
                 pendingImport = url
                 sheet = .importLanguage
-            } else {
+            } else if project == nil || showProjectView {
                 addVideo(url)
+            } else if let v = video {
+                // In the editor a dropped video replaces this one's file (new videos are
+                // added from the project view).
+                let alert = NSAlert()
+                alert.messageText = "Use \(url.lastPathComponent) for \(v.name)?"
+                alert.informativeText = "The video file is replaced and every title is kept. To add another video to the project, use the project view (PROJECT in the top strip)."
+                alert.addButton(withTitle: "Replace Video")
+                alert.addButton(withTitle: "Cancel")
+                if alert.runModal() == .alertFirstButtonReturn { replaceVideo(v, with: url) }
             }
         }
     }
@@ -842,7 +977,7 @@ extension AppModel {
         guard autoLineBreaks, let track = video?.tracks.first(where: { $0.doc.subtitle(id) != nil }),
               let sub = track.doc.subtitle(id), !sub.text.contains("\n") else { return }
         let rules = preset(for: track)
-        guard sub.text.count > rules.maxCharsPerLine else { return }
+        guard Markup.plain(sub.text).count > rules.maxCharsPerLine else { return }
         let broken = LineBreaker.breakLines(sub.text, maxChars: rules.maxCharsPerLine,
                                             maxLines: rules.maxLines, language: track.language.code)
         if broken != sub.text { track.doc.setText(id, broken) }
@@ -868,3 +1003,77 @@ extension AppModel {
         if broken != sub.text { doc.setText(sub.id, broken) }
     }
 }
+
+// MARK: Several titles at once
+
+extension AppModel {
+    func toggleMulti(_ id: UUID) {
+        if multiSelection.isEmpty, let current = doc.selectedID, current != id { multiSelection.insert(current) }
+        if multiSelection.contains(id) { multiSelection.remove(id) } else { multiSelection.insert(id) }
+        doc.selectedID = multiSelection.contains(id) ? id : multiSelection.first
+        bump()
+    }
+
+    func addToMulti(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        multiSelection.formUnion(ids)
+        if doc.selectedID == nil { doc.selectedID = ids.first }
+        bump()
+    }
+
+    func selectAllTitles() {
+        multiSelection = Set(doc.subtitles.map(\.id))
+        bump()
+    }
+
+    func clearMulti() {
+        guard !multiSelection.isEmpty else { return }
+        multiSelection = []
+        bump()
+    }
+
+    /// Title ▸ Shift Titles…: moves titles by `offset` seconds (negative = earlier).
+    /// `onlySelected` uses the group picked on the waveform (or the selected title).
+    /// Locked languages follow their master automatically.
+    func shiftTitles(by offset: Double, onlySelected: Bool, allLanguages: Bool) {
+        guard let video, offset != 0 else { return }
+        let picked: Set<UUID> = multiSelection.isEmpty ? Set([doc.selectedID].compactMap { $0 }) : multiSelection
+        if onlySelected && picked.isEmpty { return }
+        let tracks = allLanguages ? video.tracks.filter { !$0.locked || $0.id == video.masterTrackID }
+                                  : [focusedTrack].compactMap { $0 }
+        if !allLanguages, refuseIfLocked() { return }
+        for track in tracks {
+            let isFocused = track.id == focusedTrack?.id
+            track.doc.perform { subs in
+                for i in subs.indices where !onlySelected || (isFocused && picked.contains(subs[i].id)) {
+                    let length = subs[i].duration
+                    subs[i].start = max(0, subs[i].start + offset)
+                    subs[i].end = subs[i].start + length
+                }
+            }
+        }
+        enforceLocks(in: video)
+        flash(String(format: "Moved titles %@%.3f s", offset > 0 ? "+" : "", offset))
+    }
+
+    /// Reads "+1.5", "-0.25", or a timecode "-00:00:01:12" (frames at the project rate).
+    func parseOffset(_ text: String) -> Double? {
+        var t = text.trimmingCharacters(in: .whitespaces)
+        var sign = 1.0
+        if t.hasPrefix("-") { sign = -1; t.removeFirst() } else if t.hasPrefix("+") { t.removeFirst() }
+        if t.contains(":") {
+            let parts = t.split(separator: ":").map { Double($0) }
+            guard parts.allSatisfy({ $0 != nil }), (2...4).contains(parts.count) else { return nil }
+            let v = parts.map { $0! }
+            var seconds = 0.0
+            switch v.count {
+            case 4: seconds = v[0] * 3600 + v[1] * 60 + v[2] + v[3] * frameDuration
+            case 3: seconds = v[0] * 60 + v[1] + v[2] * frameDuration
+            default: seconds = v[0] * 60 + v[1]
+            }
+            return sign * seconds
+        }
+        return Double(t.replacingOccurrences(of: ",", with: ".")).map { sign * $0 }
+    }
+}
+

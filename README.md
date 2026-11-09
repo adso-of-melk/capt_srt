@@ -40,6 +40,18 @@ Each video has a **master** language (★) and any number of others, shown side 
 - **Text Only (⇧⌘T)** hides picture and waveform, leaving the columns and a slim transport.
 - Undo and redo (⌘Z / ⇧⌘Z) work across all languages in order. While paused, the playhead goes to what changed (half a second before a removed title).
 
+## Since the last notes (build of 2026-11-09)
+
+- **Rows by time.** Card rows are built from timing alone: titles from different languages that start within 0.25 s, or overlap for half their length, share a row. Moving a title never reorders another language. Each language is numbered on its own.
+- **Formatting.** `<i>`, `<b>` and `<u>` show as italic, bold and underline in cards and on the video; tags don't count towards CPS or characters per line. ⌘I wraps the selection in `<i>…</i>` while typing.
+- **Typing.** Shift+Space plays unless you typed a letter while holding Shift (a capital then a space). Tab puts the cursor at the end of the next card. Hover a column's coloured cap to close it.
+- **Several titles at once.** Shift-click boxes on the waveform, or Shift-drag on empty waveform to draw a selection box; ⌘A (waveform focused) selects every title. Drag any selected box to move the group. Title ▸ Shift Titles… (⌥⌘T) moves the selection, a whole language, or all languages by an offset (seconds or timecode).
+- **Videos.** New videos are added in the project view (PROJECT in the top strip, ⇧⌘P). In the editor a video can only be replaced (Replace Video File…, or drop a file), keeping its titles. A missing video shows a banner with Locate…, and a file with the same name next to the project is found automatically.
+- **Recovery.** File ▸ Reload Project from File… and Restore from Backup….
+- **New Project** can add several languages at once and take a video link.
+- **Trackpad swipe** over the selected title's box adjusts its edges (on by default); elsewhere a swipe scrolls.
+- Double-clicking a `.kptnsub` file opens it in the packaged app.
+
 ## Supported files
 
 | What | Formats |

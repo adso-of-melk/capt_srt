@@ -198,10 +198,11 @@ final class Project: ObservableObject, Identifiable {
 
 // MARK: - Rows across languages
 
-/// One row of the side-by-side card pane: a master title and its translations,
-/// or a title that has no partner in the master.
+/// One row of the side-by-side card pane: titles from different languages that sit at the
+/// same time on screen. Rows are built from timing alone, so moving a title in one language
+/// never reorders another, and each column always reads in time order.
 struct CardRow: Identifiable, Equatable {
-    /// The master title's id (or the unpartnered title's own id).
+    /// The row's first title (its anchor).
     let key: UUID
     var time: Double
     var cells: [UUID: Subtitle]   // track id → title
@@ -209,36 +210,33 @@ struct CardRow: Identifiable, Equatable {
 }
 
 enum RowBuilder {
-    /// The row a title belongs to.
-    static func key(of s: Subtitle, inMaster: Bool) -> UUID {
-        inMaster ? s.id : (s.link ?? s.id)
-    }
-
     @MainActor
     static func rows(for video: VideoItem, tracks: [Track]) -> [CardRow] {
-        var byKey: [UUID: CardRow] = [:]
-        var order: [UUID] = []
-        let masterID = video.masterTrackID
-        // Master first, so its rows take its timing.
-        let sorted = tracks.filter { $0.id == masterID } + tracks.filter { $0.id != masterID }
-        for track in sorted {
-            let inMaster = track.id == masterID
-            for s in track.doc.subtitles {
-                var key = key(of: s, inMaster: inMaster)
-                if let existing = byKey[key], existing.cells[track.id] != nil { key = s.id }
-                if var row = byKey[key] {
-                    row.cells[track.id] = s
-                    if !row.cells.keys.contains(masterID) { row.time = min(row.time, s.start) }
-                    byKey[key] = row
-                } else {
-                    byKey[key] = CardRow(key: key, time: s.start, cells: [track.id: s])
-                    order.append(key)
-                }
+        var items: [(track: UUID, sub: Subtitle)] = []
+        for t in tracks { for s in t.doc.subtitles { items.append((t.id, s)) } }
+        items.sort {
+            $0.sub.start != $1.sub.start ? $0.sub.start < $1.sub.start : $0.sub.id.uuidString < $1.sub.id.uuidString
+        }
+        var rows: [CardRow] = []
+        var anchor: Subtitle?
+        for item in items {
+            if let a = anchor, var row = rows.last, row.cells[item.track] == nil, sameRow(a, item.sub) {
+                row.cells[item.track] = item.sub
+                rows[rows.count - 1] = row
+            } else {
+                rows.append(CardRow(key: item.sub.id, time: item.sub.start, cells: [item.track: item.sub]))
+                anchor = item.sub
             }
         }
-        return order.compactMap { byKey[$0] }.sorted {
-            $0.time != $1.time ? $0.time < $1.time : $0.key.uuidString < $1.key.uuidString
-        }
+        return rows
+    }
+
+    /// Two titles share a row when they start within a quarter second of each other, or
+    /// overlap for at least half of the shorter one.
+    static func sameRow(_ a: Subtitle, _ b: Subtitle) -> Bool {
+        if abs(a.start - b.start) <= 0.25 { return true }
+        let overlap = min(a.end, b.end) - max(a.start, b.start)
+        return overlap > 0 && overlap / max(0.001, min(a.duration, b.duration)) >= 0.5
     }
 
     /// Links titles of an imported or newly created language to the master by overlapping time.

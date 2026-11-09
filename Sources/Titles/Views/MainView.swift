@@ -12,6 +12,8 @@ struct MainView: View {
         Group {
             if model.showHome || model.project == nil {
                 HomeView(model: model)
+            } else if model.showProjectView, let project = model.project {
+                ProjectView(model: model, project: project)
             } else {
                 editor
             }
@@ -40,6 +42,9 @@ struct MainView: View {
             if let text = model.banner {
                 BannerView(text: text) { model.banner = nil }
             }
+            if model.currentVideoMissing {
+                MissingVideoBanner(model: model)
+            }
             if model.textOnly {
                 VStack(spacing: 0) {
                     CardPane(model: model, doc: doc)
@@ -67,6 +72,8 @@ struct MainView: View {
             }
         }
         .onChange(of: model.project?.id) { _, _ in sizeCardPane() }
+        .onChange(of: model.video?.id) { _, _ in sizeCardPane() }
+        .onChange(of: model.showProjectView) { _, showing in if !showing { sizeCardPane() } }
         .onChange(of: model.openTracks.count) { old, new in
             if new > old { widenCardPaneForColumns(new) }
         }
@@ -95,7 +102,10 @@ struct MainView: View {
             try? await Task.sleep(nanoseconds: 80_000_000)
             guard let window = model.mainWindow, let content = window.contentView,
                   let split = Self.firstSideBySideSplit(in: content) else { return }
-            let width = max(340, (split.bounds.width * 0.25).rounded())
+            let count = CGFloat(max(1, model.openTracks.count))
+            let columns = count * 240 + (count - 1) * 8 + 24
+            let limit = split.bounds.width - 620 - split.dividerThickness
+            let width = min(max(340, (split.bounds.width * 0.25).rounded(), columns), max(340, limit))
             split.setPosition(width, ofDividerAt: 0)
         }
     }

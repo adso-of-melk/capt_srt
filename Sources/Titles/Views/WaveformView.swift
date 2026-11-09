@@ -73,6 +73,8 @@ final class WaveformNSView: NSView {
         case ruler
         case creating(t0: Double, t1: Double)
         case moving(id: UUID, grab: Double, length: Double)
+        case movingGroup(grab: Double, originals: [UUID: Double])
+        case marquee(from: CGPoint, to: CGPoint)
         case resizing(id: UUID, edge: Edge)
     }
     private var drag: Drag = .none
@@ -168,6 +170,15 @@ final class WaveformNSView: NSView {
         drawWaveform(ctx, in: wave, model: model)
         drawBoxes(ctx, in: wave, model: model)
         drawLanes(model: model, top: wave.maxY)
+        if case let .marquee(a, b) = drag {
+            let r = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
+            Palette.amber.withAlphaComponent(0.08).setFill()
+            r.fill()
+            let path = NSBezierPath(rect: r)
+            path.setLineDash([4, 3], count: 2, phase: 0)
+            Palette.amber.withAlphaComponent(0.8).setStroke()
+            path.stroke()
+        }
         if model.focusedIsLocked {
             drawText("LOCKED TO MASTER: TEXT ONLY", at: CGPoint(x: bounds.width - 190, y: wave.minY + 6),
                      font: labelFont(9), color: Palette.lilac)
@@ -300,7 +311,7 @@ final class WaveformNSView: NSView {
             let r = CGRect(x: x(s.start), y: y, width: max(2, x(end) - x(s.start)), height: height)
             boxRects.append((s.id, r))
 
-            let isSel = s.id == selected
+            let isSel = s.id == selected || model.multiSelection.contains(s.id)
             let base: NSColor = overlaps.contains(s.id) ? Palette.lilac : Palette.status(model.preset.status(s))
             let path = NSBezierPath(roundedRect: r, xRadius: 6, yRadius: 6)
             base.withAlphaComponent(isSel ? 0.24 : 0.13).setFill()
@@ -320,7 +331,7 @@ final class WaveformNSView: NSView {
             (isSel ? Palette.amber : base).setFill()
             NSBezierPath(roundedRect: pill, xRadius: 7.5, yRadius: 7.5).fill()
             drawText(numberText, at: CGPoint(x: pill.minX + 5, y: pill.minY + 1), font: font, color: Palette.background)
-            let fullText = s.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let fullText = Markup.plain(s.text).trimmingCharacters(in: .whitespacesAndNewlines)
             // Beside the number pill when there's room; otherwise underneath it.
             let besidePill = r.maxX - pill.maxX - 9 >= 40
             let textRect = besidePill
@@ -398,7 +409,7 @@ final class WaveformNSView: NSView {
                 let path = NSBezierPath(roundedRect: r, xRadius: 3, yRadius: 3)
                 color.withAlphaComponent(0.16).setFill()
                 path.fill()
-                let inRow = selectedRow != nil && RowBuilder.key(of: s, inMaster: track.id == masterID) == selectedRow
+                let inRow = selectedRow != nil && model.rowKey(ofSub: s.id) == selectedRow
                 (inRow ? Palette.amber : color.withAlphaComponent(0.6)).setStroke()
                 path.lineWidth = inRow ? 1.5 : 1
                 path.stroke()
@@ -538,6 +549,33 @@ final class WaveformNSView: NSView {
             return
         }
 
+        // Shift-click a box: add it to (or take it out of) a group of titles.
+        // Shift-drag on empty waveform: draw a box to select every title it touches.
+        if event.modifierFlags.contains(.shift), !Self.isSplitClick(event.modifierFlags) {
+            switch hit(p) {
+            case let .edge(id, _), let .body(id):
+                model.toggleMulti(id)
+                drag = .none
+            case .empty:
+                drag = .marquee(from: p, to: p)
+            }
+            needsDisplay = true
+            return
+        }
+
+        // Dragging any title of a group moves the whole group.
+        if model.multiSelection.count > 1, !model.focusedIsLocked, !Self.isSplitClick(event.modifierFlags),
+           case let .body(id) = hit(p), model.multiSelection.contains(id) {
+            var originals: [UUID: Double] = [:]
+            for s in model.doc.subtitles where model.multiSelection.contains(s.id) { originals[s.id] = s.start }
+            model.doc.beginLive()
+            drag = .movingGroup(grab: t(p.x), originals: originals)
+            NSCursor.closedHand.set()
+            needsDisplay = true
+            return
+        }
+        model.clearMulti()
+
         // A locked language keeps the master's timing: clicks only select and seek.
         if model.focusedIsLocked {
             drag = .none
@@ -602,6 +640,21 @@ final class WaveformNSView: NSView {
         switch drag {
         case .none:
             break
+        case let .marquee(from, _):
+            drag = .marquee(from: from, to: p)
+        case let .movingGroup(grab, originals):
+            var delta = t(p.x) - grab
+            if let earliest = originals.values.min() { delta = max(delta, -earliest) }
+            for (id, start) in originals {
+                model.doc.liveUpdate(id) { s in
+                    let length = s.duration
+                    s.start = start + delta
+                    s.end = s.start + length
+                }
+            }
+            if let first = originals.min(by: { $0.value < $1.value }) {
+                model.engine.seek(to: first.value + delta, exact: true)
+            }
         case .ruler:
             model.placePlayhead(t(p.x))
         case let .creating(t0, _):
@@ -630,6 +683,12 @@ final class WaveformNSView: NSView {
         switch drag {
         case .none, .ruler:
             break
+        case let .marquee(a, b):
+            let r = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
+            let hits = boxRects.filter { $0.rect.intersects(r) }.map(\.id)
+            model.addToMulti(hits)
+        case .movingGroup:
+            model.doc.commitLive()
         case let .creating(t0, t1):
             if didDrag, abs(t1 - t0) >= 0.15 {
                 model.createTitle(start: min(t0, t1), end: max(t0, t1))
@@ -730,6 +789,12 @@ final class WaveformNSView: NSView {
         model.doc.delete(id)
     }
 
+    /// Edit ▸ Select All (⌘A) while the waveform has focus: every title in this language.
+    @objc func selectAll(_ sender: Any?) {
+        model?.selectAllTitles()
+        needsDisplay = true
+    }
+
     // MARK: Wheel and trackpad
     // (Control/Option + wheel or swipe is handled app-wide by InputController.)
 
@@ -747,13 +812,16 @@ final class WaveformNSView: NSView {
         let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
         let horizontal = abs(dx) > abs(dy)
 
-        // Optional (off by default): a trackpad two-finger horizontal swipe over the
-        // left/right half of a box adjusts start/end. Mice, wheels and trackballs never
+        // A trackpad two-finger horizontal swipe over the left/right half of the selected
+        // title's box adjusts its start/end. Mice, wheels and trackballs never
         // do this (they have no gesture phase), so scrolling can't change a title.
         let isTrackpadGesture = event.hasPreciseScrollingDeltas && !event.phase.isEmpty
         if model.swipeOverTitleAdjusts, isTrackpadGesture, horizontal, event.momentumPhase.isEmpty {
             let p = convert(event.locationInWindow, from: nil)
-            if let box = boxRects.first(where: { $0.rect.contains(p) }) {
+            // Only the selected title: swiping over any other box scrolls as usual, so a
+            // scroll can't move a title by accident.
+            if let box = boxRects.first(where: { $0.rect.contains(p) && $0.id == model.doc.selectedID }),
+               !model.focusedIsLocked {
                 if event.phase == .began { swipeAccumulator = 0 }
                 let edge: Edge = p.x < box.rect.midX ? .start : .end
                 // Fingers moving right = later in time, whatever the scroll-direction setting.

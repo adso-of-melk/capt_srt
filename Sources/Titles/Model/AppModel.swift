@@ -56,7 +56,7 @@ final class AppModel: ObservableObject {
     @Published var followPlayhead = true
     /// Trackpad: a plain two-finger swipe over a title's left/right half adjusts that edge.
     /// Off by default because it competes with scrolling the waveform.
-    @Published var swipeOverTitleAdjusts = false
+    @Published var swipeOverTitleAdjusts = true
     @Published var playbackRate: Float = 1 {
         didSet { engine.setRate(playbackRate) }
     }
@@ -65,6 +65,8 @@ final class AppModel: ObservableObject {
     @Published var statusMessage: String?
     /// The start screen for choosing a project. Shown at launch and after Back to Home.
     @Published var showHome = true
+    /// The project's video overview (the only place new videos are added).
+    @Published var showProjectView = false
 
     // MARK: Project state (see AppModel+Project.swift)
 
@@ -74,6 +76,10 @@ final class AppModel: ObservableObject {
     @Published var rows: [CardRow] = []
     /// Row index of every visible title, by title id.
     var rowOfSub: [UUID: Int] = [:]
+    /// Titles picked together on the waveform (Shift-click, Shift-drag, ⌘A), in the focused language.
+    @Published var multiSelection: Set<UUID> = []
+    /// Per-language title numbers (1-based, time order).
+    var numberOfSub: [UUID: Int] = [:]
     /// The focused language has no title in this row, and that empty slot is selected.
     @Published var emptySlotRow: UUID?
     /// Bumped on every change to any language, so views that draw several languages redraw.

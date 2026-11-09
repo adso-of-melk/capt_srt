@@ -18,7 +18,7 @@ enum LineBreaker {
             .replacingOccurrences(of: "\n", with: " ")
             .split(separator: " ", omittingEmptySubsequences: true)
             .joined(separator: " ")
-        guard flat.count > maxChars, maxLines > 1 else { return flat }
+        guard len(flat) > maxChars, maxLines > 1 else { return flat }
 
         // Two speakers ("- Hi. - Hello."): one line each.
         if flat.hasPrefix("-"), let r = flat.range(of: " -", options: [], range: flat.index(after: flat.startIndex)..<flat.endIndex) {
@@ -36,7 +36,7 @@ enum LineBreaker {
     /// Splits off the best first line, then the rest recursively if it's still too long.
     private static func split(_ words: [String], maxChars: Int, linesLeft: Int, rules: Rules) -> [String] {
         let whole = words.joined(separator: " ")
-        if whole.count <= maxChars || linesLeft <= 1 || words.count < 2 { return [whole] }
+        if len(whole) <= maxChars || linesLeft <= 1 || words.count < 2 { return [whole] }
 
         var best: (k: Int, score: Double)?
         for k in 1..<words.count {
@@ -56,13 +56,13 @@ enum LineBreaker {
     private static func score(top: String, bottom: String, last: String, next: String, prev: String?,
                               maxChars: Int, linesLeft: Int, rules: Rules) -> Double {
         var s = 0.0
-        let t = Double(top.count), b = Double(bottom.count)
+        let t = Double(len(top)), b = Double(len(bottom))
 
         // Lines that don't fit are a last resort. When more lines are left, the bottom may
         // run long because it will be split again.
-        if top.count > maxChars { s += 1000 + (t - Double(maxChars)) * 20 }
+        if len(top) > maxChars { s += 1000 + (t - Double(maxChars)) * 20 }
         let bottomLimit = maxChars * max(1, linesLeft - 1)
-        if bottom.count > bottomLimit { s += 1000 + (b - Double(bottomLimit)) * 20 }
+        if len(bottom) > bottomLimit { s += 1000 + (b - Double(bottomLimit)) * 20 }
 
         // Balance, leaning bottom-heavy: a longer top line costs more than a longer bottom.
         if linesLeft == 2 {
@@ -74,7 +74,7 @@ enum LineBreaker {
         }
 
         // Punctuation is the best place to break.
-        if let c = last.last {
+        if let c = Markup.plain(last).last {
             if ".!?…".contains(c) { s -= 30 }
             else if ",;:—–)\"”»".contains(c) { s -= 20 }
         }
@@ -90,17 +90,20 @@ enum LineBreaker {
         return s
     }
 
+    /// Length as the viewer sees it (formatting tags don't count).
+    private static func len(_ s: String) -> Int { Markup.plain(s).count }
+
     private static func key(_ word: String) -> String {
-        word.lowercased().trimmingCharacters(in: CharacterSet.punctuationCharacters.union(.symbols))
+        Markup.plain(word).lowercased().trimmingCharacters(in: CharacterSet.punctuationCharacters.union(.symbols))
     }
 
     private static func isCapitalised(_ word: String) -> Bool {
-        guard let f = word.first(where: \.isLetter) else { return false }
+        guard let f = Markup.plain(word).first(where: \.isLetter) else { return false }
         return f.isUppercase
     }
 
     private static func endsSentence(_ word: String?) -> Bool {
-        guard let c = word?.last else { return true }   // first word of the title
+        guard let c = word.map(Markup.plain)?.last else { return true }   // first word of the title
         return ".!?…:".contains(c)
     }
 

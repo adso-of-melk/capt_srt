@@ -70,6 +70,11 @@ struct CardPane: View {
                 if focused != model.focusRequest { focused = model.focusRequest }
                 // Put the text cursor at the end instead of selecting everything.
                 model.focusRequest = nil
+                try? await Task.sleep(nanoseconds: 30_000_000)
+                if let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
+                    let end = (editor.string as NSString).length
+                    editor.setSelectedRange(NSRange(location: end, length: 0))
+                }
             }
         }
     }
@@ -120,7 +125,7 @@ struct CardPane: View {
                 model: model,
                 track: track,
                 sub: sub,
-                number: number,
+                number: model.rowNumber(of: sub.id) ?? number,
                 isSelected: isFocusedColumn && doc.selectedID == sub.id,
                 inSelectedRow: inSelectedRow,
                 isOverlapping: isFocusedColumn && overlaps.contains(sub.id),
@@ -178,6 +183,28 @@ private struct EmptySlot: View {
 }
 
 /// The header above a language column: name, master star, lock, menu and close.
+/// The coloured cap before a language's name. Hover it and it turns into a close button.
+private struct ColumnCap: View {
+    let color: Color
+    let canClose: Bool
+    let close: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        ZStack {
+            Capsule().fill(hover && canClose ? Theme.red : color)
+            if hover && canClose {
+                Image(systemName: "xmark").font(.system(size: 7, weight: .heavy)).foregroundStyle(Theme.background)
+            }
+        }
+        .frame(width: 16, height: 10)
+        .contentShape(Rectangle().inset(by: -4))
+        .onHover { hover = $0 }
+        .onTapGesture { if canClose { close() } }
+        .help(canClose ? "Close this column (nothing is deleted)" : "")
+    }
+}
+
 private struct LanguageHeader: View {
     @ObservedObject var model: AppModel
     @ObservedObject var track: Track
@@ -188,7 +215,8 @@ private struct LanguageHeader: View {
         let isMaster = model.video?.masterTrackID == track.id
         let index = (model.video?.openTrackIDs.firstIndex(of: track.id) ?? 0) + 1
         HStack(spacing: 6) {
-            Capsule().fill(isFocused ? Theme.amber : Theme.periwinkle.opacity(0.6)).frame(width: 14, height: 8)
+            ColumnCap(color: isFocused ? Theme.amber : Theme.periwinkle.opacity(0.6),
+                      canClose: (model.video?.openTrackIDs.count ?? 0) > 1) { model.closeColumn(track) }
             Text(track.language.name.uppercased())
                 .font(Theme.label(10, .bold))
                 .tracking(1.4)
@@ -211,13 +239,6 @@ private struct LanguageHeader: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            if (model.video?.openTrackIDs.count ?? 0) > 1 {
-                Button { model.closeColumn(track) } label: {
-                    Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.textDim)
-                }
-                .buttonStyle(.plain)
-                .help("Close this column (nothing is deleted)")
-            }
         }
         .padding(.horizontal, 10)
         .frame(width: width, height: 26)
@@ -384,14 +405,14 @@ struct CardView: View {
             // text selection or cursor.
             // Lines break exactly where they do on screen: when a line is too wide for the
             // card, the text shrinks instead of wrapping (down to 55 %, then it wraps).
-            let fontSize = Self.fittingSize(for: isSelected ? text : sub.text, width: width - 40)
+            let fontSize = Self.fittingSize(for: isSelected ? text : Markup.plain(sub.text), width: width - 40)
             Group {
                 if isSelected {
                     TextField("Type the title…", text: $text, axis: .vertical)
                         .textFieldStyle(.plain)
                         .focused(focused, equals: sub.id)
                 } else {
-                    Text(sub.text.isEmpty ? " " : sub.text)
+                    Text(sub.text.isEmpty ? AttributedString(" ") : Markup.attributed(sub.text))
                         .frame(maxWidth: .infinity)
                 }
             }

@@ -23,6 +23,16 @@ struct TitlesApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var input: InputController?
+    private weak var model: AppModel?
+    /// Files opened from Finder before the window (and model) were ready.
+    private var pendingOpen: [URL] = []
+
+    /// Double-clicked .kptnsub files, and anything dropped on the Dock icon.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        MainActor.assumeIsolated {
+            if let model { model.handleDrop(urls) } else { pendingOpen += urls }
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Needed when launched from `swift run` so the app gets a Dock icon and focus.
@@ -34,6 +44,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     func attach(_ model: AppModel) {
         guard input == nil else { return }
+        self.model = model
+        if !pendingOpen.isEmpty {
+            let urls = pendingOpen
+            pendingOpen = []
+            DispatchQueue.main.async { model.handleDrop(urls) }
+        }
         let controller = InputController(model: model)
         controller.install()
         input = controller
@@ -59,10 +75,14 @@ struct TitlesCommands: Commands {
                 .keyboardShortcut("o")
             Divider()
             Group {
-                Button("Add Video…") { model.addVideoPanel() }
+                Button("Project Videos") { model.showProjectOverview() }
+                    .keyboardShortcut("p", modifiers: [.command, .shift])
+                Button("Add Video…") { model.showProjectOverview(); model.addVideoPanel() }
                     .keyboardShortcut("n", modifiers: [.command, .option])
-                Button("Add Video Link…") { model.sheet = .openLink }
+                Button("Add Video Link…") { model.showProjectOverview(); model.sheet = .openLink }
                     .keyboardShortcut("o", modifiers: [.command, .option])
+                Button(model.currentVideoMissing ? "Locate Video File…" : "Replace Video File…") { model.replaceVideoPanel() }
+                    .disabled(model.video == nil)
             }
             .disabled(noProject)
             Divider()
@@ -76,6 +96,9 @@ struct TitlesCommands: Commands {
                     .keyboardShortcut("s")
                 Button("Export…") { model.sheet = .export }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
+                Divider()
+                Button("Reload Project from File…") { model.reloadProjectFromFile() }
+                Button("Restore from Backup…") { model.restoreFromBackupPanel() }
                 Divider()
                 Button("Project Settings…") { model.sheet = .projectSettings }
                     .keyboardShortcut(",", modifiers: [.command, .option])
@@ -132,6 +155,8 @@ struct TitlesCommands: Commands {
                 Button("Delete Title  (⌫ when not typing)") { model.deleteSelected() }
                 Button("Re-break Lines") { model.rebreakSelected() }
                     .keyboardShortcut("b", modifiers: [.command, .option])
+                Button("Shift Titles…") { model.sheet = .shiftTitles }
+                    .keyboardShortcut("t", modifiers: [.command, .option])
             }
             .disabled(noProject)
             Toggle("Break Long Lines Automatically", isOn: $model.autoLineBreaks)
@@ -143,7 +168,7 @@ struct TitlesCommands: Commands {
                 ForEach(SpotMode.allCases) { Text($0.rawValue).tag($0) }
             }
             Toggle("Follow Playhead", isOn: $model.followPlayhead)
-            Toggle("Trackpad Swipe Over a Title Adjusts Its Edges", isOn: $model.swipeOverTitleAdjusts)
+            Toggle("Trackpad Swipe Over the Selected Title Adjusts Its Edges", isOn: $model.swipeOverTitleAdjusts)
         }
     }
 

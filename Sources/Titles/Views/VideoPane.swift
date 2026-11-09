@@ -44,8 +44,8 @@ struct VideoPane: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                if let text = overlayText, !text.isEmpty {
-                    Text(text)
+                if let text = overlayText, !Markup.plain(text).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(Markup.attributed(text))
                         .font(.system(size: 22, weight: .semibold))
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.white)
