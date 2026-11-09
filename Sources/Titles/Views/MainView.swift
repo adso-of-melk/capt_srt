@@ -53,7 +53,7 @@ struct MainView: View {
             } else {
                 HSplitView {
                     CardPane(model: model, doc: doc)
-                        .frame(minWidth: 340, idealWidth: 360, maxWidth: .infinity)
+                        .frame(minWidth: model.cardPaneMinWidth, idealWidth: 360, maxWidth: .infinity)
                         // Only a sliver on the card side, so the cards' scroll bar stays free to drag;
                         // the wider grab zone is on the picture side.
                         .overlay(alignment: .trailing) { DividerGrip(model: model, width: 1) }
@@ -79,6 +79,8 @@ struct MainView: View {
         .onChange(of: model.openTracks.count) { old, new in
             if new > old { widenCardPaneForColumns(new) }
         }
+        // Longer lines (or another language): never let the pane be narrower than its columns.
+        .onChange(of: model.cardColumnMinWidth) { _, _ in widenCardPaneForColumns(model.openTracks.count) }
     }
 
     /// Adding a language: widen the card pane so every column fits (about 240 pt each),
@@ -89,7 +91,7 @@ struct MainView: View {
             guard let content = model.mainWindow?.contentView,
                   let split = Self.firstSideBySideSplit(in: content),
                   let pane = split.subviews.first else { return }
-            let needed = CGFloat(count) * 240 + CGFloat(max(0, count - 1)) * 8 + 24
+            let needed = model.cardPaneMinWidth
             let limit = split.bounds.width - 620 - split.dividerThickness
             let target = min(needed, limit)
             guard target > pane.frame.width + 1 else { return }
@@ -105,7 +107,7 @@ struct MainView: View {
             guard let window = model.mainWindow, let content = window.contentView,
                   let split = Self.firstSideBySideSplit(in: content) else { return }
             let count = CGFloat(max(1, model.openTracks.count))
-            let columns = count * 240 + (count - 1) * 8 + 24
+            let columns = max(count * model.cardColumnMinWidth + (count - 1) * 8 + 24, model.cardPaneMinWidth)
             let limit = split.bounds.width - 620 - split.dividerThickness
             let width = min(max(340, (split.bounds.width * 0.25).rounded(), columns), max(340, limit))
             split.setPosition(width, ofDividerAt: 0)
@@ -176,7 +178,8 @@ private struct DividerGrip: View {
                               let split = MainView.firstSideBySideSplit(in: content),
                               let pane = split.subviews.first else { return }
                         if startPosition == nil { startPosition = pane.frame.width }
-                        split.setPosition((startPosition ?? 0) + value.translation.width, ofDividerAt: 0)
+                        split.setPosition(max(model.cardPaneMinWidth, (startPosition ?? 0) + value.translation.width),
+                                          ofDividerAt: 0)
                     }
                     .onEnded { _ in startPosition = nil }
             )

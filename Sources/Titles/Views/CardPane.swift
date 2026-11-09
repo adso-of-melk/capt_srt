@@ -28,7 +28,7 @@ struct CardPane: View {
                 let gap: CGFloat = 8
                 let count = CGFloat(max(1, tracks.count))
                 let usable = geo.size.width - 24 - gap * (count - 1)
-                let width = max(240, usable / count)
+                let width = max(model.cardColumnMinWidth, usable / count)
                 let total = width * count + gap * (count - 1) + 24
                 ScrollViewReader { hProxy in
                     ScrollView(.horizontal, showsIndicators: total > geo.size.width + 1) {

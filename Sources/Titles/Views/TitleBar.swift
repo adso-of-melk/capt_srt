@@ -150,11 +150,12 @@ struct TitleBar: View {
 
 /// Go to a time: the readout becomes four fields (hours, minutes, seconds, frames or
 /// milliseconds). Tab moves between them, and a field moves on by itself when it's full.
-/// Return goes there; Esc or clicking away leaves the playhead where it was.
+/// Return, Tab out of the last field or clicking away goes there; Esc leaves the playhead where it was.
 struct TimecodeEntry: View {
     @ObservedObject var model: AppModel
     let time: Double
     @State private var parts: [String] = ["", "", "", ""]
+    @State private var original: [String] = []
     @FocusState private var focus: Int?
     @State private var done = false
 
@@ -177,6 +178,12 @@ struct TimecodeEntry: View {
                         .stroke(focus == i ? Theme.amber : Theme.rule, lineWidth: 1))
                     .focused($focus, equals: i)
                     .onSubmit(commit)
+                    // Tab out of the last field (or Shift-Tab out of the first): go there.
+                    .onKeyPress(keys: [.tab]) { press in
+                        let back = press.modifiers.contains(.shift)
+                        if (i == 3 && !back) || (i == 0 && back) { commit(); return .handled }
+                        return .ignored
+                    }
                 if i < 3 {
                     Text(i == 2 && usesMilliseconds ? "," : ":")
                         .font(Theme.mono(15, .semibold))
@@ -188,12 +195,16 @@ struct TimecodeEntry: View {
         .onExitCommand(perform: cancel)
         .onAppear {
             parts = split(time)
+            original = parts
             DispatchQueue.main.async { focus = 0 }
         }
         .onChange(of: focus) { _, new in
-            // Clicked somewhere else: leave without moving.
+            // Tabbed out or clicked somewhere else: go to the time typed (if anything changed).
             if new == nil {
-                DispatchQueue.main.async { if focus == nil { cancel() } }
+                DispatchQueue.main.async {
+                    guard focus == nil else { return }
+                    if parts != original { commit() } else { cancel() }
+                }
             }
         }
     }

@@ -85,7 +85,7 @@ final class InputController {
             return e
 
         case .mouseMoved:
-            guard let edge = armedEdge, model.hasMedia, let id = model.doc.selectedID else { return e }
+            guard let edge = armedEdge, model.mouseJogOn, model.hasMedia, let id = model.doc.selectedID else { return e }
             if jogEdge == nil { beginJog(edge, id) }
             applyJog(dx: e.deltaX, coarse: flags.contains(.shift))
             return nil
@@ -103,7 +103,7 @@ final class InputController {
             return e
 
         case .scrollWheel:
-            guard let edge = Self.edge(for: flags), model.doc.selectedID != nil else { return e }
+            guard let edge = Self.edge(for: flags), model.wheelJogOn, model.doc.selectedID != nil else { return e }
             wheelNudge(e, edge: edge, coarse: flags.contains(.shift))
             return nil
 
@@ -278,16 +278,21 @@ final class InputController {
     }
 
     private func applyJog(dx: CGFloat, coarse: Bool) {
-        guard let model, let edge = jogEdge, let id = jogID else { return }
-        // Speed-sensitive: slow movement = single frames, fast = bigger jumps.
-        let speed = abs(dx)
-        // Base rate is half of build 1's; the Jog Speed setting scales it (1 = default).
-        let framesPerPoint: CGFloat = speed < 2 ? 0.06 : speed < 6 ? 0.12 : speed < 15 ? 0.25 : 0.5
-        jogAccumulator += dx * framesPerPoint * CGFloat(model.jogSpeed) * (coarse ? 5 : 1)
+        guard let model, let edge = jogEdge, let id = jogID, dx != 0 else { return }
+        // Even and predictable: the same distance always moves the same number of steps,
+        // however fast you move. A sudden jerk counts for at most 8 points, so it can't
+        // throw the edge across the screen.
+        let d = max(-8, min(8, dx))
+        // Turning back starts afresh, so moving back the same distance lands where you began.
+        if jogAccumulator != 0 && (jogAccumulator > 0) != (d > 0) { jogAccumulator = 0 }
+        // Sensitivity: 40 points of travel per step (finest) down to 2 (fastest).
+        let pointsPerStep = 40 * pow(2.0 / 40, model.mouseJogSensitivity)
+        jogAccumulator += d / CGFloat(pointsPerStep)
         let whole = Int(jogAccumulator)
         guard whole != 0 else { return }
         jogAccumulator -= CGFloat(whole)
-        jogTarget += Double(whole) * model.frameDuration
+        let step = model.mouseJogStep.seconds(frame: model.frameDuration) * (coarse ? 10 : 1)
+        jogTarget += Double(whole) * step
         if let value = model.moveEdge(edge, of: id, to: jogTarget, clamp: true) {
             jogTarget = value
             model.scrubTo(value)
@@ -320,18 +325,25 @@ final class InputController {
         let d = abs(e.scrollingDeltaX) > abs(e.scrollingDeltaY) ? e.scrollingDeltaX : e.scrollingDeltaY
         // Positive = later in time: wheel towards you, or fingers moving right.
         let later = e.isDirectionInvertedFromDevice ? d : -d
-        let stepFrames = coarse ? 10 : 1
-        if e.hasPreciseScrollingDeltas {
+        guard later != 0 else { return }
+        // Changing direction starts afresh, so one click back undoes one click forward exactly.
+        if wheelAccumulator != 0 && (wheelAccumulator > 0) != (later > 0) { wheelAccumulator = 0 }
+        // Sensitivity: a quarter of a step per click (finest) up to four steps per click.
+        let stepsPerClick = CGFloat(pow(16, model.wheelJogSensitivity) / 4)
+        if !e.phase.isEmpty {
+            // Trackpad: about 6 points of finger travel counts as a click.
             if e.phase == .began { wheelAccumulator = 0 }
-            wheelAccumulator += later
-            let pointsPerStep: CGFloat = 6
-            while abs(wheelAccumulator) >= pointsPerStep {
-                let dir = wheelAccumulator > 0 ? 1 : -1
-                wheelAccumulator -= CGFloat(dir) * pointsPerStep
-                model.nudge(edge, frames: dir * stepFrames)
-            }
-        } else if later != 0 {
-            model.nudge(edge, frames: (later > 0 ? 1 : -1) * stepFrames)
+            wheelAccumulator += later / 6 * stepsPerClick
+        } else if e.hasPreciseScrollingDeltas {
+            // A smooth-scrolling mouse: about 10 points count as a click.
+            wheelAccumulator += later / 10 * stepsPerClick
+        } else {
+            // A clicky wheel: every click counts the same, however fast you turn it.
+            wheelAccumulator += (later > 0 ? 1 : -1) * stepsPerClick
         }
+        let whole = Int(wheelAccumulator)
+        guard whole != 0 else { return }
+        wheelAccumulator -= CGFloat(whole)
+        model.nudge(edge, steps: whole * (coarse ? 10 : 1), of: model.wheelJogStep)
     }
 }

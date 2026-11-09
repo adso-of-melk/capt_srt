@@ -165,12 +165,14 @@ struct NewProjectSheet: View {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.directoryURL = folder
+        panel.roomy()
         if panel.runModal() == .OK, let url = panel.url { folder = url }
     }
 
     private func chooseVideo() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.movie, .video, .audiovisualContent, .mpeg4Movie, .quickTimeMovie, .audio]
+        panel.roomy()
         if panel.runModal() == .OK, let url = panel.url {
             video = url
             if name.isEmpty { name = url.deletingPathExtension().lastPathComponent }
@@ -184,6 +186,7 @@ struct NewProjectSheet: View {
         // ⌘- or Shift-click several files; open the panel again to add files from other folders.
         panel.allowsMultipleSelection = true
         panel.prompt = "Add"
+        panel.roomy()
         guard panel.runModal() == .OK else { return }
         let known = Set(subtitleFiles.map { $0.url.standardizedFileURL })
         for url in panel.urls where !known.contains(url.standardizedFileURL) {
@@ -441,7 +444,10 @@ struct ExportSheet: View {
                 Button("Export…") {
                     model.sheet = nil
                     let (a, v, f) = (allLanguages, allVideos, format)
-                    DispatchQueue.main.async { model.runExport(allLanguages: a, allVideos: v, format: f) }
+                    // Once the sheet has gone, so the file panel opens on its own, full size.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        model.runExport(allLanguages: a, allVideos: v, format: f)
+                    }
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(ConsoleButtonStyle())
@@ -540,3 +546,15 @@ struct ShiftTitlesSheet: View {
     }
 }
 
+
+extension NSSavePanel {
+    /// File panels open big enough to browse comfortably, and can be resized.
+    func roomy() {
+        styleMask.insert(.resizable)
+        let screen = (NSApp.mainWindow?.screen ?? NSScreen.main)?.visibleFrame.size ?? NSSize(width: 1280, height: 800)
+        contentMinSize = NSSize(width: min(640, screen.width * 0.6), height: contentMinSize.height)
+        if self is NSOpenPanel || isExpanded {
+            setContentSize(NSSize(width: min(900, screen.width * 0.7), height: min(580, screen.height * 0.7)))
+        }
+    }
+}

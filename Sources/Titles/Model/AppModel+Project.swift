@@ -128,10 +128,40 @@ extension AppModel {
         numberOfSub = numbers
         if built != rows { rows = built }
         if let key = emptySlotRow, !built.contains(where: { $0.key == key }) { emptySlotRow = nil }
+        updateCardColumnWidth()
         bump()
     }
 
     func bump() { revision &+= 1 }
+
+    /// The narrowest a card column may be so every title shows its lines at full size, as
+    /// over the picture: the widest line plus the card's padding (240 to 440 points).
+    func updateCardColumnWidth() {
+        var longest: [String] = []
+        for track in openTracks {
+            for s in track.doc.subtitles {
+                for line in Markup.plain(s.text).split(separator: "\n") where line.count > 20 {
+                    longest.append(String(line))
+                }
+            }
+        }
+        // Measure only the longest lines by character count; the widest is among them.
+        let font = NSFont.systemFont(ofSize: CardView.baseFontSize, weight: .medium)
+        let widest = longest.sorted { $0.count > $1.count }.prefix(40)
+            .map { ($0 as NSString).size(withAttributes: [.font: font]).width }
+            .max() ?? 0
+        let width = min(440, max(240, ceil(widest) + 44))
+        if abs(width - cardColumnMinWidth) > 0.5 { cardColumnMinWidth = width }
+    }
+
+    /// The card pane is never narrower than its columns (so their scroll bar stays in view),
+    /// as long as the picture side keeps at least 620 points.
+    var cardPaneMinWidth: CGFloat {
+        let count = CGFloat(max(1, openTracks.count))
+        let needed = count * cardColumnMinWidth + (count - 1) * 8 + 24 + 16
+        guard let window = mainWindow?.contentView?.bounds.width, window > 0 else { return max(340, needed) }
+        return max(340, min(needed, window - 630))
+    }
 
     /// Locked languages always have exactly the master's titles and timings; text is kept by link.
     func enforceLocks(in video: VideoItem) {
@@ -308,6 +338,7 @@ extension AppModel {
         panel.allowedContentTypes = [UTType(filenameExtension: ProjectStore.fileExtension) ?? .json]
         panel.allowsMultipleSelection = false
         panel.directoryURL = ProjectStore.defaultProjectsFolder
+        panel.roomy()
         if panel.runModal() == .OK, let url = panel.url { openProject(at: url, knownID: nil) }
     }
 
@@ -586,6 +617,7 @@ extension AppModel {
         panel.message = "Choose the video file for \(target.name). Its titles stay as they are."
         panel.allowedContentTypes = [.movie, .video, .audiovisualContent, .mpeg4Movie, .quickTimeMovie, .audio]
         panel.directoryURL = project?.fileURL?.deletingLastPathComponent()
+        panel.roomy()
         if panel.runModal() == .OK, let url = panel.url { replaceVideo(target, with: url) }
     }
 
@@ -640,6 +672,7 @@ extension AppModel {
         panel.message = "Choose a backup of \(project.name). Newest backups have the latest dates in their names."
         panel.directoryURL = ProjectStore.backupFolder(project.id)
         panel.allowedContentTypes = [UTType(filenameExtension: ProjectStore.fileExtension) ?? .json]
+        panel.roomy()
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let data = try Data(contentsOf: url)
@@ -660,6 +693,7 @@ extension AppModel {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.movie, .video, .audiovisualContent, .mpeg4Movie, .quickTimeMovie, .audio]
         panel.allowsMultipleSelection = false
+        panel.roomy()
         if panel.runModal() == .OK, let url = panel.url { addVideo(url) }
     }
 
@@ -732,6 +766,7 @@ extension AppModel {
         let panel = NSOpenPanel()
         let types: [UTType?] = [UTType(filenameExtension: "srt"), UTType(filenameExtension: "vtt"), .plainText]
         panel.allowedContentTypes = types.compactMap { $0 }
+        panel.roomy()
         if panel.runModal() == .OK, let url = panel.url {
             pendingImport = url
             sheet = .importLanguage
@@ -909,6 +944,7 @@ extension AppModel {
             panel.prompt = "Export"
             panel.allowedContentTypes = [format.type]
             panel.nameFieldStringValue = items[0].name
+            panel.roomy()
             guard panel.runModal() == .OK, let url = panel.url else { return }
             write(items[0].data, to: url)
             return
@@ -919,6 +955,7 @@ extension AppModel {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
+        panel.roomy()
         guard panel.runModal() == .OK, let folder = panel.url else { return }
         let existing = items.filter { FileManager.default.fileExists(atPath: folder.appendingPathComponent($0.name).path) }
         if !existing.isEmpty {

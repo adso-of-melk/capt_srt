@@ -109,6 +109,25 @@ final class AppModel: ObservableObject {
     @Published var replayAfterResize = true {
         didSet { UserDefaults.standard.set(replayAfterResize, forKey: "replayAfterResize") }
     }
+
+    // Fine-tuning with Control/Option held (Settings ▸ Jogging).
+    /// Moving the mouse moves the edge.
+    @Published var mouseJogOn = true { didSet { UserDefaults.standard.set(mouseJogOn, forKey: "mouseJogOn") } }
+    @Published var mouseJogStep = JogStep.frame { didSet { UserDefaults.standard.set(mouseJogStep.rawValue, forKey: "mouseJogStep") } }
+    /// 0 = finest (a long mouse movement per step), 1 = fastest.
+    @Published var mouseJogSensitivity = 0.35 { didSet { UserDefaults.standard.set(mouseJogSensitivity, forKey: "mouseJogSensitivity") } }
+    /// The scroll wheel (or a two-finger swipe) moves the edge.
+    @Published var wheelJogOn = true { didSet { UserDefaults.standard.set(wheelJogOn, forKey: "wheelJogOn") } }
+    @Published var wheelJogStep = JogStep.frame { didSet { UserDefaults.standard.set(wheelJogStep.rawValue, forKey: "wheelJogStep") } }
+    /// 0 = four wheel clicks per step, 0.5 = one click per step, 1 = four steps per click.
+    @Published var wheelJogSensitivity = 0.5 { didSet { UserDefaults.standard.set(wheelJogSensitivity, forKey: "wheelJogSensitivity") } }
+
+    /// See `updateCardColumnWidth()`.
+    @Published var cardColumnMinWidth: CGFloat = 240
+    /// Languages shown as full bands on the waveform, besides the focused one.
+    @Published var waveBands: Set<UUID> = [] {
+        didSet { UserDefaults.standard.set(waveBands.map(\.uuidString), forKey: "waveBands") }
+    }
     var undoOrder: [UUID] = []
     var redoOrder: [UUID] = []
     var isSyncingLocks = false
@@ -129,6 +148,13 @@ final class AppModel: ObservableObject {
         let defaults = UserDefaults.standard
         if let mode = defaults.string(forKey: "spotMode").flatMap(SpotMode.init(rawValue:)) { spotMode = mode }
         if defaults.object(forKey: "jogSpeed") != nil { jogSpeed = defaults.double(forKey: "jogSpeed") }
+        if defaults.object(forKey: "mouseJogOn") != nil { mouseJogOn = defaults.bool(forKey: "mouseJogOn") }
+        if let v = defaults.string(forKey: "mouseJogStep").flatMap(JogStep.init(rawValue:)) { mouseJogStep = v }
+        if defaults.object(forKey: "mouseJogSensitivity") != nil { mouseJogSensitivity = defaults.double(forKey: "mouseJogSensitivity") }
+        if defaults.object(forKey: "wheelJogOn") != nil { wheelJogOn = defaults.bool(forKey: "wheelJogOn") }
+        if let v = defaults.string(forKey: "wheelJogStep").flatMap(JogStep.init(rawValue:)) { wheelJogStep = v }
+        if defaults.object(forKey: "wheelJogSensitivity") != nil { wheelJogSensitivity = defaults.double(forKey: "wheelJogSensitivity") }
+        if let ids = defaults.array(forKey: "waveBands") as? [String] { waveBands = Set(ids.compactMap(UUID.init(uuidString:))) }
         if defaults.object(forKey: "spotStartOffset") != nil { spotStartOffset = defaults.double(forKey: "spotStartOffset") }
         if defaults.object(forKey: "spotEndOffset") != nil { spotEndOffset = defaults.double(forKey: "spotEndOffset") }
         if defaults.object(forKey: "textOnly") != nil { textOnly = defaults.bool(forKey: "textOnly") }
@@ -604,10 +630,19 @@ final class AppModel: ObservableObject {
     /// Keyboard, wheel and trackpad nudges: frame steps, coalesced into one undo
     /// step, previewed once the input pauses.
     func nudge(_ edge: Edge, frames: Int) {
+        nudge(edge, by: Double(frames) * frameDuration)
+    }
+
+    /// Moves an edge by a number of jog steps (a frame, or a few milliseconds).
+    func nudge(_ edge: Edge, steps: Int, of step: JogStep) {
+        nudge(edge, by: Double(steps) * step.seconds(frame: frameDuration))
+    }
+
+    func nudge(_ edge: Edge, by seconds: Double) {
         guard let id = doc.selectedID, let s = doc.subtitle(id), !refuseIfLocked() else { return }
         doc.beginLive()
         let current = edge == .start ? s.start : s.end
-        if let t = moveEdge(edge, of: id, to: current + Double(frames) * frameDuration, clamp: true) {
+        if let t = moveEdge(edge, of: id, to: current + seconds, clamp: true) {
             scrubTo(t)
         }
         nudgeEdge = edge
@@ -796,3 +831,41 @@ final class ResumeOnce: @unchecked Sendable {
 }
 
 enum SpotTimerStatus { case short, ok, near, over }
+
+/// How far one jog step moves a title edge.
+enum JogStep: String, CaseIterable, Identifiable {
+    case frame, ms10, ms5, ms1
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .frame: return "1 frame"
+        case .ms10: return "10 ms"
+        case .ms5: return "5 ms"
+        case .ms1: return "1 ms"
+        }
+    }
+    func seconds(frame: Double) -> Double {
+        switch self {
+        case .frame: return frame
+        case .ms10: return 0.010
+        case .ms5: return 0.005
+        case .ms1: return 0.001
+        }
+    }
+}
+
+extension AppModel {
+    func setWaveBand(_ id: UUID, shown: Bool) {
+        if shown { waveBands.insert(id) } else { waveBands.remove(id) }
+        bump()
+    }
+
+    /// Every open language as a full band on the waveform, or only the focused one.
+    var allWaveBands: Bool {
+        get { openTracks.count > 1 && openTracks.allSatisfy { $0.id == video?.focusedTrackID || waveBands.contains($0.id) } }
+        set {
+            if newValue { waveBands.formUnion(openTracks.map(\.id)) } else { waveBands.subtract(openTracks.map(\.id)) }
+            bump()
+        }
+    }
+}

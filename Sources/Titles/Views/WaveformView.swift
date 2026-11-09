@@ -62,9 +62,22 @@ final class WaveformNSView: NSView {
     /// The scroll bar along the bottom: the whole film, with the visible part as a handle.
     private let scrollbarHeight: CGFloat = 12
     private let edgeGrab: CGFloat = 6
-    private var boxRects: [(id: UUID, rect: CGRect)] = []
+    /// Every drawn box, per language band.
+    private var boxRectsByTrack: [UUID: [(id: UUID, rect: CGRect)]] = [:]
+    /// The focused language's boxes.
+    private var boxRects: [(id: UUID, rect: CGRect)] {
+        guard let id = model?.video?.focusedTrackID else { return [] }
+        return boxRectsByTrack[id] ?? []
+    }
+    /// Languages drawn as full bands, top to bottom in column order.
+    private struct Band { let track: Track; let rect: CGRect; let focused: Bool; let label: CGRect }
+    private var bands: [Band] = []
+    /// Relative heights of the bands (drag the line between two bands).
+    private var bandWeights: [UUID: CGFloat] = [:]
+    /// Language tags on the slim lanes (double-click to open the language as a band).
+    private var laneTags: [(track: UUID, rect: CGRect)] = []
     /// Number pills, for double-click-to-play.
-    private var numberPills: [(id: UUID, rect: CGRect)] = []
+    private var numberPills: [(track: UUID, id: UUID, rect: CGRect)] = []
     /// Boxes of the other open languages, in their slim lanes under the waveform.
     private var laneBoxes: [(track: UUID, id: UUID, rect: CGRect)] = []
     private var laneRects: [(track: UUID, rect: CGRect)] = []
@@ -79,6 +92,7 @@ final class WaveformNSView: NSView {
         case marquee(from: CGPoint, to: CGPoint)
         case resizing(id: UUID, edge: Edge)
         case scrolling(grab: CGFloat)
+        case bandResize(upper: UUID, lower: UUID, startY: CGFloat, hu: CGFloat, hl: CGFloat, wu: CGFloat, wl: CGFloat)
     }
     private var drag: Drag = .none
 
@@ -120,10 +134,52 @@ final class WaveformNSView: NSView {
     private func x(_ t: Double) -> CGFloat { CGFloat((t - viewStart) * pps) }
     private func t(_ x: CGFloat) -> Double { max(0, viewStart + Double(x) / pps) }
     private var visibleDuration: Double { Double(bounds.width) / pps }
-    /// The other open languages, each drawn as a slim read-only lane at the bottom.
+    /// Open languages drawn as full bands: the focused one, plus any opened as a band.
+    private var bandTracks: [Track] {
+        guard let model else { return [] }
+        let focused = model.video?.focusedTrackID
+        return model.openTracks.filter { $0.id == focused || model.waveBands.contains($0.id) }
+    }
+
+    /// The other open languages, each drawn as a slim lane at the bottom.
     private var laneTracks: [Track] {
         guard let model else { return [] }
-        return model.openTracks.filter { $0.id != model.video?.focusedTrackID }
+        let shown = Set(bandTracks.map(\.id))
+        return model.openTracks.filter { !shown.contains($0.id) }
+    }
+
+    /// Splits the waveform area between the bands by their weights.
+    private func layoutBands() {
+        let area = waveRect
+        let tracks = bandTracks
+        let focused = model?.video?.focusedTrackID
+        let weights = tracks.map { bandWeights[$0.id] ?? 1 }
+        let total = max(0.001, weights.reduce(0, +))
+        var y = area.minY
+        var result: [Band] = []
+        for (i, track) in tracks.enumerated() {
+            let h = i == tracks.count - 1 ? area.maxY - y : (area.height * weights[i] / total).rounded()
+            let r = CGRect(x: 0, y: y, width: area.width, height: max(0, h))
+            let code = track.language.code.uppercased() + (track.locked ? " 🔒" : "")
+            let tw = (code as NSString).size(withAttributes: [.font: labelFont(9)]).width + 10
+            let label = tracks.count > 1 ? CGRect(x: 4, y: r.minY + 3, width: tw, height: 13) : .zero
+            result.append(Band(track: track, rect: r, focused: track.id == focused, label: label))
+            y += h
+        }
+        bands = result
+    }
+
+    private func band(at p: CGPoint) -> Band? { bands.first { $0.rect.contains(p) } }
+
+    private var focusedBandRect: CGRect { bands.first(where: \.focused)?.rect ?? waveRect }
+
+    /// The line between two bands, for dragging their shared height.
+    private func bandDivider(at p: CGPoint) -> (upper: Band, lower: Band)? {
+        guard bands.count > 1 else { return nil }
+        for i in 1..<bands.count where abs(p.y - bands[i].rect.minY) <= 3 {
+            return (bands[i - 1], bands[i])
+        }
+        return nil
     }
 
     private var lanesHeight: CGFloat {
@@ -225,8 +281,26 @@ final class WaveformNSView: NSView {
         bounds.fill()
 
         drawRuler(ctx, width: w)
-        drawWaveform(ctx, in: wave, model: model)
-        drawBoxes(ctx, in: wave, model: model)
+        layoutBands()
+        boxRectsByTrack.removeAll(keepingCapacity: true)
+        numberPills.removeAll(keepingCapacity: true)
+        for band in bands {
+            if bands.count > 1 && !band.focused {
+                Palette.background.withAlphaComponent(0.35).setFill()
+                band.rect.fill()
+            }
+            drawWaveform(ctx, in: band.rect, model: model)
+            drawBoxes(ctx, in: band.rect, track: band.track, focused: band.focused, model: model)
+            if bands.count > 1 {
+                Palette.rule.setFill()
+                CGRect(x: 0, y: band.rect.minY, width: w, height: 1).fill()
+                let tag = band.track.language.code.uppercased() + (band.track.locked ? " 🔒" : "")
+                (band.focused ? Palette.amber : Palette.panelRaised).setFill()
+                NSBezierPath(roundedRect: band.label, xRadius: 6, yRadius: 6).fill()
+                drawText(tag, at: CGPoint(x: band.label.minX + 5, y: band.label.minY + 1), font: labelFont(9),
+                         color: band.focused ? Palette.background : Palette.periwinkle)
+            }
+        }
         drawLanes(model: model, top: wave.maxY)
         drawScrollbar(model: model)
         if case let .marquee(a, b) = drag {
@@ -238,14 +312,15 @@ final class WaveformNSView: NSView {
             Palette.amber.withAlphaComponent(0.8).setStroke()
             path.stroke()
         }
+        let focusRect = focusedBandRect
         if model.focusedIsLocked {
-            drawText("LOCKED TO MASTER: TEXT ONLY", at: CGPoint(x: bounds.width - 190, y: wave.minY + 6),
+            drawText("LOCKED TO MASTER: TEXT ONLY", at: CGPoint(x: bounds.width - 190, y: focusRect.minY + 6),
                      font: labelFont(9), color: Palette.lilac)
         }
 
         if case let .creating(t0, t1) = drag {
-            let r = CGRect(x: x(min(t0, t1)), y: wave.minY + 6,
-                           width: max(1, x(max(t0, t1)) - x(min(t0, t1))), height: wave.height - 12)
+            let r = CGRect(x: x(min(t0, t1)), y: focusRect.minY + 6,
+                           width: max(1, x(max(t0, t1)) - x(min(t0, t1))), height: max(4, focusRect.height - 12))
             let path = NSBezierPath(roundedRect: r, xRadius: 6, yRadius: 6)
             Palette.amber.withAlphaComponent(0.18).setFill()
             path.fill()
@@ -345,37 +420,43 @@ final class WaveformNSView: NSView {
         ctx.strokePath()
     }
 
-    private func drawBoxes(_ ctx: CGContext, in rect: CGRect, model: AppModel) {
-        let doc = model.doc
+    private func drawBoxes(_ ctx: CGContext, in rect: CGRect, track: Track, focused: Bool, model: AppModel) {
+        let doc = track.doc
         let subs = doc.subtitles
         let lanes = laneOffsets(subs)
         let overlaps = doc.overlappingIDs
-        let selected = doc.selectedID
-        let langTag = (model.focusedTrack?.language.code ?? "").split(separator: "-").first.map { $0.uppercased() } ?? ""
+        // Only the focused language shows a selection.
+        let selected = focused ? doc.selectedID : nil
+        let preset = model.preset(for: track)
+        // Languages that aren't focused are drawn quieter.
+        let dim: CGFloat = focused ? 1 : 0.6
+        let langTag = track.language.code.split(separator: "-").first.map { $0.uppercased() } ?? ""
         let tagFont = labelFont(9)
         let tagSize = (langTag as NSString).size(withAttributes: [.font: tagFont])
         let viewEnd = viewStart + visibleDuration
         let baseHeight = rect.height * 0.74
         let laneShift = rect.height * 0.11
 
-        boxRects.removeAll(keepingCapacity: true)
-        numberPills.removeAll(keepingCapacity: true)
+        var rects: [(id: UUID, rect: CGRect)] = []
+        defer { boxRectsByTrack[track.id] = rects }
         var selectedRect: CGRect?
 
-        for (index, s) in subs.enumerated() where (model.liveSpotEnd(for: s.id) ?? s.end) >= viewStart && s.start <= viewEnd {
+        for (index, s) in subs.enumerated() {
+            let end = (focused ? model.liveSpotEnd(for: s.id) : nil) ?? s.end
+            guard end >= viewStart && s.start <= viewEnd else { continue }
             let lane = lanes[s.id] ?? 0
             let height = lane == 0 ? baseHeight : baseHeight - laneShift
             let y = rect.midY - height / 2 + CGFloat(lane) * laneShift
-            let end = model.liveSpotEnd(for: s.id) ?? s.end
             let r = CGRect(x: x(s.start), y: y, width: max(2, x(end) - x(s.start)), height: height)
-            boxRects.append((s.id, r))
+            rects.append((s.id, r))
 
-            let isSel = s.id == selected || model.multiSelection.contains(s.id)
-            let base: NSColor = overlaps.contains(s.id) ? Palette.lilac : Palette.status(model.preset.status(s))
+            let isSel = s.id == selected || (focused && model.multiSelection.contains(s.id))
+            let base: NSColor = (overlaps.contains(s.id) ? Palette.lilac : Palette.status(preset.status(s)))
+                .withAlphaComponent(dim)
             let path = NSBezierPath(roundedRect: r, xRadius: 6, yRadius: 6)
-            base.withAlphaComponent(isSel ? 0.24 : 0.13).setFill()
+            base.withAlphaComponent(isSel ? 0.24 : 0.13 * dim).setFill()
             path.fill()
-            (isSel ? Palette.amber : base.withAlphaComponent(0.75)).setStroke()
+            (isSel ? Palette.amber : base.withAlphaComponent(0.75 * dim)).setStroke()
             path.lineWidth = isSel ? 2 : 1
             path.stroke()
 
@@ -386,7 +467,7 @@ final class WaveformNSView: NSView {
             let font = labelFont(11)
             let numWidth = (numberText as NSString).size(withAttributes: [.font: font]).width + 10
             let pill = CGRect(x: r.minX + 4, y: r.minY + 4, width: numWidth, height: 15)
-            numberPills.append((s.id, pill.intersection(r)))
+            numberPills.append((track.id, s.id, pill.intersection(r)))
             (isSel ? Palette.amber : base).setFill()
             NSBezierPath(roundedRect: pill, xRadius: 7.5, yRadius: 7.5).fill()
             drawText(numberText, at: CGPoint(x: pill.minX + 5, y: pill.minY + 1), font: font, color: Palette.background)
@@ -397,7 +478,7 @@ final class WaveformNSView: NSView {
                 ? CGRect(x: pill.maxX + 5, y: r.minY + 3, width: r.maxX - pill.maxX - 9, height: r.height - 6)
                 : CGRect(x: r.minX + 4, y: pill.maxY + 2, width: r.width - 8, height: r.maxY - pill.maxY - 4)
             // Spotting: a running timer in the top right corner.
-            if s.id == model.spottingID, let timer = model.spotTimer() {
+            if focused, s.id == model.spottingID, let timer = model.spotTimer() {
                 let tf = monoFont(10)
                 let tw = (timer.text as NSString).size(withAttributes: [.font: tf]).width + 12
                 let tr = CGRect(x: r.maxX - tw - 4, y: r.minY + 4, width: tw, height: 15)
@@ -412,7 +493,7 @@ final class WaveformNSView: NSView {
                 para.lineBreakMode = .byWordWrapping
                 let attrs: [NSAttributedString.Key: Any] = [
                     .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-                    .foregroundColor: Palette.text.withAlphaComponent(0.9),
+                    .foregroundColor: Palette.text.withAlphaComponent(0.9 * dim),
                     .paragraphStyle: para
                 ]
                 (fullText as NSString).draw(with: textRect,
@@ -446,6 +527,7 @@ final class WaveformNSView: NSView {
     private func drawLanes(model: AppModel, top: CGFloat) {
         laneBoxes.removeAll(keepingCapacity: true)
         laneRects.removeAll(keepingCapacity: true)
+        laneTags.removeAll(keepingCapacity: true)
         let tracks = laneTracks
         guard !tracks.isEmpty else { return }
         let laneH = lanesHeight / CGFloat(tracks.count)
@@ -479,6 +561,7 @@ final class WaveformNSView: NSView {
             let font = labelFont(9)
             let tw = (tag as NSString).size(withAttributes: [.font: font]).width + 10
             let tagRect = CGRect(x: 4, y: lane.minY + (laneH - 13) / 2, width: tw, height: 13)
+            laneTags.append((track.id, tagRect.insetBy(dx: -3, dy: -3)))
             Palette.panelRaised.setFill()
             NSBezierPath(roundedRect: tagRect, xRadius: 6, yRadius: 6).fill()
             drawText(tag, at: CGPoint(x: tagRect.minX + 5, y: tagRect.minY + 1), font: font, color: Palette.periwinkle)
@@ -516,7 +599,8 @@ final class WaveformNSView: NSView {
     private func hit(_ p: CGPoint) -> Hit {
         // Selected box first, then later boxes (drawn on top).
         let selected = model?.doc.selectedID
-        var candidates = Array(boxRects.reversed())
+        let rects = band(at: p).flatMap { boxRectsByTrack[$0.track.id] } ?? []
+        var candidates = Array(rects.reversed())
         if let i = candidates.firstIndex(where: { $0.id == selected }) {
             let sel = candidates.remove(at: i)
             candidates.insert(sel, at: 0)
@@ -559,6 +643,8 @@ final class WaveformNSView: NSView {
 
     private func updateCursor(at p: CGPoint, flags: NSEvent.ModifierFlags) {
         if scrollbarRect.contains(p) { NSCursor.arrow.set(); return }
+        if bandDivider(at: p) != nil { NSCursor.resizeUpDown.set(); return }
+        if bands.contains(where: { $0.label.contains(p) }) { NSCursor.pointingHand.set(); return }
         if p.y < rulerHeight || laneRects.contains(where: { $0.rect.contains(p) }) { NSCursor.pointingHand.set(); return }
         if model?.focusedIsLocked == true { NSCursor.arrow.set(); return }
         let split = Self.isSplitClick(flags)
@@ -597,6 +683,42 @@ final class WaveformNSView: NSView {
             return
         }
 
+        // The line between two bands: drag to share the height between them.
+        if let pair = bandDivider(at: p) {
+            drag = .bandResize(upper: pair.upper.track.id, lower: pair.lower.track.id, startY: p.y,
+                               hu: pair.upper.rect.height, hl: pair.lower.rect.height,
+                               wu: bandWeights[pair.upper.track.id] ?? 1, wl: bandWeights[pair.lower.track.id] ?? 1)
+            return
+        }
+
+        // A band's language tag: click to focus it; double-click to fold it back to a slim lane.
+        if let b = bands.first(where: { $0.label.contains(p) }) {
+            drag = .none
+            if event.clickCount == 2 {
+                model.setWaveBand(b.track.id, shown: false)
+                if b.focused, let other = bands.first(where: { !$0.focused }) {
+                    model.focusTrack(other.track.id, edit: false)
+                }
+            } else if !b.focused {
+                model.focusTrack(b.track.id, edit: false)
+            }
+            needsDisplay = true
+            return
+        }
+
+        // A slim lane's language tag, double-clicked: open that language as a full band.
+        if event.clickCount == 2, let tag = laneTags.first(where: { $0.rect.contains(p) }) {
+            drag = .none
+            model.setWaveBand(tag.track, shown: true)
+            needsDisplay = true
+            return
+        }
+
+        // Clicking in another language's band works on that language: it becomes the focused one.
+        if let b = band(at: p), !b.focused {
+            model.focusTrack(b.track.id, edit: false)
+        }
+
         // Another language's lane: focus that language (and the title clicked).
         if let lane = laneRects.first(where: { $0.rect.contains(p) }) {
             drag = .none
@@ -611,7 +733,9 @@ final class WaveformNSView: NSView {
         }
 
         // Double-click a box's number: play that title.
-        if event.clickCount == 2, let pill = numberPills.last(where: { $0.rect.insetBy(dx: -2, dy: -2).contains(p) }) {
+        if event.clickCount == 2, let pill = numberPills.last(where: {
+            $0.track == model.video?.focusedTrackID && $0.rect.insetBy(dx: -2, dy: -2).contains(p)
+        }) {
             if case .moving = drag { model.doc.cancelLive() }
             drag = .none
             model.playTitle(pill.id)
@@ -709,13 +833,22 @@ final class WaveformNSView: NSView {
             scroll(thumbX: p.x - grab)
             return
         }
+        if case let .bandResize(upper, lower, startY, hu, hl, wu, _) = drag {
+            let minH: CGFloat = 36
+            let newU = min(max(minH, hu + (p.y - startY)), hu + hl - minH)
+            let k = hu / max(0.001, wu)   // points per unit of weight
+            bandWeights[upper] = newU / k
+            bandWeights[lower] = (hu + hl - newU) / k
+            needsDisplay = true
+            return
+        }
         guard didDrag else { return }
         autoscroll(for: p)
 
         switch drag {
         case .none:
             break
-        case .scrolling:
+        case .scrolling, .bandResize:
             break
         case let .marquee(from, _):
             drag = .marquee(from: from, to: p)
@@ -758,7 +891,7 @@ final class WaveformNSView: NSView {
             updateCursor(event)
         }
         switch drag {
-        case .none, .ruler, .scrolling:
+        case .none, .ruler, .scrolling, .bandResize:
             break
         case let .marquee(a, b):
             let r = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
@@ -805,12 +938,14 @@ final class WaveformNSView: NSView {
 
     /// Holds a dragged title at the minimum gap from its neighbour, however fast it was
     /// dragged there. Pull on about 16 px further (into the neighbour) and it lets go, so
-    /// titles can still overlap on purpose.
+    /// titles can still overlap on purpose. Move back out past the gap and it holds again.
     private func stick(_ value: Double, lower: Bool) -> Double {
         let breakDistance = 16.0 / Double(pps)
         if lower {
-            guard let b = barrierLower, !brokeLower else { return value }
-            if value >= b { holdingLower = false; heldLowerAt = nil; return value }
+            guard let b = barrierLower else { return value }
+            // Back out past the gap: the resistance is there again next time.
+            if value >= b { holdingLower = false; heldLowerAt = nil; brokeLower = false; return value }
+            if brokeLower { return value }
             guard let from = heldLowerAt else {
                 heldLowerAt = value; holdingLower = true; tick()
                 return b
@@ -819,8 +954,9 @@ final class WaveformNSView: NSView {
             heldLowerAt = max(from, value)
             return b
         } else {
-            guard let b = barrierUpper, !brokeUpper else { return value }
-            if value <= b { holdingUpper = false; heldUpperAt = nil; return value }
+            guard let b = barrierUpper else { return value }
+            if value <= b { holdingUpper = false; heldUpperAt = nil; brokeUpper = false; return value }
+            if brokeUpper { return value }
             guard let from = heldUpperAt else {
                 heldUpperAt = value; holdingUpper = true; tick()
                 return b
@@ -846,6 +982,7 @@ final class WaveformNSView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? {
         guard let model else { return nil }
         let p = convert(event.locationInWindow, from: nil)
+        if let b = band(at: p), !b.focused { model.focusTrack(b.track.id, edit: false) }
         let id: UUID
         switch hit(p) {
         case let .edge(i, _), let .body(i): id = i

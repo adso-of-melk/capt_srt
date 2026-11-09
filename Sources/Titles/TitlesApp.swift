@@ -114,6 +114,8 @@ struct TitlesCommands: Commands {
                 .disabled(noProject)
         }
         CommandGroup(after: .toolbar) {
+            Toggle("All Languages on the Waveform", isOn: Binding(get: { model.allWaveBands }, set: { model.allWaveBands = $0 }))
+                .disabled(model.openTracks.count < 2)
             Toggle("Text Only", isOn: $model.textOnly)
                 .keyboardShortcut("t", modifiers: [.command, .shift])
                 .disabled(noProject)
