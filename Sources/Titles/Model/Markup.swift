@@ -4,8 +4,12 @@ import Foundation
 /// The text keeps its tags (they're exported as written); these helpers show it formatted
 /// and count only the characters a viewer reads.
 enum Markup {
+    /// Only real formatting tags count, written the way tags are written (no space after
+    /// the "<"), so text like "a < b and c > d" or "I <3 you" is never mistaken for a tag
+    /// and hidden. Group 1 is the "/" of a closing tag, group 2 the name of a style tag.
     static let tagPattern = try! NSRegularExpression(
-        pattern: #"<\s*(/?)\s*([a-zA-Z]+)[^>]*>|\{\\[^}]*\}"#)
+        pattern: #"<(/?)(?:(i|b|u|s|ruby|rt|br)(?:\.[^<>\s]*)?\s*/?|(?:font|c|v|lang|span)\b[^<>]*)>|\{\\[^}]*\}"#,
+        options: [.caseInsensitive])
 
     /// The text without any tags.
     static func plain(_ text: String) -> String {

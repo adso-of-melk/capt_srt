@@ -19,11 +19,15 @@ enum LineBreaker {
             .split(separator: " ", omittingEmptySubsequences: true)
             .joined(separator: " ")
         // Two speakers ("- Hi. - Hello."): one line each, however short.
-        if maxLines > 1, Markup.plain(flat).hasPrefix("-"),
-           let r = flat.range(of: " -", options: [], range: flat.index(after: flat.startIndex)..<flat.endIndex) {
-            let a = String(flat[..<r.lowerBound])
-            let b = String(flat[flat.index(after: r.lowerBound)...])
-            return a + "\n" + b
+        if maxLines > 1, Markup.plain(flat).hasPrefix("-") {
+            // Already one speaker per line: keep it that way.
+            let own = text.split(separator: "\n", omittingEmptySubsequences: true).map {
+                $0.split(separator: " ", omittingEmptySubsequences: true).joined(separator: " ")
+            }.filter { !$0.isEmpty }
+            if own.count == 2, Markup.plain(own[1]).hasPrefix("-") { return own.joined(separator: "\n") }
+            if let cut = secondSpeaker(in: flat) {
+                return String(flat[..<cut]) + "\n" + String(flat[flat.index(after: cut)...])
+            }
         }
         guard len(flat) > maxChars, maxLines > 1 else { return flat }
 
@@ -31,6 +35,22 @@ enum LineBreaker {
         guard words.count > 1 else { return flat }
         let rules = Rules.for(language)
         return split(words, maxChars: maxChars, linesLeft: maxLines, rules: rules).joined(separator: "\n")
+    }
+
+    /// Where the second speaker's dash starts in "- Hi. - Hello.": the space before a dash
+    /// that follows the end of the first speaker's line. A dash in the middle of a sentence
+    /// ("- Well - I mean, no.") or a minus sign ("- It's -5 outside.") doesn't count.
+    private static func secondSpeaker(in flat: String) -> String.Index? {
+        var search = flat.index(after: flat.startIndex)..<flat.endIndex
+        while let r = flat.range(of: " -", options: [], range: search) {
+            let before = Markup.plain(String(flat[..<r.lowerBound]))
+            let after = flat[r.upperBound...].first
+            let endsLine = before.last.map { ".!?…\"”»)—–".contains($0) } ?? false
+            let isMinus = after.map(\.isNumber) ?? true
+            if endsLine && !isMinus { return r.lowerBound }
+            search = r.upperBound..<flat.endIndex
+        }
+        return nil
     }
 
     /// Splits off the best first line, then the rest recursively if it's still too long.
@@ -81,7 +101,9 @@ enum LineBreaker {
 
         let lastKey = key(last), nextKey = key(next)
         if rules.breakBefore.contains(nextKey) { s -= 10 }
-        if rules.keepWithNext.contains(lastKey) { s += 35 }
+        // A word that ends its phrase ("…talking about, and…") isn't waiting for the next one.
+        let endsPhrase = Markup.plain(last).last.map { ".!?…,;:—–)\"”»".contains($0) } ?? false
+        if !endsPhrase, rules.keepWithNext.contains(lastKey) { s += 35 }
 
         // First and last names: two capitalised words in a row, the first not starting a sentence.
         if isCapitalised(last), isCapitalised(next), !endsSentence(prev), rules.casedScript {

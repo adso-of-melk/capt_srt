@@ -394,9 +394,14 @@ struct CardView: View {
                         fontSize: fontSize,
                         focusNow: model.focusRequest == sub.id,
                         onFocusTaken: { if model.focusRequest != nil { model.focusRequest = nil } },
-                        onEndEditing: { rebalance in model.autoBreak(sub.id, rebalance: rebalance) },
+                        onEndEditing: { rebalance in
+                            model.autoBreak(sub.id, rebalance: rebalance)
+                            track.doc.endTextCoalescing()
+                        },
                         liveBreak: { model.liveBreak($0, track: track) }
                     )
+                    // A fresh editor for each title, so nothing of the last one carries over.
+                    .id(sub.id)
                 } else {
                     Text(sub.text.isEmpty ? AttributedString(" ") : Markup.attributed(sub.text))
                         .frame(maxWidth: .infinity)

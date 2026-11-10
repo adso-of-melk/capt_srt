@@ -234,7 +234,8 @@ struct TitleEditor: NSViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: TitleTextView, context: Context) -> CGSize? {
-        let width = max(20, proposal.width ?? 240)
+        let proposed = proposal.width ?? 240
+        let width = proposed.isFinite ? max(20, proposed) : 240
         guard let lm = nsView.layoutManager, let tc = nsView.textContainer else { return nil }
         tc.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         lm.ensureLayout(for: tc)

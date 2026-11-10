@@ -135,6 +135,8 @@ final class AppModel: ObservableObject {
     var autosaveTask: Task<Void, Never>?
     var lastBackup = Date.distantPast
     var originalWriteInFlight = false
+    /// The newest save that arrived while an earlier one was still being written.
+    var pendingOriginalWrite: (data: Data, url: URL)?
     var selectionWatchers: [Any] = []
 
     @Published private(set) var spottingID: UUID?
@@ -464,6 +466,10 @@ final class AppModel: ObservableObject {
     /// The editor window; keyboard and mouse handling ignores every other window
     /// (Settings, sheets), so typing there can't change titles.
     weak var mainWindow: NSWindow?
+
+    /// False in the automated tests, so they never write a project, a backup or the list of
+    /// recent projects on the Mac they run on.
+    var persists = true
 
     /// Clicking to place the playhead (ruler or empty waveform). While paused: landing
     /// inside a title selects it; landing in a gap clears the selection and scrolls the
@@ -856,7 +862,14 @@ enum JogStep: String, CaseIterable, Identifiable {
 
 extension AppModel {
     func setWaveBand(_ id: UUID, shown: Bool) {
-        if shown { waveBands.insert(id) } else { waveBands.remove(id) }
+        if shown {
+            waveBands.insert(id)
+            // The language you're on stays a band too. Otherwise it would fold back to a
+            // slim lane the moment you click into the one you just opened.
+            if let focused = video?.focusedTrackID { waveBands.insert(focused) }
+        } else {
+            waveBands.remove(id)
+        }
         bump()
     }
 

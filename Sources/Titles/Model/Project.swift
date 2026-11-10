@@ -50,6 +50,29 @@ struct ProjectSettings: Codable, Equatable, Sendable {
     /// {video} and {lang} are replaced: "Film.hr".
     var namingPattern = "{video}.{lang}"
     var masterLanguage = Language.named("en")
+
+    enum CodingKeys: String, CodingKey {
+        case standard, frameRate, startTimecode, timecodeDisplay, exportFormat, utf8BOM, crlf,
+             namingPattern, masterLanguage
+    }
+}
+
+extension ProjectSettings {
+    /// Reads what the project file has and fills in the rest with the defaults, so a project
+    /// saved by an older or a newer build always opens.
+    init(from decoder: Decoder) throws {
+        self.init()
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        standard = c.value(.standard, or: standard)
+        frameRate = try? c.decodeIfPresent(Double.self, forKey: .frameRate)
+        startTimecode = c.value(.startTimecode, or: startTimecode)
+        timecodeDisplay = c.value(.timecodeDisplay, or: timecodeDisplay)
+        exportFormat = c.value(.exportFormat, or: exportFormat)
+        utf8BOM = c.value(.utf8BOM, or: utf8BOM)
+        crlf = c.value(.crlf, or: crlf)
+        namingPattern = c.value(.namingPattern, or: namingPattern)
+        masterLanguage = c.value(.masterLanguage, or: masterLanguage)
+    }
 }
 
 // MARK: - File format (JSON, one file per project: Name.kptnsub)
@@ -145,16 +168,20 @@ final class VideoItem: ObservableObject, Identifiable {
     }
 
     init(_ f: VideoFile) {
+        // A damaged file may name a master, open columns or a focused language that isn't
+        // there: fall back to languages that are, so the editor always has a column to show.
+        let known = Set(f.tracks.map(\.id))
+        let master = known.contains(f.masterTrackID) ? f.masterTrackID : (f.tracks.first?.id ?? f.masterTrackID)
+        var open: [UUID] = []
+        for trackID in f.openTrackIDs where known.contains(trackID) && !open.contains(trackID) { open.append(trackID) }
+        if open.isEmpty { open = [master] }
         id = f.id
         name = f.name
         url = f.url.flatMap(URL.init(string:))
         tracks = f.tracks.map(Track.init)
-        masterTrackID = f.masterTrackID
-        let known = Set(f.tracks.map(\.id))
-        openTrackIDs = f.openTrackIDs.filter { known.contains($0) }
-        if openTrackIDs.isEmpty { openTrackIDs = [f.masterTrackID] }
-        focusedTrackID = f.focusedTrackID.flatMap { known.contains($0) ? $0 : nil } ?? openTrackIDs.first
-        if !tracks.contains(where: { $0.id == masterTrackID }), let first = tracks.first { masterTrackID = first.id }
+        masterTrackID = master
+        openTrackIDs = open
+        focusedTrackID = f.focusedTrackID.flatMap { open.contains($0) ? $0 : nil } ?? open.first
     }
 
     var file: VideoFile {

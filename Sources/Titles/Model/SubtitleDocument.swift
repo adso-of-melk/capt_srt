@@ -130,11 +130,19 @@ final class SubtitleDocument: ObservableObject {
     }
 
     func setText(_ id: UUID, _ text: String) {
+        // One kind of line break inside the app, whatever was pasted in. (A Windows line
+        // ending would otherwise count as a letter, and its two lines as one.)
+        let text = text.utf8.contains(13)
+            ? text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+            : text
         guard let i = index(of: id), subtitles[i].text != text else { return }
         perform(coalesce: "text-\(id.uuidString)") { subs in
             if let j = subs.firstIndex(where: { $0.id == id }) { subs[j].text = text }
         }
     }
+
+    /// Ends a run of typing: the next text change is its own undo step, even in the same title.
+    func endTextCoalescing() { lastCoalesceKey = nil }
 
     func update(_ id: UUID, _ mutate: @escaping (inout Subtitle) -> Void) {
         perform { subs in

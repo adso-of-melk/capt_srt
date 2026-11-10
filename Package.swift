@@ -12,6 +12,12 @@ let package = Package(
         .executableTarget(
             name: "Titles",
             path: "Sources/Titles"
+        ),
+        // Run with `swift test`.
+        .testTarget(
+            name: "TitlesTests",
+            dependencies: ["Titles"],
+            path: "Tests/TitlesTests"
         )
     ]
 )

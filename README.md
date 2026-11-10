@@ -140,7 +140,14 @@ Sources/Titles/
   Audio/                     audio decoding, waveform pyramid, scrub-audio grains
   Input/InputController.swift  modifier jog, nudges, wheel, spotting keys
   Views/                     theme, top strip, home, sheets, card columns, video pane, title bar, waveform
+Tests/TitlesTests/           automated tests (run with `swift test`)
 ```
+
+## Tests
+
+`swift test` runs about 150 checks in under a minute. They cover reading and writing SRT and WebVTT (old Windows encodings included), timecodes at every frame rate, line breaking in English and Croatian, formatting tags, undo, how languages pair up into rows, locked languages, Tab and nudging, splitting, importing files into a project, and the project file itself. A fake player stands in for the video, and nothing is written outside the temporary folder: the tests never touch your projects, backups or recent-projects list.
+
+Not covered, because they need hands on a mouse: how dragging feels on the waveform (resistance, snapping), jog sensitivity, and anything drawn on screen.
 
 ## Known limits
 
@@ -148,3 +155,5 @@ Sources/Titles/
 - It runs as a Swift package, so it isn't sandboxed and isn't packaged for the App Store yet.
 - Audio is decoded to 16 kHz mono in memory, about 230 MB for a 2-hour film.
 - Columns are reordered from the column menu (Move Left / Right), not by dragging.
+- Old subtitle files in Hebrew, Arabic, Baltic or Vietnamese Windows encodings aren't recognised (save them as UTF-8 first). Central European, Western, Cyrillic, Greek and Turkish ones are.
+- With a standard of three or more lines, a line can come out a character or two over the limit where a better split existed (two-line standards always find the best split).

@@ -57,6 +57,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    /// Quitting: the last edits (autosave waits a moment after each change) are written now.
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            guard let model else { return }
+            model.doc.commitLive()
+            model.saveProject(wait: true)
+        }
+    }
 }
 
 struct TitlesCommands: Commands {

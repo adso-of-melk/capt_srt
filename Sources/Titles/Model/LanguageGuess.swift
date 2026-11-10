@@ -1,8 +1,9 @@
 import Foundation
-import NaturalLanguage
 
-/// Guesses which language a subtitle file is in: from its name first (Film.en.srt,
-/// Film_HR.srt, Film ENG.srt, Film croatian.srt), otherwise from its text.
+/// Guesses which language a subtitle file is in: from the end of its name first (Film.en.srt,
+/// Film_HR.srt, Film ENG.srt, Film croatian.srt), otherwise from its text. A language word
+/// elsewhere in the name is only a last resort, because it's usually part of the film's
+/// title ("The English Patient", "The Rum Diary").
 enum LanguageGuess {
     private static let threeLetter: [String: String] = [
         "eng": "en", "hrv": "hr", "cro": "hr", "srp": "sr-Latn", "scc": "sr-Latn", "bos": "bs",
@@ -22,47 +23,57 @@ enum LanguageGuess {
     ]
 
     static func language(of url: URL) -> Language? {
-        fromName(url.deletingPathExtension().lastPathComponent) ?? fromText(url)
+        let name = url.deletingPathExtension().lastPathComponent
+        return fromName(name, lastWordOnly: true) ?? fromText(url) ?? fromName(name)
     }
 
-    static func fromName(_ name: String) -> Language? {
+    /// `lastWordOnly`: only the last word of the name counts (where a language is normally put).
+    static func fromName(_ name: String, lastWordOnly: Bool = false) -> Language? {
         let tokens = name.lowercased()
             .folding(options: .diacriticInsensitive, locale: nil)
             .split { !$0.isLetter }
             .map(String.init)
         guard !tokens.isEmpty else { return nil }
-        let twoLetter = Set(Language.common.map { $0.code.lowercased() })
-        // Last word first ("Film.hr", "Film_EN"); a two-letter code only counts there, so
-        // ordinary words like "it" or "no" earlier in a name aren't taken for languages.
+        let codes = Set(Language.common.map { $0.code.lowercased() })
+        // A code with a region at the end: "Film.pt-BR", "Film_sr-Latn".
+        if tokens.count >= 2 {
+            let joined = tokens[tokens.count - 2] + "-" + tokens[tokens.count - 1]
+            if codes.contains(joined) { return Language.named(joined) }
+        }
+        // Last word first ("Film.hr", "Film_EN"). A two-letter code only counts there, and
+        // only when it's set apart by a dot, dash or underscore or written in capitals, so
+        // a title like "What Is It" isn't taken for Italian.
         if let last = tokens.last {
-            if twoLetter.contains(last) { return Language.named(last) }
+            if last.count == 2, codes.contains(last) {
+                let core = String(name.reversed().drop(while: { !$0.isLetter }).reversed())
+                let tail = String(core.suffix(2))
+                let before = core.dropLast(2).last
+                let setApart = before.map { "._-([".contains($0) } ?? true
+                let capitals = tail == tail.uppercased() && !(before?.isLetter ?? false)
+                if setApart || capitals { return Language.named(last) }
+            }
             if let code = threeLetter[last] ?? names[last] { return Language.named(code) }
         }
+        if lastWordOnly { return nil }
         for token in tokens.reversed() {
             if let code = threeLetter[token] ?? names[token] { return Language.named(code) }
         }
         return nil
     }
 
-    /// Reads the start of the file and asks the system's language recogniser.
+    /// Reads the file's words and asks the system's language recogniser.
     static func fromText(_ url: URL) -> Language? {
         guard !ProjectStore.isDataless(url), let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
-        guard let data = try? handle.read(upToCount: 12_000), !data.isEmpty else { return nil }
-        let raw = String(decoding: data, as: UTF8.self)
-        // Only the words: no numbers, timecodes or arrows.
-        let text = Markup.plain(raw)
-            .split(separator: "\n")
-            .filter { line in !line.contains("-->") && !line.allSatisfy { $0.isNumber || $0.isWhitespace } }
-            .joined(separator: " ")
-        let recognizer = NLLanguageRecognizer()
-        recognizer.processString(text)
-        guard let found = recognizer.dominantLanguage, found != .undetermined else { return nil }
-        switch found.rawValue {
+        // Subtitle files are small: a couple of megabytes covers any of them.
+        guard let data = try? handle.read(upToCount: 2_000_000), !data.isEmpty,
+              let raw = SubtitleFormats.decodeText(data),
+              let found = SubtitleFormats.languageGuess(raw).code else { return nil }
+        switch found {
         case "sr": return Language.named("sr-Latn")
         case "pt": return Language.named("pt-PT")
         case "no", "nb": return Language.named("nb")
-        default: return Language.named(found.rawValue)
+        default: return Language.named(found)
         }
     }
 }

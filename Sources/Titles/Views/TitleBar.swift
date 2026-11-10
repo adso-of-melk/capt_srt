@@ -276,8 +276,9 @@ struct TimecodeEntry: View {
         guard !done else { return }
         done = true
         let v = parts.map { Double($0) ?? 0 }
-        let sub = usesMilliseconds ? v[3] / 1000 : v[3] * model.frameDuration
-        let shown = v[0] * 3600 + v[1] * 60 + v[2] + sub
+        let shown = usesMilliseconds
+            ? v[0] * 3600 + v[1] * 60 + v[2] + v[3] / 1000
+            : Timecode.seconds(hours: v[0], minutes: v[1], seconds: v[2], frames: v[3], fps: model.fps)
         let target = shown - (model.project?.settings.startTimecode ?? 0)
         let limit = model.engine.duration > 0 ? model.engine.duration : .greatestFiniteMagnitude
         model.editingTimecode = false

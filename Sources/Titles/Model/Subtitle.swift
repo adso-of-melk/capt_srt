@@ -65,6 +65,10 @@ struct TimingPreset: Equatable, Identifiable, Hashable, Codable, Sendable {
     /// Minimum gap between titles, in frames.
     var minGapFrames: Int
 
+    enum CodingKeys: String, CodingKey {
+        case id, name, maxCPS, maxCharsPerLine, maxLines, minDuration, maxDuration, minGapFrames
+    }
+
     /// Reading speed turns amber this close to the limit.
     var warnCPS: Double { maxCPS - 2 }
 
@@ -110,5 +114,30 @@ struct TimingPreset: Equatable, Identifiable, Hashable, Codable, Sendable {
 
     func status(_ s: Subtitle) -> TimingStatus {
         [cpsStatus(s), durationStatus(s), lineStatus(s)].max { $0.rank < $1.rank } ?? .ok
+    }
+}
+
+extension TimingPreset {
+    /// A value missing from the file is taken from General, so a project saved by an older
+    /// or a newer build always opens.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = TimingPreset.general
+        self.init(id: c.value(.id, or: "custom"), name: c.value(.name, or: "Custom"),
+                  maxCPS: c.value(.maxCPS, or: d.maxCPS),
+                  maxCharsPerLine: c.value(.maxCharsPerLine, or: d.maxCharsPerLine),
+                  maxLines: c.value(.maxLines, or: d.maxLines),
+                  minDuration: c.value(.minDuration, or: d.minDuration),
+                  maxDuration: c.value(.maxDuration, or: d.maxDuration),
+                  minGapFrames: c.value(.minGapFrames, or: d.minGapFrames))
+    }
+}
+
+extension KeyedDecodingContainer {
+    /// The value for a key, or the fallback when the key is missing or holds something this
+    /// build can't read.
+    func value<T: Decodable>(_ key: Key, or fallback: T) -> T {
+        guard let found = try? decodeIfPresent(T.self, forKey: key) else { return fallback }
+        return found
     }
 }

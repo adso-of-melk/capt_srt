@@ -308,9 +308,13 @@ extension AppModel {
         let others = subtitleFiles.filter { $0.url != masterFile?.url }
         let covered = Set(subtitleFiles.map(\.language) + [settings.masterLanguage])
         let extras = extraLanguages.filter { !covered.contains($0) }
+        // If another project is opened while the files are still being read, stop: the
+        // remaining files must not land in that other project.
+        let projectID = project.id
         let finish: () -> Void = { [weak self] in
-            self?.importFiles(others) {
-                guard let self else { return }
+            guard let self, self.project?.id == projectID else { return }
+            self.importFiles(others, into: projectID) { [weak self] in
+                guard let self, self.project?.id == projectID else { return }
                 for lang in extras { self.addLanguage(lang, locked: false, copyText: false) }
                 self.focusTrack(master.id, edit: false)
                 self.saveProject()
@@ -319,6 +323,7 @@ extension AppModel {
         }
         if let masterFile {
             readSubtitleFile(masterFile.url) { [weak self] subs in
+                guard self?.project?.id == projectID else { return }
                 master.doc.replaceAll(subs)
                 master.doc.selectedID = nil
                 self?.rebuildRows()
@@ -331,10 +336,12 @@ extension AppModel {
     }
 
     /// Imports subtitle files one after another (each matched to the master by time).
-    private func importFiles(_ files: [(url: URL, language: Language)], then done: @escaping () -> Void) {
+    private func importFiles(_ files: [(url: URL, language: Language)], into projectID: UUID,
+                             then done: @escaping () -> Void) {
+        guard project?.id == projectID else { return }
         guard let first = files.first else { done(); return }
         importLanguage(from: first.url, as: first.language) { [weak self] in
-            self?.importFiles(Array(files.dropFirst()), then: done)
+            self?.importFiles(Array(files.dropFirst()), into: projectID, then: done)
         }
     }
 
@@ -426,8 +433,10 @@ extension AppModel {
     }
 
     /// Shows a project in the editor.
-    func load(_ project: Project, currentVideoID: UUID?) {
-        closeProject()
+    /// `saveCurrent: false` when the open project is being thrown away on purpose (reload,
+    /// restore), so it isn't written over the file that's about to be loaded.
+    func load(_ project: Project, currentVideoID: UUID?, saveCurrent: Bool = true) {
+        closeProject(save: saveCurrent)
         self.project = project
         for v in project.videos { v.tracks.forEach(attach) }
         showHome = false
@@ -436,10 +445,10 @@ extension AppModel {
     }
 
     /// Saves and closes the current project (nothing is lost: projects autosave).
-    func closeProject() {
+    func closeProject(save: Bool = true) {
         guard project != nil else { return }
-        saveProject()
         finishGesture()
+        if save { saveProject() } else { autosaveTask?.cancel(); pendingOriginalWrite = nil }
         previewUntilReset()
         focusRequest = nil
         mainWindow?.makeFirstResponder(nil)
@@ -455,6 +464,8 @@ extension AppModel {
         video = nil
         showProjectView = false
         multiSelection = []
+        editingTimecode = false
+        pendingPreview = nil
         doc = SubtitleDocument()
         rows = []
         rowOfSub = [:]
@@ -486,9 +497,12 @@ extension AppModel {
 
     /// Writes the local copy straight away (always on this Mac), then the original off the
     /// main thread, so a stalled iCloud never freezes the app.
-    func saveProject(announce: Bool = false) {
+    /// `wait`: also write the project file before returning (quitting), instead of in the
+    /// background.
+    func saveProject(announce: Bool = false, wait: Bool = false) {
         guard let project else { return }
         autosaveTask?.cancel()
+        guard persists else { return }
         let file = project.file(currentVideoID: video?.id)
         guard let data = try? ProjectStore.encode(file) else { return }
         do {
@@ -506,7 +520,22 @@ extension AppModel {
             banner = "\(url.lastPathComponent) is waiting on iCloud, so changes are being kept in the local copy on this Mac for now."
             return
         }
-        guard !originalWriteInFlight else { return }
+        if wait {
+            // Quitting: nothing may be left for later. (A file waiting on iCloud was skipped above.)
+            pendingOriginalWrite = nil
+            try? data.write(to: url, options: .atomic)
+            return
+        }
+        // One write at a time. A save that arrives meanwhile is kept and written next, so the
+        // project file always ends up with the latest state.
+        guard !originalWriteInFlight else {
+            pendingOriginalWrite = (data, url)
+            return
+        }
+        writeOriginal(data, to: url, announce: announce)
+    }
+
+    private func writeOriginal(_ data: Data, to url: URL, announce: Bool) {
         originalWriteInFlight = true
         let writing = Self.offMain { () -> String? in
             do { try data.write(to: url, options: .atomic); return nil }
@@ -515,6 +544,11 @@ extension AppModel {
         Task {
             let result = await Self.value(of: writing, timeout: 10)
             originalWriteInFlight = false
+            if let next = pendingOriginalWrite {
+                pendingOriginalWrite = nil
+                writeOriginal(next.data, to: next.url, announce: false)
+                return
+            }
             switch result {
             case .some(nil):
                 if banner?.contains("local copy") == true { banner = nil }
@@ -551,6 +585,7 @@ extension AppModel {
     }
 
     private func storeRecentProjects() {
+        guard persists else { return }
         if let data = try? JSONEncoder().encode(recentProjects) {
             UserDefaults.standard.set(data, forKey: "recentProjects")
         }
@@ -661,7 +696,7 @@ extension AppModel {
             do {
                 let data = try Data(contentsOf: local)
                 let file = try ProjectStore.decode(data)
-                self.load(Project(file, fileURL: url), currentVideoID: current ?? file.currentVideoID)
+                self.load(Project(file, fileURL: url), currentVideoID: current ?? file.currentVideoID, saveCurrent: false)
                 try? ProjectStore.writeLocalCopy(data, id: file.id)
                 self.flash("Reloaded from \(url.lastPathComponent)")
             } catch {
@@ -686,7 +721,7 @@ extension AppModel {
                 ProjectStore.writeBackup(current, id: project.id)
             }
             let keepURL = project.fileURL
-            load(Project(file, fileURL: keepURL), currentVideoID: video?.id ?? file.currentVideoID)
+            load(Project(file, fileURL: keepURL), currentVideoID: video?.id ?? file.currentVideoID, saveCurrent: false)
             saveProject(announce: false)
             flash("Restored the backup from \(url.deletingPathExtension().lastPathComponent)")
         } catch {
@@ -1002,6 +1037,10 @@ extension AppModel {
                 }
                 pendingImport = url
                 sheet = .importLanguage
+            } else if url.isFileURL, ["mkv", "webm", "avi", "wmv", "flv", "ogv"].contains(ext) {
+                flash("\(url.lastPathComponent) can't be played by this build yet. MP4, MOV and M4V can.")
+            } else if url.isFileURL, !(UTType(filenameExtension: ext)?.conforms(to: .audiovisualContent) ?? false) {
+                flash("\(url.lastPathComponent) isn't a video, a subtitle file or a project.")
             } else if project == nil || showProjectView {
                 addVideo(url)
             } else if let v = video {
