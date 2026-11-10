@@ -204,10 +204,17 @@ final class LanguagesTests: XCTestCase {
         let full = min(440, max(240, ceil(line) + 44))
         XCTAssertEqual(f.model.cardColumnMinWidth, full, accuracy: 0.5)
         XCTAssertGreaterThan(full, 240)
-        // …and may shrink to where that line is at half size.
-        let floor = max(150, ((full - 44) * 0.5 + 44).rounded())
+        // …and may shrink to where that line fits at half size (measured, not halved).
+        let small = NSFont.systemFont(ofSize: CardView.baseFontSize * 0.5, weight: .medium)
+        let half = (wide as NSString).size(withAttributes: [.font: small]).width
+        let floor = max(150, min(ceil(half) + 44, ((full - 44) * 0.6 + 44).rounded()))
         XCTAssertEqual(f.model.cardColumnFloor, floor, accuracy: 0.5)
         XCTAssertLessThan(f.model.cardColumnFloor, f.model.cardColumnMinWidth)
+        // At that narrowest width the line still fits on one line in its card.
+        let room = f.model.cardColumnFloor - 40
+        let size = CardView.fittingSize(for: wide, width: room)
+        let fitted = (wide as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: size, weight: .medium)]).width
+        XCTAssertLessThanOrEqual(fitted, room + 0.5)
 
         // Three languages side by side need three such columns and the gaps between them.
         f.model.addLanguage(Language.named("hr"), locked: false, copyText: true)
@@ -224,9 +231,10 @@ final class LanguagesTests: XCTestCase {
         XCTAssertLessThan(squeezed, 15)
         XCTAssertGreaterThanOrEqual(squeezed, 7.5)
         XCTAssertEqual((squeezed * 2).rounded(), squeezed * 2)     // whole half points
-        // At that size the line fits the width.
+        // At that size the line really fits the width (small text is spaced a little wider,
+        // so shrinking in proportion alone would leave it too wide and it would wrap).
         let font = NSFont.systemFont(ofSize: squeezed, weight: .medium)
-        XCTAssertLessThanOrEqual((wide as NSString).size(withAttributes: [.font: font]).width, 221)
+        XCTAssertLessThanOrEqual((wide as NSString).size(withAttributes: [.font: font]).width, 220)
 
         XCTAssertEqual(CardView.fittingSize(for: wide, width: 40), 7.5)
         // The longest line decides.

@@ -124,6 +124,8 @@ final class AppModel: ObservableObject {
 
     /// See `updateCardColumnWidth()`.
     @Published var cardColumnMinWidth: CGFloat = 240
+    /// The narrowest a card column gets (the widest line at half size). See `updateCardColumnWidth()`.
+    @Published var cardColumnFloor: CGFloat = 150
     /// Languages shown as full bands on the waveform, besides the focused one.
     @Published var waveBands: Set<UUID> = [] {
         didSet { UserDefaults.standard.set(waveBands.map(\.uuidString), forKey: "waveBands") }

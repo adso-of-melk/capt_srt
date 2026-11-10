@@ -315,14 +315,22 @@ private struct EmptyCards: View {
 struct CardView: View {
     static let baseFontSize: CGFloat = 15
 
-    /// The largest size (up to 15 pt) at which the longest line fits on one line.
+    /// The largest size (up to 15 pt, down to half of that) at which the longest line fits
+    /// on one line.
     static func fittingSize(for text: String, width: CGFloat) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: baseFontSize, weight: .medium)
-        let widest = text.split(separator: "\n", omittingEmptySubsequences: false)
-            .map { (String($0) as NSString).size(withAttributes: [.font: font]).width }
-            .max() ?? 0
-        guard widest > 0, width > 20, widest > width else { return baseFontSize }
-        return max(baseFontSize * 0.5, (baseFontSize * width / widest * 2).rounded(.down) / 2)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map { String($0) as NSString }
+        func widest(at size: CGFloat) -> CGFloat {
+            let font = NSFont.systemFont(ofSize: size, weight: .medium)
+            return lines.map { $0.size(withAttributes: [.font: font]).width }.max() ?? 0
+        }
+        let full = widest(at: baseFontSize)
+        guard full > 0, width > 20, full > width else { return baseFontSize }
+        let smallest = baseFontSize * 0.5
+        var size = max(smallest, (baseFontSize * width / full * 2).rounded(.down) / 2)
+        // Small text is spaced a little wider than large text, so a size worked out in
+        // proportion can still be a touch too wide: step down until the line really fits.
+        while size > smallest, widest(at: size) > width { size -= 0.5 }
+        return size
     }
 
     @ObservedObject var model: AppModel

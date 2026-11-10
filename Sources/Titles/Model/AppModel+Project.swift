@@ -148,15 +148,22 @@ extension AppModel {
         }
         // Measure only the longest lines by character count; the widest is among them.
         let font = NSFont.systemFont(ofSize: CardView.baseFontSize, weight: .medium)
-        let widest = longest.sorted { $0.count > $1.count }.prefix(40)
-            .map { ($0 as NSString).size(withAttributes: [.font: font]).width }
-            .max() ?? 0
+        var widest: CGFloat = 0
+        var widestLine = ""
+        for line in longest.sorted(by: { $0.count > $1.count }).prefix(40) {
+            let w = (line as NSString).size(withAttributes: [.font: font]).width
+            if w > widest { widest = w; widestLine = line }
+        }
         let width = min(440, max(240, ceil(widest) + 44))
         if abs(width - cardColumnMinWidth) > 0.5 { cardColumnMinWidth = width }
+        // The narrowest a column gets: where that line fits at half size. Small text is
+        // spaced a little wider, so half size is measured rather than halved (and kept
+        // within reason for a line that's far too long anyway).
+        let small = NSFont.systemFont(ofSize: CardView.baseFontSize * 0.5, weight: .medium)
+        let half = (widestLine as NSString).size(withAttributes: [.font: small]).width
+        let floor = max(150, min(ceil(half) + 44, ((width - 44) * 0.6 + 44).rounded()))
+        if abs(floor - cardColumnFloor) > 0.5 { cardColumnFloor = floor }
     }
-
-    /// The narrowest a column gets: where the widest line has shrunk to half size.
-    var cardColumnFloor: CGFloat { max(150, ((cardColumnMinWidth - 44) * 0.5 + 44).rounded()) }
 
     /// The card pane can't be dragged narrower than its columns at their narrowest, so the
     /// columns always fit side by side and the scroll bar stays in view. The picture side
