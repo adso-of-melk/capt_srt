@@ -10,16 +10,18 @@ import CoreGraphics
 ///   The cursor hides and raw mouse movement is used, so you never hit the screen edge.
 /// The same modifiers with the scroll wheel or a two-finger swipe step frame by frame,
 /// and with [ / ] they nudge by one frame (Shift: 10).
+/// Mouse, wheel and keys can be mixed under one hold (wheel for rough, mouse for fine):
+/// they all move the same edge through `AppModel.jogMove`, so each picks up exactly
+/// where the other left off.
 @MainActor
 final class InputController {
     weak var model: AppModel?
     private var monitor: Any?
     private var resignObserver: NSObjectProtocol?
 
-    private var armedEdge: Edge?
-    private var jogEdge: Edge?
-    private var jogID: UUID?
-    private var jogTarget: Double = 0
+    /// The mouse is hidden and frozen for jogging, on behalf of this edge.
+    private var capturedEdge: Edge?
+    /// Leftover fractions of a step from the mouse and from the wheel.
     private var jogAccumulator: CGFloat = 0
     private var wheelAccumulator: CGFloat = 0
 
@@ -47,7 +49,6 @@ final class InputController {
             forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.armedEdge = nil
                 self?.endJog(commit: true)
             }
         }
@@ -57,27 +58,34 @@ final class InputController {
 
     private func handle(_ e: NSEvent) -> NSEvent? {
         guard let model else { return e }
+        let flags = e.modifierFlags.intersection([.shift, .control, .option, .command])
+        // The mouse is only ever held for as long as the key that asked for it.
+        if capturedEdge != nil, Self.edge(for: flags) != capturedEdge { releaseCursor() }
         // Only the editor window. Settings and sheets get their keys untouched.
-        guard let window = e.window, window === model.mainWindow else {
-            if jogEdge != nil { endJog(commit: true) }
+        // (While jogging, the frozen pointer can report no window; that still counts.)
+        let inEditor = e.window === model.mainWindow || (model.isJogging && e.window == nil)
+        guard inEditor, let window = model.mainWindow else {
+            if model.isJogging { endJog(commit: true) }
             return e
         }
         // The home screen has no titles to edit.
-        if model.showHome || model.project == nil || model.showProjectView { return e }
+        if model.showHome || model.project == nil || model.showProjectView {
+            if model.isJogging { endJog(commit: true) }
+            return e
+        }
         // Typing a timecode to go to: its fields get every key (Tab, Return, Esc).
         if model.editingTimecode { return e }
-        let flags = e.modifierFlags.intersection([.shift, .control, .option, .command])
+        if !window.acceptsMouseMovedEvents { window.acceptsMouseMovedEvents = true }
 
         switch e.type {
         case .flagsChanged:
             let shiftNow = e.modifierFlags.contains(.shift)
             if shiftNow && !shiftHeld { shiftDownAt = e.timestamp; typedSinceShift = false }
             shiftHeld = shiftNow
-            window.acceptsMouseMovedEvents = true
             let edge = Self.edge(for: flags)
-            if jogEdge != nil && edge != jogEdge { endJog(commit: true) }
-            armedEdge = edge
+            if let held = model.jogEdge, edge != held { endJog(commit: true) }
             jogAccumulator = 0
+            wheelAccumulator = 0
             // Control / Option let go: a nudge made while holding them plays now.
             if !e.modifierFlags.contains(.control) && !e.modifierFlags.contains(.option) {
                 model.modifiersReleased()
@@ -85,14 +93,17 @@ final class InputController {
             return e
 
         case .mouseMoved:
-            guard let edge = armedEdge, model.mouseJogOn, model.hasMedia, let id = model.doc.selectedID else { return e }
-            if jogEdge == nil { beginJog(edge, id) }
-            applyJog(dx: e.deltaX, coarse: flags.contains(.shift))
+            // The key's own state travels with the event, so this never depends on having
+            // seen the key go down.
+            guard let edge = Self.edge(for: flags), model.mouseJogOn, model.hasMedia,
+                  model.doc.selectedID != nil else { return e }
+            captureCursor(for: edge)
+            mouseJog(edge, dx: e.deltaX, coarse: flags.contains(.shift))
             return nil
 
         case .leftMouseDown, .rightMouseDown:
             // Control+click is right-click on the Mac; ignore clicks while jogging.
-            if jogEdge != nil { return nil }
+            if capturedEdge != nil { return nil }
             // A click in the card being typed in goes to the field editor, so the card never
             // sees it. Still take the playhead back to that title's start.
             if e.type == .leftMouseDown, let editor = window.firstResponder as? NSTextView,
@@ -104,7 +115,7 @@ final class InputController {
 
         case .scrollWheel:
             guard let edge = Self.edge(for: flags), model.wheelJogOn, model.doc.selectedID != nil else { return e }
-            wheelNudge(e, edge: edge, coarse: flags.contains(.shift))
+            wheelJog(e, edge: edge, coarse: flags.contains(.shift))
             return nil
 
         case .keyDown:
@@ -153,7 +164,7 @@ final class InputController {
     }
 
     private func keyDown(_ e: NSEvent, flags: NSEvent.ModifierFlags, model: AppModel) -> NSEvent? {
-        if e.keyCode == Key.escape, jogEdge != nil {
+        if e.keyCode == Key.escape, model.isJogging {
             endJog(commit: false)
             return nil
         }
@@ -178,7 +189,7 @@ final class InputController {
         // Control/Option + [ or ]: nudge one frame (Shift: 10). Works while typing too.
         if e.keyCode == Key.leftBracket || e.keyCode == Key.rightBracket, let edge = Self.edge(for: flags) {
             let dir = e.keyCode == Key.leftBracket ? -1 : 1
-            model.nudge(edge, frames: dir * (flags.contains(.shift) ? 10 : 1))
+            model.jogMove(edge, by: Double(dir * (flags.contains(.shift) ? 10 : 1)) * model.frameDuration)
             return nil
         }
 
@@ -265,20 +276,30 @@ final class InputController {
 
     // MARK: Jog
 
-    private func beginJog(_ edge: Edge, _ id: UUID) {
-        guard let model, let s = model.doc.subtitle(id) else { return }
-        model.engine.pause()
-        model.doc.beginLive()
-        jogEdge = edge
-        jogID = id
-        jogTarget = edge == .start ? s.start : s.end
-        jogAccumulator = 0
+    /// Hides the pointer and freezes it, so mouse movement is raw and never hits the screen edge.
+    private func captureCursor(for edge: Edge) {
+        guard capturedEdge == nil else { return }
+        capturedEdge = edge
         NSCursor.hide()
         CGAssociateMouseAndMouseCursorPosition(0)
     }
 
-    private func applyJog(dx: CGFloat, coarse: Bool) {
-        guard let model, let edge = jogEdge, let id = jogID, dx != 0 else { return }
+    private func releaseCursor() {
+        guard capturedEdge != nil else { return }
+        capturedEdge = nil
+        CGAssociateMouseAndMouseCursorPosition(1)
+        NSCursor.unhide()
+    }
+
+    private func endJog(commit: Bool) {
+        releaseCursor()
+        model?.endJog(commit: commit)
+    }
+
+    /// Mouse movement while Control / Option is held.
+    private func mouseJog(_ edge: Edge, dx: CGFloat, coarse: Bool) {
+        guard let model, dx != 0 else { return }
+        wheelAccumulator = 0
         // Even and predictable: the same distance always moves the same number of steps,
         // however fast you move. A sudden jerk counts for at most 8 points, so it can't
         // throw the edge across the screen.
@@ -292,40 +313,17 @@ final class InputController {
         guard whole != 0 else { return }
         jogAccumulator -= CGFloat(whole)
         let step = model.mouseJogStep.seconds(frame: model.frameDuration) * (coarse ? 10 : 1)
-        jogTarget += Double(whole) * step
-        if let value = model.moveEdge(edge, of: id, to: jogTarget, clamp: true) {
-            jogTarget = value
-            model.scrubTo(value)
-        }
+        model.jogMove(edge, by: Double(whole) * step)
     }
 
-    private func endJog(commit: Bool) {
-        guard let edge = jogEdge else { return }
-        let id = jogID
-        jogEdge = nil
-        jogID = nil
-        CGAssociateMouseAndMouseCursorPosition(1)
-        NSCursor.unhide()
-        guard let model else { return }
-        if commit {
-            model.doc.commitLive()
-            if let id { model.preview(edge, of: id) }
-        } else {
-            model.doc.cancelLive()
-            if let id, let s = model.doc.subtitle(id) {
-                model.engine.seek(to: edge == .start ? s.start : s.end, exact: true)
-            }
-        }
-    }
-
-    // MARK: Wheel / two-finger swipe with a modifier
-
-    private func wheelNudge(_ e: NSEvent, edge: Edge, coarse: Bool) {
+    /// Wheel or two-finger swipe while Control / Option is held.
+    private func wheelJog(_ e: NSEvent, edge: Edge, coarse: Bool) {
         guard let model, e.momentumPhase.isEmpty else { return }
         let d = abs(e.scrollingDeltaX) > abs(e.scrollingDeltaY) ? e.scrollingDeltaX : e.scrollingDeltaY
         // Positive = later in time: wheel towards you, or fingers moving right.
         let later = e.isDirectionInvertedFromDevice ? d : -d
         guard later != 0 else { return }
+        jogAccumulator = 0
         // Changing direction starts afresh, so one click back undoes one click forward exactly.
         if wheelAccumulator != 0 && (wheelAccumulator > 0) != (later > 0) { wheelAccumulator = 0 }
         // Sensitivity: a quarter of a step per click (finest) up to four steps per click.
@@ -344,6 +342,7 @@ final class InputController {
         let whole = Int(wheelAccumulator)
         guard whole != 0 else { return }
         wheelAccumulator -= CGFloat(whole)
-        model.nudge(edge, steps: whole * (coarse ? 10 : 1), of: model.wheelJogStep)
+        let step = model.wheelJogStep.seconds(frame: model.frameDuration) * (coarse ? 10 : 1)
+        model.jogMove(edge, by: Double(whole) * step)
     }
 }

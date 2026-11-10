@@ -288,8 +288,9 @@ final class EditingTests: XCTestCase {
         XCTAssertEqual(parts[0].end, 1.96, accuracy: 0.0001)        // the minimum gap is left between them
         XCTAssertEqual(parts[1].start, 2.04, accuracy: 0.0001)
         XCTAssertEqual(parts[1].end, 3, accuracy: 0.0001)
-        XCTAssertEqual(parts[0].text, "Hello there")
-        XCTAssertEqual(parts[1].text, "General Kenobi")
+        // The left title keeps all of the text; the right one starts empty.
+        XCTAssertEqual(parts[0].text, "Hello there\nGeneral Kenobi")
+        XCTAssertEqual(parts[1].text, "")
         XCTAssertEqual(f.model.doc.selectedID, parts[1].id)
 
         // Too close to an edge: refused.
@@ -309,15 +310,22 @@ final class EditingTests: XCTestCase {
         XCTAssertEqual(f.en.doc.subtitles.count, 1)
         f.engine.currentTime = 2
         f.model.splitAtPlayhead()
-        XCTAssertEqual(f.en.doc.subtitles.map(\.text), ["One two", "three four"])
+        XCTAssertEqual(f.en.doc.subtitles.map(\.text), ["One two three four", ""])
     }
 
-    func testTextIsDividedAtTheNearestLineBreakOrWord() {
-        XCTAssertTrue(AppModel.splitText("One two three four", at: 0.5) == ("One two", "three four"))
-        XCTAssertTrue(AppModel.splitText("First line\nSecond line here", at: 0.2) == ("First line", "Second line here"))
-        XCTAssertTrue(AppModel.splitText("Word", at: 0.3) == ("", "Word"))
-        XCTAssertTrue(AppModel.splitText("Word", at: 0.7) == ("Word", ""))
-        XCTAssertTrue(AppModel.splitText("   ", at: 0.5) == ("", ""))
+    func testSplittingNeverDividesTheText() {
+        // However the split falls, all the words stay in the left title, formatting included.
+        for t in [1.2, 2.0, 2.8] {
+            let a = sub(1, 3, "<i>First</i> line\nSecond line here")
+            let f = makeFixture([("en", [a])])
+            f.model.splitTitle(a.id, at: t)
+            XCTAssertEqual(f.en.doc.subtitles.map(\.text), ["<i>First</i> line\nSecond line here", ""])
+        }
+        // An empty title splits into two empty titles.
+        let e = sub(1, 3, "")
+        let g = makeFixture([("en", [e])])
+        g.model.splitTitle(e.id, at: 2)
+        XCTAssertEqual(g.en.doc.subtitles.map(\.text), ["", ""])
     }
 
     func testMovingTitlesInTime() {

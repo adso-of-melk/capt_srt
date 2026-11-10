@@ -672,9 +672,68 @@ final class AppModel: ObservableObject {
 
     /// Called when Control and Option are both up.
     func modifiersReleased() {
+        jogLockNoticeShown = false
         guard let p = pendingPreview else { return }
         pendingPreview = nil
         preview(p.edge, of: p.id)
+    }
+
+    // MARK: Jog session (one hold of Control or Option)
+
+    /// The edge being fine-tuned while Control (start) or Option (end) is held.
+    /// The mouse, the wheel and the [ ] keys all move it through `jogMove`, so whichever
+    /// you use next carries on from exactly where the last one stopped. The whole hold is
+    /// one undo step and one replay, played when the key is let go.
+    struct JogSession {
+        var edge: Edge
+        var id: UUID
+        /// Where the edge is now (after stopping at a neighbour or the minimum length).
+        var target: Double
+    }
+
+    var jogSession: JogSession?
+    var isJogging: Bool { jogSession != nil }
+    var jogEdge: Edge? { jogSession?.edge }
+    private var jogLockNoticeShown = false
+
+    /// Moves the held edge by `seconds`, starting the session with the first move.
+    func jogMove(_ edge: Edge, by seconds: Double) {
+        guard seconds != 0, let id = doc.selectedID else { return }
+        if let j = jogSession, j.edge != edge || j.id != id { endJog(commit: true) }
+        if jogSession == nil {
+            guard let s = doc.subtitle(id) else { return }
+            if focusedIsLocked {
+                // Say so once per hold, not on every click of the wheel.
+                if !jogLockNoticeShown { jogLockNoticeShown = true; _ = refuseIfLocked() }
+                return
+            }
+            engine.pause()
+            pendingPreview = nil
+            nudgeCommit?.cancel()
+            doc.beginLive()
+            jogSession = JogSession(edge: edge, id: id, target: edge == .start ? s.start : s.end)
+        }
+        guard var j = jogSession else { return }
+        if let value = moveEdge(edge, of: id, to: j.target + seconds, clamp: true) {
+            j.target = value
+            jogSession = j
+            scrubTo(value)
+        }
+    }
+
+    /// Ends the session: the hold becomes one undo step and plays once, or (Esc) is dropped.
+    func endJog(commit: Bool) {
+        guard let j = jogSession else { return }
+        jogSession = nil
+        if commit {
+            doc.commitLive()
+            preview(j.edge, of: j.id)
+        } else {
+            doc.cancelLive()
+            if let s = doc.subtitle(j.id) {
+                engine.seek(to: j.edge == .start ? s.start : s.end, exact: true)
+            }
+        }
     }
 
     /// Same as `nudge` but for a specific title under the pointer (trackpad over a box half).
@@ -745,7 +804,7 @@ final class AppModel: ObservableObject {
     // MARK: Splitting
 
     /// Splits a title at `t`, leaving the minimum gap (half each side of the split point).
-    /// The text is divided at the line break or word nearest the split.
+    /// The left title keeps all of the text; the right one starts empty, ready to type in.
     func splitTitle(_ id: UUID, at t: Double) {
         guard let s = doc.subtitle(id), !refuseIfLocked() else { return }
         let half = minGap / 2
@@ -755,12 +814,10 @@ final class AppModel: ObservableObject {
             flash("Too close to the edge of the title to split there.")
             return
         }
-        let parts = Self.splitText(s.text, at: (t - s.start) / max(0.001, s.duration))
-        let second = Subtitle(start: secondStart, end: s.end, text: parts.1)
+        let second = Subtitle(start: secondStart, end: s.end, text: "")
         doc.perform { subs in
             guard let i = subs.firstIndex(where: { $0.id == id }) else { return }
             subs[i].end = firstEnd
-            subs[i].text = parts.0
             subs.append(second)
         }
         doc.selectedID = second.id
@@ -775,24 +832,6 @@ final class AppModel: ObservableObject {
             return
         }
         splitTitle(s.id, at: t)
-    }
-
-    /// Divides text at the line break, or else the word gap, nearest `fraction` of the way through.
-    static func splitText(_ text: String, at fraction: Double) -> (String, String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return ("", "") }
-        let chars = Array(trimmed)
-        let target = Double(chars.count) * min(1, max(0, fraction))
-        let lineBreaks = chars.indices.filter { chars[$0] == "\n" }
-        let spaces = chars.indices.filter { chars[$0] == " " }
-        let candidates = lineBreaks.isEmpty ? spaces : lineBreaks
-        guard let cut = candidates.min(by: { abs(Double($0) - target) < abs(Double($1) - target) }) else {
-            // A single word: keep it on the side with more of the time.
-            return fraction < 0.5 ? ("", trimmed) : (trimmed, "")
-        }
-        let a = String(chars[..<cut]).trimmingCharacters(in: .whitespacesAndNewlines)
-        let b = String(chars[(cut + 1)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        return (a, b)
     }
 
     private func finishSpotting(at t: Double? = nil) {

@@ -74,6 +74,7 @@ extension AppModel {
     private func finishGesture() {
         if isSpotting { spotUp() }
         doc.commitLive()
+        jogSession = nil
     }
 
     // MARK: Rows, links and change tracking
