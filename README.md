@@ -45,6 +45,7 @@ Each video has a **master** language (★) and any number of others, shown side 
 
 - **A small "esc" while you type.** The card with the text cursor shows a little "esc" key on the lower edge of its text box. Esc takes the cursor out; then ⌘I makes the whole title italic again, ⌘V pastes at its end, and Tab, ⌘I runs through titles quickly.
 - **Language Options…** in each language's menu: change the language (or its code and name), master and timing, its own reading speed, characters per line and lines, spell check with its project words, and export text encoding (UTF-8 or an older Windows code page) plus right-to-left marks for Arabic, Hebrew and Persian.
+- **Mouse jog works outside the window.** Holding Control or Option and moving the mouse keeps jogging even with the pointer over another window or the desktop, as long as KPTN.SUB is the active app.
 - **Replay after moving a title is now a setting.** Title ▸ Replay Title After Drag-Move (on by default, also in Settings), next to the jog and drag-resize replays.
 - **Space puts the cursor back in the card.** With no cursor active (after Esc), Space puts it at the end of the selected title's text, without typing a space. Shift+Space still plays and pauses.
 - **Shift+Tab goes back to the start of this title first**, like a player's Back button; pressed again at the start (or right after tabbing onto it), it goes to the previous title.
@@ -113,7 +114,7 @@ When playback stops, the title under the playhead becomes the selected title.
 
 | Action | Start | End |
 | --- | --- | --- |
-| Jog: hold the key and move the mouse. The cursor hides, and the video and audio scrub as you move. Release to lock and preview. | **Control** | **Option** |
+| Jog: hold the key and move the mouse. The cursor hides, and the video and audio scrub as you move, even with the pointer outside the KPTN.SUB window. Release to lock and preview. | **Control** | **Option** |
 | Coarse jog | Control + Shift | Option + Shift |
 | Cancel a jog (while still holding) | Esc | Esc |
 | Nudge 1 frame (Shift: 10) | Control + [ / ] | Option + [ / ] |

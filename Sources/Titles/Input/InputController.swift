@@ -17,6 +17,9 @@ import CoreGraphics
 final class InputController {
     weak var model: AppModel?
     private var monitor: Any?
+    /// Mouse movement over other apps' windows or the desktop, so a mouse jog carries on
+    /// past the edge of the KPTN.SUB window.
+    private var outsideMonitor: Any?
     private var resignObserver: NSObjectProtocol?
 
     /// The mouse is hidden and frozen for jogging, on behalf of this edge.
@@ -46,6 +49,10 @@ final class InputController {
                 guard let self else { return event }
                 return self.handle(event)
             }
+        }
+        // Mouse events only (no keys), so this needs no Accessibility permission.
+        outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
+            MainActor.assumeIsolated { self?.mouseMovedOutside(event) }
         }
         resignObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
@@ -97,11 +104,7 @@ final class InputController {
         case .mouseMoved:
             // The key's own state travels with the event, so this never depends on having
             // seen the key go down.
-            guard let edge = Self.edge(for: flags), model.mouseJogOn, model.hasMedia,
-                  model.doc.selectedID != nil else { return e }
-            captureCursor(for: edge)
-            mouseJog(edge, dx: e.deltaX, coarse: flags.contains(.shift))
-            return nil
+            return jogWithMouse(e, flags: flags, model: model) ? nil : e
 
         case .leftMouseDown, .rightMouseDown:
             // Control+click is right-click on the Mac; ignore clicks while jogging.
@@ -322,6 +325,42 @@ final class InputController {
     }
 
     // MARK: Jog
+
+    /// The edge a mouse movement jogs: Control or Option held, mouse jog on, a video, and a
+    /// selected title. nil: the movement is just a movement.
+    static func mouseJogEdge(flags: NSEvent.ModifierFlags, mouseJogOn: Bool, hasMedia: Bool,
+                             hasSelection: Bool) -> Edge? {
+        guard mouseJogOn, hasMedia, hasSelection else { return nil }
+        return edge(for: flags)
+    }
+
+    /// Movement seen outside the app counts only while KPTN.SUB is the active app and its
+    /// editor window has the keyboard (not a sheet, Settings, or another app).
+    static func acceptsOutsideMovement(appActive: Bool, editorIsKey: Bool, editing: Bool) -> Bool {
+        appActive && editorIsKey && editing
+    }
+
+    /// Mouse movement with Control / Option held: jog the selected title's edge.
+    private func jogWithMouse(_ e: NSEvent, flags: NSEvent.ModifierFlags, model: AppModel) -> Bool {
+        guard let edge = Self.mouseJogEdge(flags: flags, mouseJogOn: model.mouseJogOn, hasMedia: model.hasMedia,
+                                           hasSelection: model.doc.selectedID != nil) else { return false }
+        captureCursor(for: edge)
+        mouseJog(edge, dx: e.deltaX, coarse: flags.contains(.shift))
+        return true
+    }
+
+    /// The pointer is over another app's window or the desktop: the jog goes on as if it
+    /// were over the waveform.
+    private func mouseMovedOutside(_ e: NSEvent) {
+        guard let model else { return }
+        let editing = !model.showHome && model.project != nil && !model.showProjectView && !model.editingTimecode
+        guard Self.acceptsOutsideMovement(appActive: NSApp.isActive,
+                                          editorIsKey: model.mainWindow?.isKeyWindow ?? false,
+                                          editing: editing) else { return }
+        let flags = e.modifierFlags.intersection([.shift, .control, .option, .command])
+        if capturedEdge != nil, Self.edge(for: flags) != capturedEdge { releaseCursor() }
+        _ = jogWithMouse(e, flags: flags, model: model)
+    }
 
     /// Hides the pointer and freezes it, so mouse movement is raw and never hits the screen edge.
     private func captureCursor(for edge: Edge) {

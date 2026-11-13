@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 @testable import Titles
 
 /// Fine-tuning an edge with Control or Option held. The mouse, the wheel and the [ ] keys
@@ -139,5 +140,28 @@ final class JogTests: XCTestCase {
         XCTAssertTrue(f.model.isJogging)
         f.model.closeProject(save: false)
         XCTAssertFalse(f.model.isJogging)
+    }
+
+    // MARK: Mouse jog outside the window
+
+    func testMouseJogPicksTheEdgeFromTheKeyHeld() {
+        func edge(_ flags: NSEvent.ModifierFlags, on: Bool = true, media: Bool = true, selection: Bool = true) -> Edge? {
+            InputController.mouseJogEdge(flags: flags, mouseJogOn: on, hasMedia: media, hasSelection: selection)
+        }
+        XCTAssertEqual(edge([.control]), .start)
+        XCTAssertEqual(edge([.option]), .end)
+        XCTAssertEqual(edge([.control, .shift]), .start)        // Shift: coarse steps
+        XCTAssertNil(edge([.control, .option]))
+        XCTAssertNil(edge([]))
+        XCTAssertNil(edge([.control], on: false))              // mouse jog off in Settings
+        XCTAssertNil(edge([.control], media: false))
+        XCTAssertNil(edge([.control], selection: false))
+    }
+
+    func testMovementOutsideTheWindowJogsOnlyWhileKPTNSUBHasTheKeyboard() {
+        XCTAssertTrue(InputController.acceptsOutsideMovement(appActive: true, editorIsKey: true, editing: true))
+        XCTAssertFalse(InputController.acceptsOutsideMovement(appActive: false, editorIsKey: true, editing: true))
+        XCTAssertFalse(InputController.acceptsOutsideMovement(appActive: true, editorIsKey: false, editing: true))
+        XCTAssertFalse(InputController.acceptsOutsideMovement(appActive: true, editorIsKey: true, editing: false))
     }
 }
