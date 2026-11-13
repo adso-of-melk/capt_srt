@@ -487,7 +487,7 @@ final class WaveformNSView: NSView {
             (isSel ? Palette.amber : base).setFill()
             NSBezierPath(roundedRect: pill, xRadius: 7.5, yRadius: 7.5).fill()
             drawText(numberText, at: CGPoint(x: pill.minX + 5, y: pill.minY + 1), font: font, color: Palette.background)
-            let fullText = Markup.plain(s.text).trimmingCharacters(in: .whitespacesAndNewlines)
+            let fullText = Self.boxText(s.text, color: Palette.text.withAlphaComponent(0.9 * dim))
             // Beside the number pill when there's room; otherwise underneath it.
             let besidePill = r.maxX - pill.maxX - 9 >= 40
             let textRect = besidePill
@@ -504,17 +504,8 @@ final class WaveformNSView: NSView {
                     drawText(timer.text, at: CGPoint(x: tr.minX + 6, y: tr.minY + 1), font: tf, color: Palette.background)
                 }
             }
-            if !fullText.isEmpty, textRect.width > 6, textRect.height > 8 {
-                let para = NSMutableParagraphStyle()
-                para.lineBreakMode = .byWordWrapping
-                let attrs: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-                    .foregroundColor: Palette.text.withAlphaComponent(0.9 * dim),
-                    .paragraphStyle: para
-                ]
-                (fullText as NSString).draw(with: textRect,
-                                            options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                            attributes: attrs)
+            if fullText.length > 0, textRect.width > 6, textRect.height > 8 {
+                fullText.draw(with: textRect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
             }
             // Which language this is: a quiet tag in the lower right corner.
             if !langTag.isEmpty, r.width >= pill.width + tagSize.width + 24, r.height >= 40 {
@@ -537,6 +528,29 @@ final class WaveformNSView: NSView {
                 NSBezierPath(roundedRect: CGRect(x: gx - 2, y: r.midY - 9, width: 4, height: 18), xRadius: 2, yRadius: 2).fill()
             }
         }
+    }
+
+    /// A box's text as the waveform shows it: italic and bold as in the card, every tag
+    /// hidden ({\an8}, <font …>), blank space at either end left out.
+    static func boxText(_ markup: String, color: NSColor, size: CGFloat = 11) -> NSAttributedString {
+        let a = NSMutableAttributedString(attributedString: RichMarkup.attributed(markup, size: size))
+        // RichMarkup keeps position and colour codes as typed; the waveform hides them.
+        for m in Markup.tagPattern.matches(in: a.string, range: NSRange(location: 0, length: a.length)).reversed() {
+            a.deleteCharacters(in: m.range)
+        }
+        let s = a.string as NSString
+        let visible = CharacterSet.whitespacesAndNewlines.inverted
+        let first = s.rangeOfCharacter(from: visible)
+        guard first.location != NSNotFound else { return NSAttributedString() }
+        let last = s.rangeOfCharacter(from: visible, options: .backwards)
+        let out = NSMutableAttributedString(attributedString: a.attributedSubstring(
+            from: NSRange(location: first.location, length: NSMaxRange(last) - first.location)))
+        let para = NSMutableParagraphStyle()
+        para.lineBreakMode = .byWordWrapping
+        let all = NSRange(location: 0, length: out.length)
+        out.addAttribute(.foregroundColor, value: color, range: all)
+        out.addAttribute(.paragraphStyle, value: para, range: all)
+        return out
     }
 
     /// How far each selection bracket reaches along the top and bottom: a fifth of the box,

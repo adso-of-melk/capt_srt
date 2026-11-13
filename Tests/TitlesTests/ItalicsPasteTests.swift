@@ -366,6 +366,21 @@ final class ItalicsPasteTests: XCTestCase {
         XCTAssertLessThanOrEqual(small.radius, small.rect.height / 2)
     }
 
+    func testWaveformBoxesShowItalicsAndHideEveryTag() {
+        func italic(_ a: NSAttributedString, _ i: Int) -> Bool {
+            (a.attribute(.font, at: i, effectiveRange: nil) as? NSFont)?
+                .fontDescriptor.symbolicTraits.contains(.italic) ?? false
+        }
+        let a = WaveformNSView.boxText("{\\an8} Hello <i>there</i>\n", color: .white)
+        XCTAssertEqual(a.string, "Hello there")
+        XCTAssertFalse(italic(a, 0))                       // "Hello" plain
+        XCTAssertTrue(italic(a, 6))                        // "there" italic
+        let all = WaveformNSView.boxText("<i><font color=\"#ff0\">Two\nlines</font></i>", color: .white)
+        XCTAssertEqual(all.string, "Two\nlines")
+        XCTAssertTrue((0..<all.length).allSatisfy { italic(all, $0) })
+        XCTAssertEqual(WaveformNSView.boxText("<i> </i>", color: .white).length, 0)
+    }
+
     func testSelectionAndWarningNeverShareAColour() {
         let statuses: [TimingStatus] = [.ok, .warn, .bad]
         for s in statuses {

@@ -40,6 +40,11 @@ Each video has a **master** language (★) and any number of others, shown side 
 - **Text Only (⇧⌘T)** hides picture and waveform, leaving the columns and a slim transport.
 - Undo and redo (⌘Z / ⇧⌘Z) work across all languages in order. While paused, the playhead goes to what changed (half a second before a removed title).
 
+## Coming in the next build
+
+- **⌘I is the whole title**, with or without the cursor in the card (selected words toggle on their own). **⇧⌘I** turns italics on or off for what you type next.
+- **Italics show on the waveform.** Italic (and bold) words in a title are drawn that way in its waveform box too, as in the card.
+
 ## New in 0.30
 
 - **An all-italic title stays italic when you clear it.** Delete all the text of a title that's italic throughout (voice-over, songs) and the empty card keeps italics, with a small **I** badge; what you type or paste next is italic. ⌘I in the empty card turns it off. Titles with only some words in italics start plain again, and a new title never inherits italics.
