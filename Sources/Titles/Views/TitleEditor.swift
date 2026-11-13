@@ -324,6 +324,8 @@ struct TitleEditor: NSViewRepresentable {
     var onProjectWord: (String) -> Void = { _ in }
     /// All the text of an all-italic title was deleted: the empty title stays italic.
     var onEmptiedItalic: () -> Void = {}
+    /// The text cursor came into this card (true) or left it, or the card closed (false).
+    var onCursor: (Bool) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -377,6 +379,12 @@ struct TitleEditor: NSViewRepresentable {
         tv.spellLanguage = spellLanguage
         c.decorate(tv)
         if focusNow { DispatchQueue.main.async { c.takeFocus(tv) } }
+    }
+
+    static func dismantleNSView(_ tv: TitleTextView, coordinator: Coordinator) {
+        // A card closed while you were typing in it (Tab, a click elsewhere).
+        let done = coordinator.parent.onCursor
+        DispatchQueue.main.async { done(false) }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: TitleTextView, context: Context) -> CGSize? {
@@ -529,6 +537,8 @@ struct TitleEditor: NSViewRepresentable {
 
         func focusChanged(_ focused: Bool) {
             if let view { DispatchQueue.main.async { [weak self] in self?.decorate(view) } }
+            let cursor = parent.onCursor
+            DispatchQueue.main.async { cursor(focused) }
             if focused {
                 wrapped = false
                 manualBreak = false

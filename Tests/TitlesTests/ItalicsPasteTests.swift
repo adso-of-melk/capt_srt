@@ -196,22 +196,6 @@ final class ItalicsPasteTests: XCTestCase {
         XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "<i>Hello there</i>")
     }
 
-    func testCommandIIsTheWholeTitleAndShiftCommandIIsWhatYouTypeNext() {
-        let a = sub(1, 2, "Hello")
-        let f = makeFixture([("en", [a])])
-        f.model.select(a.id)
-        f.model.italicCommand()
-        XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "<i>Hello</i>")
-        f.model.italicCommand()
-        XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "Hello")
-        f.model.italicCommand(nextOnly: true)
-        XCTAssertEqual(f.model.italicNext, a.id)
-        f.model.typeIntoSelected(" there")
-        XCTAssertEqual(Markup.plain(f.en.doc.subtitle(a.id)?.text ?? ""), "Hello there")
-        XCTAssertTrue(f.en.doc.subtitle(a.id)?.text.hasPrefix("Hello<i>") ?? false)
-        XCTAssertNil(f.model.italicNext)
-    }
-
     func testTypingIntoASelectedItalicTitleStaysItalic() {
         let a = sub(1, 2, "<i>Hello</i>")
         let f = makeFixture([("en", [a])])
@@ -364,6 +348,36 @@ final class ItalicsPasteTests: XCTestCase {
         let small = WaveformNSView.selectionLine(for: CGRect(x: 0, y: 0, width: 14, height: 12))
         XCTAssertLessThanOrEqual(small.radius, small.arm)
         XCTAssertLessThanOrEqual(small.radius, small.rect.height / 2)
+    }
+
+    func testTheEscHintFollowsTheCursorFromCardToCard() {
+        let (model, _) = makeModel()
+        let a = UUID(), b = UUID()
+        model.textCursor(true, in: a)
+        XCTAssertEqual(model.cursorIn, a)
+        // Tab: the next card can take the cursor before the last one lets it go.
+        model.textCursor(true, in: b)
+        model.textCursor(false, in: a)
+        XCTAssertEqual(model.cursorIn, b)
+        // Esc: the cursor leaves, and so does the hint.
+        model.textCursor(false, in: b)
+        XCTAssertNil(model.cursorIn)
+    }
+
+    func testAnEditorTellsItsCardWhenTheCursorComesAndGoes() {
+        let box = Box()
+        var seen: [Bool] = []
+        var e = TitleEditor(text: Binding(get: { box.text }, set: { box.text = $0 }),
+                            fontSize: 15, focusNow: false, onFocusTaken: {}, onEndEditing: { _ in },
+                            liveBreak: { _ in nil })
+        e.onCursor = { seen.append($0) }
+        let c = e.makeCoordinator()
+        c.focusChanged(true)
+        c.focusChanged(false)
+        let done = expectation(description: "reported")
+        DispatchQueue.main.async { done.fulfill() }
+        wait(for: [done], timeout: 1)
+        XCTAssertEqual(seen, [true, false])
     }
 
     func testWaveformBoxesShowItalicsAndHideEveryTag() {

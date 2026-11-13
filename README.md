@@ -42,7 +42,7 @@ Each video has a **master** language (★) and any number of others, shown side 
 
 ## Coming in the next build
 
-- **⌘I is the whole title**, with or without the cursor in the card (selected words toggle on their own). **⇧⌘I** turns italics on or off for what you type next.
+- **A small "esc" while you type.** The card with the text cursor shows a little "esc" key on the lower edge of its text box. Esc takes the cursor out; then ⌘I makes the whole title italic again, ⌘V pastes at its end, and Tab, ⌘I runs through titles quickly.
 - **Italics show on the waveform.** Italic (and bold) words in a title are drawn that way in its waveform box too, as in the card.
 
 ## New in 0.30
@@ -127,16 +127,14 @@ Dragging the body of a box moves the whole title. After adjusting an edge, the w
 | ← / → | Step one frame back / forward (Shift: one second) |
 | ↑ / ↓ while paused | Select the previous / next title and jump to it |
 | Return, or just start typing | Edit the selected card's text (cursor at the end), or fill a selected empty slot |
-| Return while typing | New line in the title (Esc or Tab leaves the card) |
+| Return while typing | New line in the title (Esc leaves the text; Tab goes on to the next card) |
 | ⌥⌘B | Re-break the selected title's lines |
 | ⇧⌥⌘B | Re-break every title in the focused language |
 | ⌘L / ⇧⌘L, ⌘1–9 | Focus the next / previous language, or column 1–9 |
 | Click a card | Select it, move the playhead to its start, and edit its text with the cursor at the end |
-| Esc | Leave text editing |
+| Esc | Leave text editing (a small "esc" on the card reminds you while you're typing) |
 | ⌃⌫ or ⌃⌦ (when not typing) | Delete the selected title (plain ⌫ doesn't) |
-| ⌘I | Italics on or off for the whole title, whether or not the cursor is in it; with words selected in the card, just those (an empty title: what comes next is italic) |
-| ⇧⌘I | Italics for what you type next (at the cursor, or added to the end) |
-| ⌘V on a selected title you aren't typing in | Paste at the end and break the lines |
+| ⌘V / ⌘I on a selected title you aren't typing in | Paste at the end / make the whole title italic (an empty title: what comes next is italic) |
 | ⌘F, ⌥⌘F | Find, Find and Replace |
 | ⌘G / ⇧⌘G | Next / previous match |
 | ⌘; | Next title with a misspelled word |

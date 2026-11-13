@@ -152,6 +152,21 @@ private struct ItalicBadge: View {
     }
 }
 
+/// Shown on the card you're typing in: Esc takes the cursor out, and then ⌘I, ⌘V and Tab
+/// work on whole titles.
+private struct EscHint: View {
+    var body: some View {
+        Text("esc")
+            .font(Theme.mono(8.5, .semibold))
+            .foregroundStyle(Theme.textDim.opacity(0.8))
+            .padding(.horizontal, 5)
+            .frame(height: 11)
+            .background(Capsule().fill(Theme.panelRaised))
+            .overlay(Capsule().stroke(Theme.textFaint.opacity(0.6), lineWidth: 0.75))
+            .help("Esc leaves the text. Then ⌘I makes the whole title italic, ⌘V pastes at its end, and Tab moves on without the cursor.")
+    }
+}
+
 /// A row where this language has no title yet. Double-click (or select it and type) to create one.
 private struct EmptySlot: View {
     let isSelected: Bool
@@ -453,7 +468,8 @@ struct CardView: View {
                         findHighlight: model.find.editorHighlight(for: sub.id),
                         onLearn: { model.learnWord($0, language: track.language.code) },
                         onProjectWord: { model.addProjectWord($0, language: track.language.code) },
-                        onEmptiedItalic: { model.italicNext = sub.id }
+                        onEmptiedItalic: { model.italicNext = sub.id },
+                        onCursor: { model.textCursor($0, in: sub.id) }
                     )
                     // A fresh editor for each title, so nothing of the last one carries over.
                     .id(sub.id)
@@ -474,6 +490,13 @@ struct CardView: View {
                     // An empty title that will be italic when you type or paste into it.
                     if model.italicNext == sub.id, Markup.plain(isSelected ? text : sub.text).isEmpty {
                         ItalicBadge().padding(4)
+                    }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    // While the cursor is in the card: a small key on the box's lower edge,
+                    // in the padding below the text, so it never covers a line.
+                    if isSelected, model.cursorIn == sub.id {
+                        EscHint().offset(x: -8, y: 5.5)
                     }
                 }
                 .padding(.horizontal, 6)

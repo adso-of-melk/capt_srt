@@ -513,6 +513,16 @@ final class AppModel: ObservableObject {
     /// once used, or by ⌘I again.
     @Published var italicNext: UUID?
 
+    /// The title whose card has the text cursor in it (its card shows a small "esc" hint:
+    /// Esc leaves the text, so ⌘I, ⌘V and Tab work on whole titles again).
+    @Published var cursorIn: UUID?
+
+    /// A card's editor took the keyboard (`on`) or let it go. When Tab moves the cursor on,
+    /// the next card may take it before the last one lets go: that never clears the new one.
+    func textCursor(_ on: Bool, in id: UUID) {
+        if on { cursorIn = id } else if cursorIn == id { cursorIn = nil }
+    }
+
     /// Typing while a title is selected (and nothing is being edited) starts editing it.
     /// On an empty slot, it creates the title there first. The new text takes the style of
     /// the title's last character, so typing after italics stays italic.
@@ -536,24 +546,6 @@ final class AppModel: ObservableObject {
         guard let id = insertIntoSelected(piece) else { return }
         autoBreakAfterPaste(id)
         doc.endTextCoalescing()
-    }
-
-    /// ⌘I, the same whether or not the cursor is in the card: with words selected in the
-    /// card, just those; otherwise the whole title (an empty one: what's typed next).
-    /// ⇧⌘I (`nextOnly`): italics for what you type next, at the cursor or at the end.
-    func italicCommand(nextOnly: Bool = false) {
-        if let editor = mainWindow?.firstResponder as? TitleTextView, !editor.string.isEmpty,
-           nextOnly || editor.selectedRange().length > 0 {
-            editor.toggle(RichMarkup.italic)
-            return
-        }
-        if nextOnly, doc.selectedID != nil, let id = doc.selectedID, let s = doc.subtitle(id),
-           !Markup.plain(s.text).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            italicNext = italicNext == id ? nil : id
-            flash(italicNext == nil ? "Italics off for what you type next." : "What you type or paste next is italic.")
-            return
-        }
-        toggleItalicOnSelected()
     }
 
     /// ⌘I on a selected title that isn't being typed in: the whole title goes italic, or back.
