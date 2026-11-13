@@ -207,7 +207,8 @@ final class InputController {
 
         // Tab / Shift+Tab: next / previous title, from anywhere. Keeps editing if you were.
         if e.keyCode == Key.tab, plain {
-            model.selectAdjacent(flags.contains(.shift) ? -1 : 1, keepEditing: isEditingText)
+            let back = flags.contains(.shift)
+            model.selectAdjacent(back ? -1 : 1, keepEditing: isEditingText, restart: back)
             return nil
         }
 

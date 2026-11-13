@@ -97,6 +97,32 @@ final class EditingTests: XCTestCase {
         XCTAssertEqual(f.model.doc.selectedID, a.id)
     }
 
+    func testShiftTabGoesBackToTheStartOfThisTitleFirst() {
+        let a = sub(1, 2, "A"), b = sub(5, 7, "B")
+        let f = makeFixture([("en", [a, b])])
+        f.model.select(b.id)
+        f.model.clock.time = 6.2                                      // part way through B
+        f.model.selectAdjacent(-1, restart: true)
+        XCTAssertEqual(f.model.doc.selectedID, b.id)                  // still B…
+        XCTAssertEqual(f.engine.currentTime, 5, accuracy: 0.0001)     // …from its start
+        f.model.clock.time = 5
+        f.model.selectAdjacent(-1, restart: true)                     // at the start: on to A
+        XCTAssertEqual(f.model.doc.selectedID, a.id)
+        XCTAssertEqual(f.engine.currentTime, 1, accuracy: 0.0001)
+
+        // Within half a frame of the start counts as the start (just tabbed onto it).
+        f.model.select(b.id)
+        f.model.clock.time = 5.01
+        f.model.selectAdjacent(-1, restart: true)
+        XCTAssertEqual(f.model.doc.selectedID, a.id)
+
+        // The up arrow is still simply the previous title.
+        f.model.select(b.id)
+        f.model.clock.time = 6.2
+        f.model.selectAdjacent(-1)
+        XCTAssertEqual(f.model.doc.selectedID, a.id)
+    }
+
     func testTabWithNothingSelectedStartsFromThePlayhead() {
         let a = sub(1, 2, "A"), b = sub(5, 6, "B")
         let f = makeFixture([("en", [a, b]), ("hr", [sub(3, 4, "x")])])

@@ -597,8 +597,18 @@ final class AppModel: ObservableObject {
     /// playhead at its start. Rows where only another language has a title are skipped
     /// (click an empty slot to add one there). With a group selected, the group is let go
     /// and the title after its last one (or before its first) is selected.
-    func selectAdjacent(_ delta: Int, keepEditing: Bool = false) {
+    /// `restart` (Shift-Tab), like a player's Back button: with the playhead past the start of
+    /// the selected title, the first press goes back to its start; at the start, to the previous one.
+    func selectAdjacent(_ delta: Int, keepEditing: Bool = false, restart: Bool = false) {
         guard !rows.isEmpty, let track = focusedTrack else { return }
+        if restart, delta < 0, multiSelection.isEmpty, let id = doc.selectedID, let s = doc.subtitle(id),
+           clock.time > s.start + frameDuration / 2 {
+            if engine.isPlaying { engine.pause() }
+            emptySlotRow = nil
+            select(id, seekToStart: true)
+            if keepEditing { focusRequest = id }
+            return
+        }
         if !multiSelection.isEmpty {
             let group = doc.subtitles.filter { multiSelection.contains($0.id) }
             multiSelection = []
