@@ -319,7 +319,7 @@ final class EditingTests: XCTestCase {
 
     func testTypingOnAnEmptySlotCreatesTheTitleThere() throws {
         let a = sub(1, 2, "Hello")
-        let f = makeFixture([("en", [a])])
+        let f = makeFixture([("en", [a]), ("hr", [])])
         f.model.select(a.id)
         f.model.focusTrack(f.hr.id, edit: false)
         XCTAssertNil(f.hr.doc.selectedID)
