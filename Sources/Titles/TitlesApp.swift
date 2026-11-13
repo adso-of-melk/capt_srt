@@ -195,6 +195,7 @@ struct TitlesCommands: Commands {
             Divider()
             Toggle("Replay Title After Jog or Nudge", isOn: $model.replayAfterJog)
             Toggle("Replay Title After Drag-Resize", isOn: $model.replayAfterResize)
+            Toggle("Replay Title After Drag-Move", isOn: $model.replayAfterMove)
             Divider()
             Picker("Spotting Mode", selection: $model.spotMode) {
                 ForEach(SpotMode.allCases) { Text($0.rawValue).tag($0) }

@@ -145,6 +145,22 @@ final class EditingTests: XCTestCase {
         XCTAssertNil(f.model.focusRequest)
     }
 
+    func testAMovedTitleReplaysUnlessThatsTurnedOff() {
+        let a = sub(4, 6, "A")
+        let f = makeFixture([("en", [a])])
+        let was = f.model.replayAfterMove
+        defer { f.model.replayAfterMove = was }
+        f.model.replayAfterMove = true
+        f.model.replayMoved(a.id)
+        XCTAssertEqual(f.engine.ranges.count, 1)
+        XCTAssertEqual(f.engine.ranges.last?.from ?? -1, 3.5, accuracy: 0.0001)
+        XCTAssertEqual(f.engine.ranges.last?.to ?? -1, 6, accuracy: 0.0001)
+
+        f.model.replayAfterMove = false
+        f.model.replayMoved(a.id)
+        XCTAssertEqual(f.engine.ranges.count, 1)                     // no second replay
+    }
+
     func testTabWithNothingSelectedStartsFromThePlayhead() {
         let a = sub(1, 2, "A"), b = sub(5, 6, "B")
         let f = makeFixture([("en", [a, b]), ("hr", [sub(3, 4, "x")])])

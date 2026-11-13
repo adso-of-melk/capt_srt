@@ -1023,9 +1023,7 @@ final class WaveformNSView: NSView {
             }
         case let .moving(id, _, _):
             model.doc.commitLive()
-            if didDrag, let s = model.doc.subtitle(id) {
-                model.playRange(from: max(0, s.start - 0.5), to: s.end)
-            }
+            if didDrag { model.replayMoved(id) }
         case let .resizing(id, edge):
             model.doc.commitLive()
             if didDrag {

@@ -109,6 +109,10 @@ final class AppModel: ObservableObject {
     @Published var replayAfterResize = true {
         didSet { UserDefaults.standard.set(replayAfterResize, forKey: "replayAfterResize") }
     }
+    /// Play a title after dragging the whole box to a new time.
+    @Published var replayAfterMove = true {
+        didSet { UserDefaults.standard.set(replayAfterMove, forKey: "replayAfterMove") }
+    }
 
     // Fine-tuning with Control/Option held (Settings ▸ Jogging).
     /// Moving the mouse moves the edge.
@@ -164,6 +168,7 @@ final class AppModel: ObservableObject {
         if defaults.object(forKey: "textOnly") != nil { textOnly = defaults.bool(forKey: "textOnly") }
         if defaults.object(forKey: "replayAfterJog") != nil { replayAfterJog = defaults.bool(forKey: "replayAfterJog") }
         if defaults.object(forKey: "replayAfterResize") != nil { replayAfterResize = defaults.bool(forKey: "replayAfterResize") }
+        if defaults.object(forKey: "replayAfterMove") != nil { replayAfterMove = defaults.bool(forKey: "replayAfterMove") }
         if defaults.object(forKey: "autoLineBreaks") != nil { autoLineBreaks = defaults.bool(forKey: "autoLineBreaks") }
         if defaults.object(forKey: "spellCheckOn") != nil { spellCheckOn = defaults.bool(forKey: "spellCheckOn") }
         loadRecentProjects()
@@ -707,6 +712,12 @@ final class AppModel: ObservableObject {
         guard kind == .jog ? replayAfterJog : replayAfterResize else { return }
         guard hasMedia, let s = doc.subtitle(id) else { return }
         playRange(from: max(0, s.start - 1), to: s.end + 0.25)
+    }
+
+    /// A title dragged to a new time: play it from half a second before (Title menu can turn this off).
+    func replayMoved(_ id: UUID) {
+        guard replayAfterMove, hasMedia, let s = doc.subtitle(id) else { return }
+        playRange(from: max(0, s.start - 0.5), to: s.end)
     }
 
     /// Short, automatic playbacks (previews). Selection doesn't follow the playhead

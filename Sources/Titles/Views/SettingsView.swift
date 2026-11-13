@@ -61,6 +61,7 @@ struct SettingsView: View {
                 Toggle("Trackpad swipe over the selected title adjusts its edges", isOn: $model.swipeOverTitleAdjusts)
                 Toggle("Replay title after jog or nudge", isOn: $model.replayAfterJog)
                 Toggle("Replay title after drag-resize", isOn: $model.replayAfterResize)
+                Toggle("Replay title after dragging it to a new time", isOn: $model.replayAfterMove)
             }
         }
         .formStyle(.grouped)

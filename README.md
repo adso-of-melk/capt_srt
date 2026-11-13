@@ -45,6 +45,7 @@ Each video has a **master** language (★) and any number of others, shown side 
 
 - **A small "esc" while you type.** The card with the text cursor shows a little "esc" key on the lower edge of its text box. Esc takes the cursor out; then ⌘I makes the whole title italic again, ⌘V pastes at its end, and Tab, ⌘I runs through titles quickly.
 - **Language Options…** in each language's menu: change the language (or its code and name), master and timing, its own reading speed, characters per line and lines, spell check with its project words, and export text encoding (UTF-8 or an older Windows code page) plus right-to-left marks for Arabic, Hebrew and Persian.
+- **Replay after moving a title is now a setting.** Title ▸ Replay Title After Drag-Move (on by default, also in Settings), next to the jog and drag-resize replays.
 - **Space puts the cursor back in the card.** With no cursor active (after Esc), Space puts it at the end of the selected title's text, without typing a space. Shift+Space still plays and pauses.
 - **Shift+Tab goes back to the start of this title first**, like a player's Back button; pressed again at the start (or right after tabbing onto it), it goes to the previous title.
 - **Italics show on the waveform.** Italic (and bold) words in a title are drawn that way in its waveform box too, as in the card.
@@ -120,7 +121,7 @@ When playback stops, the title under the playhead becomes the selected title.
 | Two-finger trackpad swipe over a box, no key (off by default; turn on under Title ▸ Trackpad Swipe Over a Title Adjusts Its Edges) | left half of the box | right half of the box |
 | Mouse drag | box's left edge | box's right edge |
 
-Dragging the body of a box moves the whole title. After adjusting an edge, the whole title plays from 1 s before its start to just after its end; turn this off separately for jogs/nudges and for drag-resizes in the Title menu. A plain scroll wheel, trackball or Shift+scroll only pans the waveform and never changes a title. Jogs and nudges stop at the neighbouring title, keeping a 2-frame gap. Mouse drags stop at the minimum gap from a neighbour; drag about 16 px further and it gives, so titles can overlap; overlapping titles turn lilac and are drawn one slightly higher and one slightly lower.
+Dragging the body of a box moves the whole title, and it plays from half a second before its new start. After adjusting an edge, the whole title plays from 1 s before its start to just after its end. Each replay (jogs/nudges, drag-resizes, drag-moves) can be turned off on its own in the Title menu. A plain scroll wheel, trackball or Shift+scroll only pans the waveform and never changes a title. Jogs and nudges stop at the neighbouring title, keeping a 2-frame gap. Mouse drags stop at the minimum gap from a neighbour; drag about 16 px further and it gives, so titles can overlap; overlapping titles turn lilac and are drawn one slightly higher and one slightly lower.
 
 **Navigation**
 
@@ -151,7 +152,7 @@ Dragging the body of a box moves the whole title. After adjusting an edge, the w
 
 During playback, the last title the playhead reached stays highlighted, and the card list scrolls to keep it centred. Starting playback leaves text editing.
 
-**Settings (⌘,).** Jog speed (how fast Control/Option + mouse moves an edge), spotting mode, reaction offsets, the trackpad swipe option and the two replay options.
+**Settings (⌘,).** Jog speed (how fast Control/Option + mouse moves an edge), spotting mode, reaction offsets, the trackpad swipe option and the three replay options.
 
 **Line breaks.** With Title ▸ Break Long Lines Automatically (on by default), a title too long for one line is broken when you leave its card, following the Netflix and BBC guides: break after punctuation or before a conjunction or preposition, never after an article, pronoun, auxiliary or preposition, keep names together, and prefer a shorter top line. English and Croatian (also Bosnian and Serbian) have word lists; other languages break at punctuation and for balance. Titles with your own line breaks are left alone; pasted text (⌘V) is always re-broken. Cards keep the on-screen line breaks: a line too wide for the card shrinks instead of wrapping.
 
