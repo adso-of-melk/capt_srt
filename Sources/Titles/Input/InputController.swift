@@ -222,7 +222,13 @@ final class InputController {
             // ⌘I: italic on or off (in a card it shows as italic; it's saved as <i>…</i>).
             if flags == [.command], e.charactersIgnoringModifiers?.lowercased() == "i",
                let editor = NSApp.keyWindow?.firstResponder as? TitleTextView {
-                editor.toggle(RichMarkup.italic)
+                // An empty title's italics belong to the title (its card shows a badge), so
+                // they hold until typing starts, however the card is reloaded.
+                if editor.string.isEmpty, model.doc.selectedID != nil {
+                    model.toggleItalicOnSelected()
+                } else {
+                    editor.toggle(RichMarkup.italic)
+                }
                 return nil
             }
             // ⌘V: once the paste lands, break the title's lines by the rules.

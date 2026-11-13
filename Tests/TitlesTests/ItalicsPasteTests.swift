@@ -17,12 +17,14 @@ final class ItalicsPasteTests: XCTestCase {
     }
 
     /// A card editor without a window, as the card shows it.
-    private func editor(_ text: String, startItalic: Bool = false, box: Box)
+    private func editor(_ text: String, startItalic: Bool = false, box: Box,
+                        onEmptiedItalic: @escaping () -> Void = {})
         -> (TitleTextView, TitleEditor.Coordinator) {
         box.text = text
-        let e = TitleEditor(text: Binding(get: { box.text }, set: { box.text = $0 }),
+        var e = TitleEditor(text: Binding(get: { box.text }, set: { box.text = $0 }),
                             fontSize: 15, focusNow: false, onFocusTaken: {}, onEndEditing: { _ in },
                             liveBreak: { _ in nil }, startItalic: startItalic)
+        e.onEmptiedItalic = onEmptiedItalic
         let c = e.makeCoordinator()
         box.coordinator = c
         let tv = TitleTextView(usingTextLayoutManager: false)
@@ -89,6 +91,74 @@ final class ItalicsPasteTests: XCTestCase {
         tv.toggle(RichMarkup.italic)
         tv.setSelectedRange(NSRange(location: 2, length: 0))
         XCTAssertNil(tv.pendingTyping)
+    }
+
+    func testClearingAnAllItalicTitleKeepsItItalic() {
+        let box = Box()
+        var emptied = 0
+        let (tv, c) = editor("<i>Voice-over</i>", box: box, onEmptiedItalic: { emptied += 1 })
+        tv.setSelectedRange(NSRange(location: 0, length: (tv.string as NSString).length))
+        tv.deleteBackward(nil)
+        XCTAssertEqual(box.text, "")
+        XCTAssertEqual(emptied, 1, "the card is told, so it shows the italic badge")
+        XCTAssertTrue(typingIsItalic(tv))
+        // The empty card is reloaded (it grows back to full size): still italic.
+        c.load("", into: tv, size: 13)
+        XCTAssertTrue(typingIsItalic(tv))
+        tv.insertText("Next line", replacementRange: tv.selectedRange())
+        XCTAssertEqual(box.text, "<i>Next line</i>")
+    }
+
+    func testClearingSelectiveItalicsStartsPlain() {
+        let box = Box()
+        var emptied = 0
+        let (tv, _) = editor("Hello <i>there</i>", box: box, onEmptiedItalic: { emptied += 1 })
+        tv.setSelectedRange(NSRange(location: 0, length: (tv.string as NSString).length))
+        tv.deleteBackward(nil)
+        XCTAssertEqual(emptied, 0)
+        XCTAssertFalse(typingIsItalic(tv))
+        tv.insertText("Plain", replacementRange: tv.selectedRange())
+        XCTAssertEqual(box.text, "Plain")
+    }
+
+    func testAnEmptiedItalicTitleIsRememberedAndCommandITurnsItOff() {
+        let a = sub(1, 2, "")
+        let f = makeFixture([("en", [a])])
+        f.model.select(a.id)
+        // What the card does when its all-italic text is deleted.
+        f.model.italicNext = a.id
+        // ⌘I in the empty card goes to the title: italics off.
+        f.model.toggleItalicOnSelected()
+        XCTAssertNil(f.model.italicNext)
+        f.model.typeIntoSelected("Plain")
+        XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "Plain")
+    }
+
+    func testANewTitleNeverInheritsItalics() {
+        let a = sub(1, 2, "")
+        let f = makeFixture([("en", [a])])
+        f.model.select(a.id)
+        f.model.italicNext = a.id
+        f.model.createTitle(start: 4, end: 5)
+        let new = f.en.doc.subtitles.first { $0.id != a.id }
+        XCTAssertNotNil(new)
+        XCTAssertNotEqual(f.model.italicNext, new?.id)
+        f.model.typeIntoSelected("Hi")
+        XCTAssertEqual(f.en.doc.subtitle(new?.id)?.text, "Hi")
+    }
+
+    // MARK: Spelling marks while typing
+
+    func testAMisspelledWordKeepsItsMarkWhenTheCursorLandsOnIt() {
+        let words = [NSRange(location: 0, length: 4), NSRange(location: 5, length: 4)]   // "wrld wrld"
+        let cursorAt = { (i: Int) in NSRange(location: i, length: 0) }
+        // Clicked or arrowed onto (not typing): every mark stays.
+        XCTAssertEqual(TitleEditor.Coordinator.marked(words, caret: cursorAt(4), typingAt: nil), words)
+        XCTAssertEqual(TitleEditor.Coordinator.marked(words, caret: cursorAt(2), typingAt: nil), words)
+        // Typing a word: only that word waits until you move on.
+        XCTAssertEqual(TitleEditor.Coordinator.marked(words, caret: cursorAt(9), typingAt: 9), [words[0]])
+        // The cursor moved away from where the typing was.
+        XCTAssertEqual(TitleEditor.Coordinator.marked(words, caret: cursorAt(4), typingAt: 9), words)
     }
 
     // MARK: Markup helpers
@@ -242,6 +312,14 @@ final class ItalicsPasteTests: XCTestCase {
     }
 
     // MARK: Colours
+
+    func testSelectionBracketsHoldAFifthOfTheBoxAndNeverMeet() {
+        XCTAssertEqual(WaveformNSView.selectionBracketArm(width: 200), 40, accuracy: 0.001)
+        XCTAssertEqual(WaveformNSView.selectionBracketArm(width: 20), 6, accuracy: 0.001)
+        for w in stride(from: CGFloat(2), through: 400, by: 1) {
+            XCTAssertLessThanOrEqual(2 * WaveformNSView.selectionBracketArm(width: w), w * 0.8 + 0.001)
+        }
+    }
 
     func testSelectionAndWarningNeverShareAColour() {
         let statuses: [TimingStatus] = [.ok, .warn, .bad]

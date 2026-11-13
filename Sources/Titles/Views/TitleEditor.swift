@@ -267,7 +267,7 @@ final class TitleTextView: NSTextView {
         super.draw(dirtyRect)
         guard string.isEmpty else { return }
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: RichMarkup.font(size: baseSize, italic: false, bold: false),
+            .font: RichMarkup.font(size: baseSize, italic: typingAttributes[RichMarkup.italic] != nil, bold: false),
             .foregroundColor: Palette.textFaint,
             .paragraphStyle: RichMarkup.paragraph()
         ]
@@ -322,6 +322,8 @@ struct TitleEditor: NSViewRepresentable {
     var findHighlight: FindHighlight? = nil
     var onLearn: (String) -> Void = { _ in }
     var onProjectWord: (String) -> Void = { _ in }
+    /// All the text of an all-italic title was deleted: the empty title stays italic.
+    var onEmptiedItalic: () -> Void = {}
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -427,6 +429,28 @@ struct TitleEditor: NSViewRepresentable {
             }
             attrs[.font] = RichMarkup.refont(attrs, size: fontSize)
             tv.typingAttributes = attrs
+            // The placeholder of an empty title shows the style that typing will have.
+            if tv.string.isEmpty { tv.needsDisplay = true }
+        }
+
+        /// Everything was deleted. An all-italic title stays italic, empty (most italic titles
+        /// are italic throughout: voice-over, songs); its card shows a badge and ⌘I turns it
+        /// off. Selective italics don't carry over: the empty title starts plain.
+        private func emptied(_ tv: NSTextView, keepItalic: Bool) {
+            var a = RichMarkup.baseAttributes(size: fontSize)
+            if keepItalic {
+                a[RichMarkup.italic] = true
+                a[.font] = RichMarkup.refont(a, size: fontSize)
+                if let t = tv as? TitleTextView {
+                    t.pendingTyping = a
+                    t.pendingLocation = 0
+                }
+                tv.typingAttributes = a
+                parent.onEmptiedItalic()
+            } else {
+                tv.typingAttributes = a
+            }
+            tv.needsDisplay = true
         }
 
         /// ⌘I pressed on the title while it wasn't being typed in: an empty title starts in italics.
@@ -449,8 +473,19 @@ struct TitleEditor: NSViewRepresentable {
             }
         }
 
-        /// Red dotted underlines under misspelled words (not the word you're still typing),
-        /// and Find's matches in teal. Drawn over the text; nothing is added to it.
+        /// Where the cursor was left by the last thing typed (nil once it's moved by hand).
+        var typingAt: Int?
+
+        /// The misspelled words to underline: all of them, except a word you're typing at its
+        /// end right now. Putting the cursor on or in a word never hides its underline; only
+        /// fixing the spelling does.
+        static func marked(_ misspelled: [NSRange], caret: NSRange, typingAt: Int?) -> [NSRange] {
+            guard caret.length == 0, let at = typingAt, at == caret.location else { return misspelled }
+            return misspelled.filter { $0.location + $0.length != at }
+        }
+
+        /// Red dotted underlines under misspelled words, and Find's matches in teal. Drawn over
+        /// the text; nothing is added to it.
         func decorate(_ tv: NSTextView) {
             guard let lm = tv.layoutManager else { return }
             let s = tv.string
@@ -459,10 +494,9 @@ struct TitleEditor: NSViewRepresentable {
             lm.removeTemporaryAttribute(.backgroundColor, forCharacterRange: full)
             guard full.length > 0 else { return }
             if let lang = parent.spellLanguage {
-                let caret = tv.selectedRange()
-                let typing = tv.window?.firstResponder === tv && caret.length == 0
-                for r in SpellService.shared.misspelled(in: s, language: lang) {
-                    if typing, caret.location >= r.location, caret.location <= r.location + r.length { continue }
+                let typing = tv.window?.firstResponder === tv ? typingAt : nil
+                for r in Self.marked(SpellService.shared.misspelled(in: s, language: lang),
+                                     caret: tv.selectedRange(), typingAt: typing) {
                     // 1 = NSSpellingStateSpellingFlag: the red dotted underline.
                     lm.addTemporaryAttribute(.spellingState, value: 1, forCharacterRange: r)
                 }
@@ -509,7 +543,9 @@ struct TitleEditor: NSViewRepresentable {
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard !restoring, let tv = notification.object as? TitleTextView else { return }
-            // Moving off a word marks it if it's misspelled.
+            // The cursor moved by hand (not by typing): every misspelled word shows again.
+            let r0 = tv.selectedRange()
+            if let at = typingAt, r0.length != 0 || r0.location != at { typingAt = nil }
             if tv.spellLanguage != nil { decorate(tv) }
             guard let at = tv.pendingLocation else { return }
             let r = tv.selectedRange()
@@ -519,13 +555,18 @@ struct TitleEditor: NSViewRepresentable {
             }
         }
 
+        /// The last change typed something in (not a deletion).
+        private var lastEditInserted = false
+
         func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString: String?) -> Bool {
             if let r = replacementString, r.contains("\n") { manualBreak = true }
+            lastEditInserted = !(replacementString ?? "").isEmpty
             return true
         }
 
         func textDidChange(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
+            let wasAllItalic = RichMarkup.isAllItalic(currentMarkup)
             // What was typed carries the waiting style now; from here on the text decides.
             if let t = tv as? TitleTextView, t.pendingTyping != nil {
                 t.pendingTyping = nil
@@ -543,6 +584,9 @@ struct TitleEditor: NSViewRepresentable {
             }
             currentMarkup = markup
             parent.text = markup
+            if tv.string.isEmpty { emptied(tv, keepItalic: wasAllItalic) }
+            // A word is left unmarked only while you type it; deleting (to fix it) keeps the mark.
+            typingAt = lastEditInserted ? tv.selectedRange().location : nil
             decorate(tv)
         }
 

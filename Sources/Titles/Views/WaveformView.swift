@@ -459,15 +459,13 @@ final class WaveformNSView: NSView {
             base.withAlphaComponent(isSel ? 0.24 : 0.13 * dim).setFill()
             path.fill()
             if isSel {
-                // Selected: a thick amber frame around the box, with the title's own timing
-                // colour kept as a line just inside it, so its CPS status still shows.
-                Palette.amber.setStroke()
-                path.lineWidth = 3
-                path.stroke()
-                let inner = NSBezierPath(roundedRect: r.insetBy(dx: 2.5, dy: 2.5), xRadius: 4, yRadius: 4)
+                // Selected: the frame keeps the title's own timing colour, and amber LCARS
+                // brackets ( ) hold its left and right ends, so selection never looks like
+                // a timing warning.
                 base.setStroke()
-                inner.lineWidth = 1.5
-                inner.stroke()
+                path.lineWidth = 1.5
+                path.stroke()
+                drawSelectionBrackets(r)
             } else {
                 base.withAlphaComponent(0.75 * dim).setStroke()
                 path.lineWidth = 1
@@ -539,6 +537,46 @@ final class WaveformNSView: NSView {
             Palette.amber.setFill()
             for gx in [r.minX, r.maxX] {
                 NSBezierPath(roundedRect: CGRect(x: gx - 2, y: r.midY - 9, width: 4, height: 18), xRadius: 2, yRadius: 2).fill()
+            }
+        }
+    }
+
+    /// How far each selection bracket reaches along the top and bottom: a fifth of the box,
+    /// never so far that the two meet.
+    static func selectionBracketArm(width: CGFloat) -> CGFloat {
+        min(max(width / 5, 6), width * 0.4)
+    }
+
+    /// Two rounded amber brackets around a selected box, each prong ending in a dot.
+    private func drawSelectionBrackets(_ r: CGRect) {
+        let lw: CGFloat = 3
+        let b = r.insetBy(dx: 1, dy: 1)
+        let arm = Self.selectionBracketArm(width: b.width)
+        let radius = max(0.5, min(7, b.height / 2, arm))
+        let dot: CGFloat = 4.5, gap: CGFloat = 2.5
+        // Room for the dots without the two sides' dots meeting in the middle.
+        let dots = 2 * (arm + lw / 2 + gap + dot) < b.width
+        Palette.amber.setStroke()
+        Palette.amber.setFill()
+        for side in [CGFloat(-1), 1] {
+            let edge = side < 0 ? b.minX : b.maxX
+            let inward = -side
+            let tip = edge + inward * arm
+            let p = NSBezierPath()
+            p.move(to: CGPoint(x: tip, y: b.minY))
+            p.line(to: CGPoint(x: edge + inward * radius, y: b.minY))
+            p.appendArc(from: CGPoint(x: edge, y: b.minY), to: CGPoint(x: edge, y: b.minY + radius), radius: radius)
+            p.line(to: CGPoint(x: edge, y: b.maxY - radius))
+            p.appendArc(from: CGPoint(x: edge, y: b.maxY), to: CGPoint(x: edge + inward * radius, y: b.maxY), radius: radius)
+            p.line(to: CGPoint(x: tip, y: b.maxY))
+            p.lineWidth = lw
+            p.lineCapStyle = .round
+            p.lineJoinStyle = .round
+            p.stroke()
+            guard dots else { continue }
+            let cx = tip + inward * (lw / 2 + gap + dot / 2)
+            for y in [b.minY, b.maxY] {
+                NSBezierPath(ovalIn: CGRect(x: cx - dot / 2, y: y - dot / 2, width: dot, height: dot)).fill()
             }
         }
     }

@@ -122,7 +122,8 @@ struct CardPane: View {
             )
         } else {
             EmptySlot(isSelected: isFocusedColumn && model.emptySlotRow == row.key && doc.selectedID == nil,
-                      inSelectedRow: inSelectedRow, locked: track.locked)
+                      inSelectedRow: inSelectedRow, locked: track.locked,
+                      italic: isFocusedColumn && model.italicNext == row.key)
                 .onTapGesture(count: 2) {
                     if model.video?.focusedTrackID != track.id { model.focusTrack(track.id, edit: false) }
                     model.createInRow(row.key)
@@ -139,11 +140,24 @@ struct CardPane: View {
     }
 }
 
+/// "Italics on" for an empty title: what's typed or pasted into it next is italic (⌘I: off).
+private struct ItalicBadge: View {
+    var body: some View {
+        Text("I")
+            .font(.system(size: 10, weight: .heavy).italic())
+            .foregroundStyle(Theme.background)
+            .frame(width: 16, height: 14)
+            .background(Capsule().fill(Theme.peach))
+            .help("Italics on: what you type or paste here is italic. ⌘I turns it off.")
+    }
+}
+
 /// A row where this language has no title yet. Double-click (or select it and type) to create one.
 private struct EmptySlot: View {
     let isSelected: Bool
     let inSelectedRow: Bool
     let locked: Bool
+    var italic = false
     @State private var hover = false
 
     var body: some View {
@@ -157,6 +171,9 @@ private struct EmptySlot: View {
                         .font(Theme.label(11, .medium))
                         .foregroundStyle(Theme.textFaint)
                 }
+            }
+            .overlay(alignment: .topTrailing) {
+                if italic { ItalicBadge().padding(6) }
             }
             .frame(minHeight: 84)
             .contentShape(Rectangle())
@@ -435,7 +452,8 @@ struct CardView: View {
                         spellLanguage: model.spellCheckOn ? track.language.code : nil,
                         findHighlight: model.find.editorHighlight(for: sub.id),
                         onLearn: { model.learnWord($0, language: track.language.code) },
-                        onProjectWord: { model.addProjectWord($0, language: track.language.code) }
+                        onProjectWord: { model.addProjectWord($0, language: track.language.code) },
+                        onEmptiedItalic: { model.italicNext = sub.id }
                     )
                     // A fresh editor for each title, so nothing of the last one carries over.
                     .id(sub.id)
@@ -452,6 +470,12 @@ struct CardView: View {
                 .padding(.vertical, 9)
                 .frame(maxWidth: .infinity, minHeight: 48)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.45)))
+                .overlay(alignment: .topTrailing) {
+                    // An empty title that will be italic when you type or paste into it.
+                    if model.italicNext == sub.id, Markup.plain(isSelected ? text : sub.text).isEmpty {
+                        ItalicBadge().padding(4)
+                    }
+                }
                 .padding(.horizontal, 6)
                 .padding(.bottom, 6)
         }
