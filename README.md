@@ -44,7 +44,7 @@ Each video has a **master** language (★) and any number of others, shown side 
 
 - **An all-italic title stays italic when you clear it.** Delete all the text of a title that's italic throughout (voice-over, songs) and the empty card keeps italics, with a small **I** badge; what you type or paste next is italic. ⌘I in the empty card turns it off. Titles with only some words in italics start plain again, and a new title never inherits italics.
 - **Misspelled words keep their red underline** when you click or arrow onto them; the mark goes only when the spelling is fixed. Only the word you're typing at that moment waits until you move on.
-- **Selected title on the waveform: amber brackets.** Instead of a full amber frame, rounded LCARS-style brackets hold the left and right fifth of the box, each prong ending in a dot. The top and bottom edges in between keep the title's own timing colour.
+- **Selected title on the waveform: amber brackets.** Instead of a full amber frame, rounded LCARS-style brackets hold the left and right fifth of the box, each prong ending in a dot. The top and bottom edges in between keep the title's own timing colour. The frame runs along the middle of the brackets, so none of it shows through, and the brackets' outer edge is the box's real edge (where you grab it). Boxes have slightly rounder corners.
 
 ## New in 0.29
 

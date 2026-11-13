@@ -321,6 +321,22 @@ final class ItalicsPasteTests: XCTestCase {
         }
     }
 
+    func testTheBracketsOuterEdgeIsTheBoxsEdgeAndTheFrameRunsUnderIt() {
+        let box = CGRect(x: 100, y: 20, width: 200, height: 60)
+        let line = WaveformNSView.selectionLine(for: box)
+        let half = WaveformNSView.bracketWidth / 2
+        // The bracket is stroked on this line, so its outer edge is the box's own edge.
+        XCTAssertEqual(line.rect.insetBy(dx: -half, dy: -half), box)
+        // And its outer corners are exactly as round as the box's.
+        XCTAssertEqual(line.radius + half, WaveformNSView.boxCornerRadius, accuracy: 0.001)
+        // The fine frame (1.5 pt) on the same line is narrower than the bracket: none of it shows.
+        XCTAssertLessThan(1.5, WaveformNSView.bracketWidth)
+        // A small box: corners never rounder than the brackets can follow.
+        let small = WaveformNSView.selectionLine(for: CGRect(x: 0, y: 0, width: 14, height: 12))
+        XCTAssertLessThanOrEqual(small.radius, small.arm)
+        XCTAssertLessThanOrEqual(small.radius, small.rect.height / 2)
+    }
+
     func testSelectionAndWarningNeverShareAColour() {
         let statuses: [TimingStatus] = [.ok, .warn, .bad]
         for s in statuses {

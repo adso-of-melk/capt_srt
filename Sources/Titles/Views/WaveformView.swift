@@ -455,17 +455,15 @@ final class WaveformNSView: NSView {
             let isSel = s.id == selected || (focused && model.multiSelection.contains(s.id))
             let base: NSColor = (overlaps.contains(s.id) ? Palette.lilac : Palette.status(preset.status(s)))
                 .withAlphaComponent(dim)
-            let path = NSBezierPath(roundedRect: r, xRadius: 6, yRadius: 6)
+            let path = NSBezierPath(roundedRect: r, xRadius: Self.boxCornerRadius, yRadius: Self.boxCornerRadius)
             base.withAlphaComponent(isSel ? 0.24 : 0.13 * dim).setFill()
             path.fill()
             if isSel {
                 // Selected: the frame keeps the title's own timing colour, and amber LCARS
                 // brackets ( ) hold its left and right ends, so selection never looks like
-                // a timing warning.
-                base.setStroke()
-                path.lineWidth = 1.5
-                path.stroke()
-                drawSelectionBrackets(r)
+                // a timing warning. Frame and brackets run along one line, so the brackets
+                // cover the frame completely, and their outer edge is the box's own edge.
+                drawSelection(r, frame: base)
             } else {
                 base.withAlphaComponent(0.75 * dim).setStroke()
                 path.lineWidth = 1
@@ -547,12 +545,39 @@ final class WaveformNSView: NSView {
         min(max(width / 5, 6), width * 0.4)
     }
 
-    /// Two rounded amber brackets around a selected box, each prong ending in a dot.
-    private func drawSelectionBrackets(_ r: CGRect) {
-        let lw: CGFloat = 3
-        let b = r.insetBy(dx: 1, dy: 1)
-        let arm = Self.selectionBracketArm(width: b.width)
-        let radius = max(0.5, min(7, b.height / 2, arm))
+    /// Corner radius of a title's box on the waveform.
+    static let boxCornerRadius: CGFloat = 8
+    /// Thickness of the selection brackets.
+    static let bracketWidth: CGFloat = 3
+
+    /// The line a selected box's frame and brackets both run along: half a bracket's width
+    /// inside the box, so the bracket's outer edge is exactly the box's edge (where it's
+    /// grabbed), and the fine frame sits in the middle of the bracket, hidden under it.
+    static func selectionLine(for r: CGRect) -> (rect: CGRect, radius: CGFloat, arm: CGFloat) {
+        let c = r.insetBy(dx: bracketWidth / 2, dy: bracketWidth / 2)
+        let arm = selectionBracketArm(width: c.width)
+        let radius = max(0.5, min(boxCornerRadius - bracketWidth / 2, c.height / 2, arm))
+        return (c, radius, arm)
+    }
+
+    /// A selected box: its fine frame in the timing colour, and two rounded amber brackets
+    /// over its ends, each prong ending in a dot.
+    private func drawSelection(_ r: CGRect, frame color: NSColor) {
+        let lw = Self.bracketWidth
+        guard r.width > lw * 2 + 2, r.height > lw * 2 + 2 else {
+            // Too small for brackets: just an amber outline.
+            Palette.amber.setStroke()
+            let p = NSBezierPath(roundedRect: r.insetBy(dx: 0.75, dy: 0.75), xRadius: 2, yRadius: 2)
+            p.lineWidth = 1.5
+            p.stroke()
+            return
+        }
+        let (b, radius, arm) = Self.selectionLine(for: r)
+        let frame = NSBezierPath(roundedRect: b, xRadius: radius, yRadius: radius)
+        color.setStroke()
+        frame.lineWidth = 1.5
+        frame.stroke()
+
         let dot: CGFloat = 4.5, gap: CGFloat = 2.5
         // Room for the dots without the two sides' dots meeting in the middle.
         let dots = 2 * (arm + lw / 2 + gap + dot) < b.width
