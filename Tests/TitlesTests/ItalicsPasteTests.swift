@@ -321,6 +321,19 @@ final class ItalicsPasteTests: XCTestCase {
         }
     }
 
+    func testEachProngEndsInACapsuleWithoutReachingFurther() {
+        // A wide box: the line stops short and a 10 pt capsule ends the prong, reaching
+        // exactly as far as the old round dot did (arm + 8.5).
+        let wide = WaveformNSView.bracketEnd(arm: 40, radius: 6.5, width: 200)
+        XCTAssertEqual(wide.capsule?.upperBound ?? 0, 48.5, accuracy: 0.001)
+        XCTAssertEqual(wide.capsule.map { $0.upperBound - $0.lowerBound } ?? 0, 10, accuracy: 0.001)
+        XCTAssertLessThan(wide.lineTip, wide.capsule?.lowerBound ?? 0)
+        // A narrow box: no capsule, the line reaches as before.
+        let narrow = WaveformNSView.bracketEnd(arm: 6, radius: 6, width: 30)
+        XCTAssertNil(narrow.capsule)
+        XCTAssertEqual(narrow.lineTip, 6, accuracy: 0.001)
+    }
+
     func testTheBracketsOuterEdgeIsTheBoxsEdgeAndTheFrameRunsUnderIt() {
         let box = CGRect(x: 100, y: 20, width: 200, height: 60)
         let line = WaveformNSView.selectionLine(for: box)

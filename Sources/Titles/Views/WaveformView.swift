@@ -560,8 +560,20 @@ final class WaveformNSView: NSView {
         return (c, radius, arm)
     }
 
+    /// Where each prong of a selection bracket ends, measured in from the box's side: the
+    /// line's tip, and the small capsule after it (shaped like the pane-header icon), or nil
+    /// where there's no room for one. The bracket reaches as far either way: `arm` plus 8.5.
+    static func bracketEnd(arm: CGFloat, radius: CGFloat, width: CGFloat)
+        -> (lineTip: CGFloat, capsule: ClosedRange<CGFloat>?) {
+        let reach = arm + 8.5
+        let capsule: CGFloat = 10, gap: CGFloat = 2.5, cap = bracketWidth / 2
+        let tip = reach - capsule - gap - cap
+        guard tip >= radius + 2, 2 * reach < width else { return (arm, nil) }
+        return (tip, (reach - capsule)...reach)
+    }
+
     /// A selected box: its fine frame in the timing colour, and two rounded amber brackets
-    /// over its ends, each prong ending in a dot.
+    /// over its ends, each prong ending in a small capsule.
     private func drawSelection(_ r: CGRect, frame color: NSColor) {
         let lw = Self.bracketWidth
         guard r.width > lw * 2 + 2, r.height > lw * 2 + 2 else {
@@ -578,15 +590,14 @@ final class WaveformNSView: NSView {
         frame.lineWidth = 1.5
         frame.stroke()
 
-        let dot: CGFloat = 4.5, gap: CGFloat = 2.5
-        // Room for the dots without the two sides' dots meeting in the middle.
-        let dots = 2 * (arm + lw / 2 + gap + dot) < b.width
+        let end = Self.bracketEnd(arm: arm, radius: radius, width: b.width)
+        let pillHeight: CGFloat = 4.5
         Palette.amber.setStroke()
         Palette.amber.setFill()
         for side in [CGFloat(-1), 1] {
             let edge = side < 0 ? b.minX : b.maxX
             let inward = -side
-            let tip = edge + inward * arm
+            let tip = edge + inward * end.lineTip
             let p = NSBezierPath()
             p.move(to: CGPoint(x: tip, y: b.minY))
             p.line(to: CGPoint(x: edge + inward * radius, y: b.minY))
@@ -598,10 +609,11 @@ final class WaveformNSView: NSView {
             p.lineCapStyle = .round
             p.lineJoinStyle = .round
             p.stroke()
-            guard dots else { continue }
-            let cx = tip + inward * (lw / 2 + gap + dot / 2)
+            guard let pill = end.capsule else { continue }
+            let x0 = edge + inward * pill.lowerBound, x1 = edge + inward * pill.upperBound
             for y in [b.minY, b.maxY] {
-                NSBezierPath(ovalIn: CGRect(x: cx - dot / 2, y: y - dot / 2, width: dot, height: dot)).fill()
+                let rect = CGRect(x: min(x0, x1), y: y - pillHeight / 2, width: abs(x1 - x0), height: pillHeight)
+                NSBezierPath(roundedRect: rect, xRadius: pillHeight / 2, yRadius: pillHeight / 2).fill()
             }
         }
     }
