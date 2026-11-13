@@ -1,0 +1,254 @@
+import XCTest
+import AppKit
+import SwiftUI
+@testable import Titles
+
+/// Italics that stay on, ⌘I and ⌘V on a selected title that isn't being typed in,
+/// Control-Delete, drawing a title near its neighbours, and the selection colour.
+@MainActor
+final class ItalicsPasteTests: XCTestCase {
+
+    // MARK: Helpers
+
+    private final class Box {
+        var text = ""
+        /// The text view only holds its delegate weakly: the box keeps it alive for the test.
+        var coordinator: AnyObject?
+    }
+
+    /// A card editor without a window, as the card shows it.
+    private func editor(_ text: String, startItalic: Bool = false, box: Box)
+        -> (TitleTextView, TitleEditor.Coordinator) {
+        box.text = text
+        let e = TitleEditor(text: Binding(get: { box.text }, set: { box.text = $0 }),
+                            fontSize: 15, focusNow: false, onFocusTaken: {}, onEndEditing: { _ in },
+                            liveBreak: { _ in nil }, startItalic: startItalic)
+        let c = e.makeCoordinator()
+        box.coordinator = c
+        let tv = TitleTextView(usingTextLayoutManager: false)
+        tv.delegate = c
+        tv.isRichText = true
+        tv.allowsUndo = false
+        c.load(text, into: tv, size: 15)
+        tv.setSelectedRange(NSRange(location: (tv.string as NSString).length, length: 0))
+        c.applyTypingStyle(tv)
+        c.syncStartItalic(tv)
+        return (tv, c)
+    }
+
+    private func typingIsItalic(_ tv: NSTextView) -> Bool { tv.typingAttributes[RichMarkup.italic] != nil }
+
+    // MARK: Italics in the card editor
+
+    func testTypingAfterItalicTextStaysItalicAfterTheTextIsReloaded() {
+        let box = Box()
+        let (tv, c) = editor("<i>Hello</i>", box: box)
+        XCTAssertTrue(typingIsItalic(tv))
+        // The text shrinks to fit (a new font size) or is re-broken: the editor reloads it.
+        let caret = c.caretKey(in: tv)
+        c.load("<i>Hello</i>", into: tv, size: 12)
+        c.restoreCaret(caret, in: tv)
+        XCTAssertTrue(typingIsItalic(tv), "a reload must not switch italics off")
+        tv.insertText(" there", replacementRange: tv.selectedRange())
+        XCTAssertEqual(box.text, "<i>Hello there</i>")
+    }
+
+    func testCommandIAtTheCursorSurvivesAReload() {
+        let box = Box()
+        let (tv, c) = editor("Hello ", box: box)
+        XCTAssertFalse(typingIsItalic(tv))
+        tv.toggle(RichMarkup.italic)
+        XCTAssertTrue(typingIsItalic(tv))
+        let caret = c.caretKey(in: tv)
+        c.load("Hello ", into: tv, size: 13)
+        c.restoreCaret(caret, in: tv)
+        XCTAssertTrue(typingIsItalic(tv), "⌘I waiting at the cursor must survive the text shrinking")
+        tv.insertText("world", replacementRange: tv.selectedRange())
+        XCTAssertEqual(box.text, "Hello <i>world</i>")
+    }
+
+    func testCommandIInAnEmptyCardWorksFirstTime() {
+        let box = Box()
+        let (tv, _) = editor("", box: box)
+        tv.toggle(RichMarkup.italic)
+        tv.insertText("Hi", replacementRange: tv.selectedRange())
+        XCTAssertEqual(box.text, "<i>Hi</i>")
+    }
+
+    func testAnEmptyTitleAskedToStartInItalicsDoes() {
+        let box = Box()
+        let (tv, _) = editor("", startItalic: true, box: box)
+        XCTAssertTrue(typingIsItalic(tv))
+        tv.insertText("Hi", replacementRange: tv.selectedRange())
+        XCTAssertEqual(box.text, "<i>Hi</i>")
+    }
+
+    func testMovingTheCursorDropsAWaitingStyle() {
+        let box = Box()
+        let (tv, _) = editor("Hello", box: box)
+        tv.toggle(RichMarkup.italic)
+        tv.setSelectedRange(NSRange(location: 2, length: 0))
+        XCTAssertNil(tv.pendingTyping)
+    }
+
+    // MARK: Markup helpers
+
+    func testAppendingCarriesOnInTheLastCharactersStyle() {
+        XCTAssertEqual(RichMarkup.appending(" there", to: "<i>Hello</i>"), "<i>Hello there</i>")
+        XCTAssertEqual(RichMarkup.appending(" there", to: "Hello"), "Hello there")
+        XCTAssertEqual(RichMarkup.appending("x", to: "", italic: true), "<i>x</i>")
+        XCTAssertEqual(RichMarkup.appending(" plain", to: "<i>Hello</i>", italic: false), "<i>Hello</i> plain")
+    }
+
+    func testWholeTitleItalic() {
+        XCTAssertTrue(RichMarkup.isAllItalic("<i>Hello</i>"))
+        XCTAssertTrue(RichMarkup.isAllItalic("<i>Hello</i>\n<i>there</i>"))
+        XCTAssertFalse(RichMarkup.isAllItalic("<i>Hello</i> there"))
+        XCTAssertFalse(RichMarkup.isAllItalic(""))
+        XCTAssertEqual(RichMarkup.withItalic(true, "<i>Hello</i> there"), "<i>Hello there</i>")
+        XCTAssertEqual(RichMarkup.withItalic(false, "<i>Hello</i> there"), "Hello there")
+        XCTAssertEqual(RichMarkup.withItalic(true, "{\\an8}Hello"), "{\\an8}<i>Hello</i>")
+        XCTAssertTrue(RichMarkup.isAllItalic("{\\an8}<i>Hello</i>"))
+        XCTAssertEqual(RichMarkup.withItalic(false, "{\\an8}<i>Hello</i>"), "{\\an8}Hello")
+    }
+
+    // MARK: ⌘I and ⌘V on a selected title (waveform clicked last)
+
+    func testCommandIOnASelectedTitleTogglesTheWholeTitle() {
+        let a = sub(1, 2, "<i>Hello</i> there")
+        let f = makeFixture([("en", [a])])
+        f.model.select(a.id)
+        f.model.toggleItalicOnSelected()
+        XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "<i>Hello there</i>")
+        f.model.toggleItalicOnSelected()
+        XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "Hello there")
+        f.model.undo()
+        XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "<i>Hello there</i>")
+    }
+
+    func testTypingIntoASelectedItalicTitleStaysItalic() {
+        let a = sub(1, 2, "<i>Hello</i>")
+        let f = makeFixture([("en", [a])])
+        f.model.select(a.id)
+        f.model.typeIntoSelected(" there")
+        XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "<i>Hello there</i>")
+        XCTAssertEqual(f.model.focusRequest, a.id)
+    }
+
+    func testPasteGoesIntoTheSelectedTitleAndBreaksTheLines() {
+        let a = sub(1, 4, "")
+        let f = makeFixture([("en", [a])])
+        f.model.select(a.id)
+        f.model.pasteIntoSelected("I never thought I'd see the day when you would come back here again.")
+        let lines = shownLines(f.en.doc.subtitle(a.id)?.text ?? "")
+        XCTAssertEqual(lines.count, 2, "pasted text is broken by the rules")
+        XCTAssertEqual(lines.joined(separator: " "), "I never thought I'd see the day when you would come back here again.")
+        XCTAssertEqual(f.model.focusRequest, a.id, "the card opens for typing")
+        f.model.undo()
+        XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "", "one ⌘Z takes the paste back out")
+    }
+
+    func testPasteAddsToTheEndOfATitle() {
+        let a = sub(1, 4, "Hello")
+        let f = makeFixture([("en", [a])])
+        f.model.select(a.id)
+        f.model.pasteIntoSelected(" world\r\n")
+        XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "Hello world")
+    }
+
+    func testCommandIThenCommandVPastesInItalics() {
+        let a = sub(1, 4, "")
+        let f = makeFixture([("en", [a])])
+        f.model.select(a.id)
+        f.model.toggleItalicOnSelected()
+        XCTAssertEqual(f.model.italicNext, a.id)
+        f.model.pasteIntoSelected("Hello")
+        XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "<i>Hello</i>")
+        XCTAssertNil(f.model.italicNext)
+    }
+
+    func testCommandITwiceOnAnEmptyTitleIsPlainAgain() {
+        let a = sub(1, 4, "")
+        let f = makeFixture([("en", [a])])
+        f.model.select(a.id)
+        f.model.toggleItalicOnSelected()
+        f.model.toggleItalicOnSelected()
+        f.model.pasteIntoSelected("Hello")
+        XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "Hello")
+    }
+
+    func testCommandIThenCommandVOnAnEmptySlotCreatesAnItalicTitle() {
+        let a = sub(1, 2, "Hello")
+        let f = makeFixture([("en", [a]), ("hr", [])])
+        f.model.focusTrack(f.hr.id, edit: false)
+        let key = f.model.rows[0].key
+        f.model.doc.selectedID = nil
+        f.model.emptySlotRow = key
+        f.model.toggleItalicOnSelected()
+        f.model.pasteIntoSelected("Bok")
+        XCTAssertEqual(f.hr.doc.subtitles.count, 1)
+        XCTAssertEqual(f.hr.doc.subtitles.first?.text, "<i>Bok</i>")
+        XCTAssertEqual(f.hr.doc.subtitles.first?.start ?? 0, 1, accuracy: 0.001)
+    }
+
+    func testPastingNothingSaysSo() {
+        let a = sub(1, 4, "Hello")
+        let f = makeFixture([("en", [a])])
+        f.model.select(a.id)
+        f.model.pasteIntoSelected("  \n ")
+        XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "Hello")
+        XCTAssertTrue(f.model.statusMessage?.contains("Nothing to paste") ?? false)
+    }
+
+    // MARK: Control-Delete
+
+    func testOnlyControlDeleteDeletesATitle() {
+        XCTAssertEqual(InputController.deleteKeyAction([.control]), .delete)
+        XCTAssertEqual(InputController.deleteKeyAction([.control, .shift]), .delete)
+        XCTAssertEqual(InputController.deleteKeyAction([]), .remind)
+        XCTAssertEqual(InputController.deleteKeyAction([.shift]), .nothing)
+        XCTAssertEqual(InputController.deleteKeyAction([.command]), .nothing)
+        XCTAssertEqual(InputController.deleteKeyAction([.option]), .nothing)
+    }
+
+    // MARK: Drawing a title near its neighbours
+
+    func testDrawingATitleMeetsResistanceAtTheMinimumGap() {
+        let subs = [sub(1, 2), sub(5, 6)]
+        let gap = 0.08
+        let mid = WaveformNSView.createBarriers(at: 3, in: subs, gap: gap)
+        XCTAssertEqual(mid.start, 3, accuracy: 0.0001)
+        XCTAssertEqual(mid.lower ?? -1, 2.08, accuracy: 0.0001)
+        XCTAssertEqual(mid.upper ?? -1, 4.92, accuracy: 0.0001)
+
+        // Starting inside the gap after a title: the new title starts at the gap's edge.
+        let near = WaveformNSView.createBarriers(at: 2.03, in: subs, gap: gap)
+        XCTAssertEqual(near.start, 2.08, accuracy: 0.0001)
+        let before = WaveformNSView.createBarriers(at: 4.97, in: subs, gap: gap)
+        XCTAssertEqual(before.start, 4.92, accuracy: 0.0001)
+
+        // Nothing either side: no resistance.
+        let open = WaveformNSView.createBarriers(at: 10, in: subs, gap: gap)
+        XCTAssertEqual(open.start, 10, accuracy: 0.0001)
+        XCTAssertEqual(open.lower ?? -1, 6.08, accuracy: 0.0001)
+        XCTAssertNil(open.upper)
+
+        // Inside a title, or in a gap too small for one: left alone.
+        XCTAssertNil(WaveformNSView.createBarriers(at: 1.5, in: subs, gap: gap).lower)
+        let tight = WaveformNSView.createBarriers(at: 2.05, in: [sub(1, 2), sub(2.1, 3)], gap: gap)
+        XCTAssertNil(tight.lower)
+        XCTAssertNil(tight.upper)
+        XCTAssertEqual(tight.start, 2.05, accuracy: 0.0001)
+    }
+
+    // MARK: Colours
+
+    func testSelectionAndWarningNeverShareAColour() {
+        let statuses: [TimingStatus] = [.ok, .warn, .bad]
+        for s in statuses {
+            XCTAssertNotEqual(Palette.status(s), Palette.amber, "amber is the selection only")
+        }
+        XCTAssertEqual(Palette.status(.warn), Palette.gold)
+        XCTAssertNotEqual(Palette.gold, Palette.amber)
+    }
+}

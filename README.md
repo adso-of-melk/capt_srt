@@ -40,7 +40,17 @@ Each video has a **master** language (★) and any number of others, shown side 
 - **Text Only (⇧⌘T)** hides picture and waveform, leaving the columns and a slim transport.
 - Undo and redo (⌘Z / ⇧⌘Z) work across all languages in order. While paused, the playhead goes to what changed (half a second before a removed title).
 
-## Since the last notes (build of 2026-11-09)
+## New in 0.29
+
+- **Find and Replace.** ⌘F opens a Find bar above the cards (⌥⌘F with Replace). Return or ⌘G goes to the next match, ⇧⌘G to the previous; Esc closes it. It searches what a viewer reads, so tags never get in the way, and a phrase broken over two lines is still found. Choose This Language, All Open Languages or Selected Titles; Match Case and Whole Word are optional. Replace does one and moves on; All replaces every match, one undo step per language. Matches show in teal on the cards, in the card being edited, and as a bar under waveform boxes. Replacing keeps formatting (italic text stays italic).
+- **Spell check.** Misspelled words get a red dotted underline in the cards and while typing (not the word you're still typing). Right-click one in the card you're editing for suggestions, Learn Spelling (every project) or Add to Project Words (names and places in this film, saved in the project). ⌘; goes to the next title with a misspelling. Edit ▸ Check Spelling turns it off. Each language is checked in its own language: the Mac's dictionaries cover English, Polish, Portuguese, German, French, Spanish, Russian and about 40 more; Croatian, Serbian (both alphabets), Bosnian, Persian and Thai use open-source Hunspell dictionaries (`bash scripts/fetch-dictionaries.sh` downloads them into `~/Library/Application Support/KPTN.SUB/Dictionaries`; Edit ▸ Show Dictionaries Folder; a build made with `package-app.sh` carries them inside the app). A language's menu (… in its column header) says which dictionary checks it. Japanese, Chinese and Korean aren't checked.
+- **Italics behave.** Once italics are on, they stay on as you type: the text shrinking to fit, a line re-breaking, the CPS colour changing, clicking away or playing no longer switch them off. ⌘I in an empty card works first time. ⌘I on a selected title you aren't typing in makes the whole title italic (or plain again); on an empty one, what you type or paste next is italic. Typing into a selected italic title carries on in italics.
+- **Paste into the selected title** even when the waveform was clicked last (copying lines from a dialogue list): ⌘V puts the text at the end and breaks the lines by the rules. ⌘I then ⌘V pastes it in italics.
+- **Deleting a title takes Control-Delete** (⌃⌫ or ⌃⌦), so a stray Delete can't lose one. Plain Delete only reminds you. Right-click ▸ Delete Title on a box still works.
+- **Drawing a title stops at the minimum gap** from its neighbours, like stretching one does; pull on about 16 px to overlap. Starting a drag inside the gap starts it at the gap's edge.
+- **Selection and warning colours no longer clash.** A selected box keeps its timing colour inside a thick amber frame; amber now means only "selected". Near the limit is pale gold everywhere (cards, chips, waveform, spotting timer).
+
+## Since the build of 2026-11-09
 
 - **Rows by time.** Card rows are built from timing alone: titles from different languages that start within 0.25 s, or overlap for half their length, share a row. Moving a title never reorders another language. Each language is numbered on its own.
 - **Formatting.** `<i>`, `<b>` and `<u>` show as italic, bold and underline in cards and on the video; tags don't count towards CPS or characters per line. ⌘I wraps the selection in `<i>…</i>` while typing.
@@ -78,7 +88,7 @@ When playback stops, the title under the playhead becomes the selected title.
 | --- | --- |
 | Draw a title | Drag across empty waveform. Its card opens for typing straight away. Drag again to make the next one. |
 | Live spotting, Hold mode (default) | While the video plays, hold **↓** while a line is spoken. Key down sets the start and key up sets the end. |
-| While spotting | A timer in the box's top right corner (and on the video) shows the length, coloured by the standard: amber while too short, periwinkle when fine, amber near the maximum, red over it. The card list scrolls to each new title. |
+| While spotting | A timer in the box's top right corner (and on the video) shows the length, coloured by the standard: gold while too short, periwinkle when fine, gold near the maximum, red over it. The card list scrolls to each new title. |
 | Live spotting, Tap mode | **↓** ends the current title and starts the next. **↑** ends the current title and leaves a gap. |
 | Spotting offsets | A title starts exactly where you press ↓ and ends exactly where you release it. Both can be offset in Settings (⌘,). |
 | Split a title | Hold ⌘ over a box (the cursor turns into scissors) and click where it should split, or press ⌘B to split the title under the playhead. A gap of the standard's minimum (2 frames) is left, half on each side. The left title keeps all of the text and the right one starts empty. |
@@ -95,7 +105,7 @@ When playback stops, the title under the playhead becomes the selected title.
 | Two-finger trackpad swipe over a box, no key (off by default; turn on under Title ▸ Trackpad Swipe Over a Title Adjusts Its Edges) | left half of the box | right half of the box |
 | Mouse drag | box's left edge | box's right edge |
 
-Dragging the body of a box moves the whole title. After adjusting an edge, the whole title plays from 1 s before its start to just after its end; turn this off separately for jogs/nudges and for drag-resizes in the Title menu. A plain scroll wheel, trackball or Shift+scroll only pans the waveform and never changes a title. Jogs and nudges stop at the neighbouring title, keeping a 2-frame gap. Mouse drags stop at the minimum gap from a neighbour; drag about 12 px further and it gives, so titles can overlap; overlapping titles turn lilac and are drawn one slightly higher and one slightly lower.
+Dragging the body of a box moves the whole title. After adjusting an edge, the whole title plays from 1 s before its start to just after its end; turn this off separately for jogs/nudges and for drag-resizes in the Title menu. A plain scroll wheel, trackball or Shift+scroll only pans the waveform and never changes a title. Jogs and nudges stop at the neighbouring title, keeping a 2-frame gap. Mouse drags stop at the minimum gap from a neighbour; drag about 16 px further and it gives, so titles can overlap; overlapping titles turn lilac and are drawn one slightly higher and one slightly lower.
 
 **Navigation**
 
@@ -112,7 +122,11 @@ Dragging the body of a box moves the whole title. After adjusting an edge, the w
 | ⌘L / ⇧⌘L, ⌘1–9 | Focus the next / previous language, or column 1–9 |
 | Click a card | Select it, move the playhead to its start, and edit its text with the cursor at the end |
 | Esc | Leave text editing |
-| ⌫ (when not typing) | Delete the selected title |
+| ⌃⌫ or ⌃⌦ (when not typing) | Delete the selected title (plain ⌫ doesn't) |
+| ⌘V / ⌘I on a selected title you aren't typing in | Paste at the end / make the whole title italic (an empty title: what comes next is italic) |
+| ⌘F, ⌥⌘F | Find, Find and Replace |
+| ⌘G / ⇧⌘G | Next / previous match |
+| ⌘; | Next title with a misspelled word |
 | ⌘Z / ⇧⌘Z | Undo / redo |
 | Scroll / two-finger swipe | Pan the waveform |
 | ⌘ + scroll, or pinch | Zoom the waveform |
@@ -128,7 +142,7 @@ During playback, the last title the playhead reached stays highlighted, and the 
 
 **Waveform display.** Boxes show the full text of each title, wrapped to fit. The **Scale** slider makes quiet passages larger. The **dB** toggle shows loudness in decibels, so whispers stay visible next to loud sounds.
 
-**Timing colours.** Periwinkle means OK, amber means close to the limit, and red means over the limit, for both reading speed (CPS) and duration. Limits come from the project's standard and each language's overrides.
+**Timing colours.** Periwinkle means OK, pale gold means close to the limit, and red means over the limit, for both reading speed (CPS) and duration. Lilac means overlapping. Amber is only ever the selection. Limits come from the project's standard and each language's overrides.
 
 ## Code layout
 
@@ -139,13 +153,15 @@ Sources/Titles/
   Playback/                  PlaybackEngine protocol + AVFoundation engine (libmpv slots in here)
   Audio/                     audio decoding, waveform pyramid, scrub-audio grains
   Input/InputController.swift  modifier jog, nudges, wheel, spotting keys
+Sources/CHunspell/           Hunspell 1.7.2 spelling engine, unchanged (MPL 1.1; see its README)
+scripts/                     package-app.sh (the .app), fetch-dictionaries.sh (spelling dictionaries)
   Views/                     theme, top strip, home, sheets, card columns, video pane, title bar, waveform
 Tests/TitlesTests/           automated tests (run with `swift test`)
 ```
 
 ## Tests
 
-`swift test` runs about 150 checks in under a minute. They cover reading and writing SRT and WebVTT (old Windows encodings included), timecodes at every frame rate, line breaking in English and Croatian, formatting tags, undo, how languages pair up into rows, locked languages, Tab and nudging, splitting, importing files into a project, and the project file itself. A fake player stands in for the video, and nothing is written outside the temporary folder: the tests never touch your projects, backups or recent-projects list.
+`swift test` runs about 200 checks in under a minute. They cover reading and writing SRT and WebVTT (old Windows encodings included), timecodes at every frame rate, line breaking in English and Croatian, formatting tags, undo, how languages pair up into rows, locked languages, Tab and nudging, splitting, importing files into a project, the project file itself, italics, pasting, Find and Replace, spell checking (with a tiny test dictionary) and drawing a title near its neighbours. A fake player stands in for the video, and nothing is written outside the temporary folder: the tests never touch your projects, backups, recent-projects list or learned words.
 
 Not covered, because they need hands on a mouse: how dragging feels on the waveform (resistance, snapping), jog sensitivity, and anything drawn on screen.
 

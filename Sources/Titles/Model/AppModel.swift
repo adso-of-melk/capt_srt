@@ -165,6 +165,7 @@ final class AppModel: ObservableObject {
         if defaults.object(forKey: "replayAfterJog") != nil { replayAfterJog = defaults.bool(forKey: "replayAfterJog") }
         if defaults.object(forKey: "replayAfterResize") != nil { replayAfterResize = defaults.bool(forKey: "replayAfterResize") }
         if defaults.object(forKey: "autoLineBreaks") != nil { autoLineBreaks = defaults.bool(forKey: "autoLineBreaks") }
+        if defaults.object(forKey: "spellCheckOn") != nil { spellCheckOn = defaults.bool(forKey: "spellCheckOn") }
         loadRecentProjects()
         doc.playheadTime = { [weak self] in self?.clock.time ?? 0 }
         engine.onTimeChange = { [weak self] t in self?.tick(t) }
@@ -470,8 +471,16 @@ final class AppModel: ObservableObject {
     weak var mainWindow: NSWindow?
 
     /// False in the automated tests, so they never write a project, a backup or the list of
-    /// recent projects on the Mac they run on.
-    var persists = true
+    /// recent projects on the Mac they run on (nor a learned spelling).
+    var persists = true { didSet { SpellService.shared.persists = persists } }
+
+    /// Find and Replace (⌘F, ⌥⌘F).
+    lazy var find = FindController(model: self)
+
+    /// Misspelled words are underlined in red, in the cards and while typing.
+    @Published var spellCheckOn = true {
+        didSet { UserDefaults.standard.set(spellCheckOn, forKey: "spellCheckOn"); bump() }
+    }
 
     /// Clicking to place the playhead (ruler or empty waveform). While paused: landing
     /// inside a title selects it; landing in a gap clears the selection and scrolls the
@@ -499,16 +508,70 @@ final class AppModel: ObservableObject {
     /// Something to type into: a selected title, or a selected empty slot.
     var hasTypingTarget: Bool { doc.selectedID != nil || emptySlotRow != nil }
 
+    /// ⌘I on an empty title (or empty slot) that isn't being typed in: what you type or paste
+    /// into it next starts in italics. Holds the title's id (or the slot's row key); cleared
+    /// once used, or by ⌘I again.
+    @Published var italicNext: UUID?
+
     /// Typing while a title is selected (and nothing is being edited) starts editing it.
-    /// On an empty slot, it creates the title there first.
+    /// On an empty slot, it creates the title there first. The new text takes the style of
+    /// the title's last character, so typing after italics stays italic.
     func typeIntoSelected(_ characters: String) {
+        insertIntoSelected(characters)
+    }
+
+    /// ⌘V on a selected title (or empty slot) that isn't being typed in: the copied text goes
+    /// in as plain text, the same way typing does, then the lines are broken by the rules.
+    func pasteIntoSelected(_ pasted: String? = NSPasteboard.general.string(forType: .string)) {
+        let text = (pasted ?? "").replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            flash("Nothing to paste: copy some text first.")
+            return
+        }
+        // Added to words already there, it's a new word: a space goes between.
+        var piece = text
+        if let s = doc.selected, let last = Markup.plain(s.text).last, !last.isWhitespace { piece = " " + text }
+        guard let id = insertIntoSelected(piece) else { return }
+        autoBreakAfterPaste(id)
+        doc.endTextCoalescing()
+    }
+
+    /// ⌘I on a selected title that isn't being typed in: the whole title goes italic, or back.
+    /// An empty title opens for typing in italics; an empty slot remembers it for the title
+    /// that typing or pasting creates there.
+    func toggleItalicOnSelected() {
         if doc.selectedID == nil, let key = emptySlotRow {
-            createInRow(key, text: characters)
+            italicNext = italicNext == key ? nil : key
+            flash(italicNext == nil ? "Italics off." : "Italics on: type or paste the title.")
             return
         }
         guard let id = doc.selectedID, let s = doc.subtitle(id) else { return }
-        doc.setText(id, s.text + characters)
+        if Markup.plain(s.text).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            italicNext = italicNext == id ? nil : id
+            focusRequest = id
+            return
+        }
+        doc.endTextCoalescing()
+        doc.setText(id, RichMarkup.withItalic(!RichMarkup.isAllItalic(s.text), s.text))
+        doc.endTextCoalescing()
+    }
+
+    @discardableResult
+    private func insertIntoSelected(_ characters: String) -> UUID? {
+        if doc.selectedID == nil, let key = emptySlotRow {
+            let italic = italicNext == key
+            if italic { italicNext = nil }
+            createInRow(key, text: italic ? RichMarkup.appending(characters, to: "", italic: true) : characters)
+            return doc.selectedID ?? focusRequest
+        }
+        guard let id = doc.selectedID, let s = doc.subtitle(id) else { return nil }
+        let forced: Bool? = italicNext == id ? true : nil
+        if forced != nil { italicNext = nil }
+        doc.setText(id, RichMarkup.appending(characters, to: s.text, italic: forced))
         focusRequest = id
+        return id
     }
 
     /// Return: edit the selected title, or create one in the selected empty slot.

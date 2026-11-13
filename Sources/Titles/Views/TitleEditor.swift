@@ -65,6 +65,46 @@ enum RichMarkup {
         return out
     }
 
+    /// Adds text at the end of a title in the style of its last character (italic stays
+    /// italic). `italic` forces italics on or off for the new text.
+    static func appending(_ plain: String, to text: String, italic forced: Bool? = nil) -> String {
+        let a = NSMutableAttributedString(attributedString: attributed(text, size: 15))
+        var attrs = a.length > 0 ? a.attributes(at: a.length - 1, effectiveRange: nil) : baseAttributes(size: 15)
+        if let forced { attrs[italic] = forced ? true : nil }
+        attrs[.font] = refont(attrs, size: 15)
+        a.append(NSAttributedString(string: plain, attributes: attrs))
+        return markup(from: a)
+    }
+
+    /// Every visible character of the title is italic.
+    static func isAllItalic(_ text: String) -> Bool {
+        let a = attributed(text, size: 15)
+        let s = a.string as NSString
+        var all = true, any = false
+        a.enumerateAttribute(italic, in: NSRange(location: 0, length: a.length)) { v, r, _ in
+            // Spaces and codes like {\an8} don't count: only what the viewer reads.
+            guard !Markup.plain(s.substring(with: r)).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            any = true
+            if v == nil { all = false }
+        }
+        return any && all
+    }
+
+    /// The whole title in italics, or none of it.
+    static func withItalic(_ on: Bool, _ text: String) -> String {
+        let a = NSMutableAttributedString(attributedString: attributed(text, size: 15))
+        let r = NSRange(location: 0, length: a.length)
+        if on {
+            a.addAttribute(italic, value: true, range: r)
+            // Position and colour codes ({\an8}, <font …>) stay outside the italics.
+            for m in Markup.tagPattern.matches(in: a.string, range: r) { a.removeAttribute(italic, range: m.range) }
+        } else {
+            a.removeAttribute(italic, range: r)
+        }
+        a.enumerateAttributes(in: r) { attrs, sub, _ in a.addAttribute(.font, value: refont(attrs, size: 15), range: sub) }
+        return markup(from: a)
+    }
+
     /// Back to text with tags, properly nested.
     static func markup(from a: NSAttributedString) -> String {
         var out = ""
@@ -95,6 +135,79 @@ final class TitleTextView: NSTextView {
     var onFocusChange: ((Bool) -> Void)?
     var onWindow: (() -> Void)?
     var placeholder = "Type the title…"
+    /// A style switched with ⌘I at the cursor, waiting for the next character typed or pasted.
+    /// It survives the text being reloaded (shrinking to fit, live line breaks) until the
+    /// cursor moves or something is typed.
+    var pendingTyping: [NSAttributedString.Key: Any]?
+    var pendingLocation: Int?
+    /// The language spell check uses here (nil: spell check is off).
+    var spellLanguage: String?
+    var onLearn: ((String) -> Void)?
+    var onProjectWord: ((String) -> Void)?
+
+    /// Right-click on an underlined word: the dictionary's suggestions, Learn Spelling, and
+    /// Add to Project Words (names and places in this film).
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let standard = super.menu(for: event)
+        guard let lang = spellLanguage else { return standard }
+        let i = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
+        guard let r = SpellService.shared.misspelled(in: string, language: lang)
+            .first(where: { i >= $0.location && i <= $0.location + $0.length }) else { return standard }
+        let word = (string as NSString).substring(with: r)
+        let menu = NSMenu()
+        let guesses = SpellService.shared.suggestions(for: word, language: lang).prefix(8)
+        if guesses.isEmpty {
+            let none = NSMenuItem(title: "No Suggestions", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+        }
+        for g in guesses {
+            let item = NSMenuItem(title: g, action: #selector(useGuess(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = Guess(range: r, word: word, replacement: g)
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let learn = NSMenuItem(title: "Learn Spelling", action: #selector(learnWord(_:)), keyEquivalent: "")
+        learn.target = self
+        learn.representedObject = word
+        menu.addItem(learn)
+        let project = NSMenuItem(title: "Add to Project Words", action: #selector(addProjectWord(_:)), keyEquivalent: "")
+        project.target = self
+        project.representedObject = word
+        menu.addItem(project)
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Cut", action: #selector(cut(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Paste", action: #selector(paste(_:)), keyEquivalent: "")
+        return menu
+    }
+
+    private final class Guess: NSObject {
+        let range: NSRange, word: String, replacement: String
+        init(range: NSRange, word: String, replacement: String) {
+            self.range = range; self.word = word; self.replacement = replacement
+        }
+    }
+
+    @objc private func useGuess(_ item: NSMenuItem) {
+        guard let g = item.representedObject as? Guess, let storage = textStorage,
+              g.range.location + g.range.length <= storage.length,
+              storage.attributedSubstring(from: g.range).string == g.word,
+              shouldChangeText(in: g.range, replacementString: g.replacement) else { return }
+        // The new word keeps the old one's style (italic stays italic).
+        storage.replaceCharacters(in: g.range, with: g.replacement)
+        didChangeText()
+        setSelectedRange(NSRange(location: g.range.location + (g.replacement as NSString).length, length: 0))
+    }
+
+    @objc private func learnWord(_ item: NSMenuItem) {
+        if let w = item.representedObject as? String { onLearn?(w) }
+    }
+
+    @objc private func addProjectWord(_ item: NSMenuItem) {
+        if let w = item.representedObject as? String { onProjectWord?(w) }
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -118,8 +231,13 @@ final class TitleTextView: NSTextView {
         return ok
     }
 
-    /// Pasted text takes the title's own look, not the source's fonts and colours.
-    override func paste(_ sender: Any?) { pasteAsPlainText(sender) }
+    /// Pasted text takes the title's own look, not the source's fonts and colours: it is
+    /// typed in with the style at the cursor (italic after ⌘I, or after italic text).
+    override func paste(_ sender: Any?) {
+        guard let raw = NSPasteboard.general.string(forType: .string) else { return }
+        let text = raw.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        insertText(text, replacementRange: selectedRange())
+    }
 
     /// ⌘I: italic on or off for the selection (or for what you type next).
     func toggle(_ key: NSAttributedString.Key) {
@@ -129,6 +247,8 @@ final class TitleTextView: NSTextView {
             t[key] = t[key] == nil ? true : nil
             t[.font] = RichMarkup.refont(t, size: baseSize)
             typingAttributes = t
+            pendingTyping = t
+            pendingLocation = r.location
             return
         }
         guard let storage = textStorage, shouldChangeText(in: r, replacementString: nil) else { return }
@@ -192,12 +312,23 @@ struct TitleEditor: NSViewRepresentable {
     let onEndEditing: (_ rebalance: Bool) -> Void
     /// While typing: the title re-broken by the rules if a line ran over, else nil.
     let liveBreak: (String) -> String?
+    /// ⌘I was pressed on this (empty) title before it was being typed in: start in italics.
+    var startItalic: Bool = false
+    /// The italics asked for with `startItalic` have been used (or the text is no longer empty).
+    var onStartItalicUsed: () -> Void = {}
+    /// The language to spell check in, or nil when spell check is off.
+    var spellLanguage: String? = nil
+    /// What Find is looking for, to highlight it here too.
+    var findHighlight: FindHighlight? = nil
+    var onLearn: (String) -> Void = { _ in }
+    var onProjectWord: (String) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> TitleTextView {
         let tv = TitleTextView(usingTextLayoutManager: false)
         let c = context.coordinator
+        c.view = tv
         tv.delegate = c
         tv.isRichText = true
         tv.importsGraphics = false
@@ -213,12 +344,22 @@ struct TitleEditor: NSViewRepresentable {
         tv.textContainer?.lineFragmentPadding = 0
         tv.textContainer?.widthTracksTextView = true
         tv.insertionPointColor = Palette.amber
+        // The app checks spelling itself, in the title's own language (not the Mac's).
+        tv.isContinuousSpellCheckingEnabled = false
+        tv.isGrammarCheckingEnabled = false
+        tv.isAutomaticSpellingCorrectionEnabled = false
+        tv.isAutomaticTextReplacementEnabled = false
+        tv.onLearn = { [weak c] w in c?.parent.onLearn(w) }
+        tv.onProjectWord = { [weak c] w in c?.parent.onProjectWord(w) }
         tv.onFocusChange = { [weak c] focused in c?.focusChanged(focused) }
         tv.onWindow = { [weak c, weak tv] in
             guard let c, let tv, c.parent.focusNow else { return }
             DispatchQueue.main.async { c.takeFocus(tv) }
         }
         c.load(text, into: tv, size: fontSize)
+        c.syncStartItalic(tv)
+        tv.spellLanguage = spellLanguage
+        c.decorate(tv)
         return tv
     }
 
@@ -230,6 +371,9 @@ struct TitleEditor: NSViewRepresentable {
             c.load(text, into: tv, size: fontSize)
             c.restoreCaret(caret, in: tv)
         }
+        c.syncStartItalic(tv)
+        tv.spellLanguage = spellLanguage
+        c.decorate(tv)
         if focusNow { DispatchQueue.main.async { c.takeFocus(tv) } }
     }
 
@@ -259,26 +403,119 @@ struct TitleEditor: NSViewRepresentable {
             currentMarkup = markup
             fontSize = size
             (tv as? TitleTextView)?.baseSize = size
+            // Replacing the text can move the cursor; that isn't the user moving it.
+            let was = restoring
+            restoring = true
             tv.textStorage?.setAttributedString(RichMarkup.attributed(markup, size: size))
-            tv.typingAttributes = RichMarkup.baseAttributes(size: size)
+            restoring = was
+            applyTypingStyle(tv)
+        }
+
+        /// The style for the next character: one switched with ⌘I and not used yet, or else
+        /// the style of the character before the cursor (the first one at the start), so
+        /// italics never switch off just because the text was reloaded.
+        func applyTypingStyle(_ tv: NSTextView) {
+            var attrs: [NSAttributedString.Key: Any]
+            let loc = tv.selectedRange().location
+            if let pending = (tv as? TitleTextView)?.pendingTyping {
+                attrs = pending
+            } else if let storage = tv.textStorage, storage.length > 0 {
+                let i = min(max(loc - 1, 0), storage.length - 1)
+                attrs = storage.attributes(at: i, effectiveRange: nil)
+            } else {
+                attrs = RichMarkup.baseAttributes(size: fontSize)
+            }
+            attrs[.font] = RichMarkup.refont(attrs, size: fontSize)
+            tv.typingAttributes = attrs
+        }
+
+        /// ⌘I pressed on the title while it wasn't being typed in: an empty title starts in italics.
+        private var startItalicApplied = false
+        func syncStartItalic(_ tv: TitleTextView) {
+            if parent.startItalic, tv.string.isEmpty, !startItalicApplied {
+                var t = RichMarkup.baseAttributes(size: fontSize)
+                t[RichMarkup.italic] = true
+                t[.font] = RichMarkup.refont(t, size: fontSize)
+                tv.pendingTyping = t
+                tv.pendingLocation = 0
+                startItalicApplied = true
+                applyTypingStyle(tv)
+            } else if !parent.startItalic, startItalicApplied {
+                // ⌘I pressed again before typing: italics off.
+                startItalicApplied = false
+                tv.pendingTyping = nil
+                tv.pendingLocation = nil
+                applyTypingStyle(tv)
+            }
+        }
+
+        /// Red dotted underlines under misspelled words (not the word you're still typing),
+        /// and Find's matches in teal. Drawn over the text; nothing is added to it.
+        func decorate(_ tv: NSTextView) {
+            guard let lm = tv.layoutManager else { return }
+            let s = tv.string
+            let full = NSRange(location: 0, length: (s as NSString).length)
+            lm.removeTemporaryAttribute(.spellingState, forCharacterRange: full)
+            lm.removeTemporaryAttribute(.backgroundColor, forCharacterRange: full)
+            guard full.length > 0 else { return }
+            if let lang = parent.spellLanguage {
+                let caret = tv.selectedRange()
+                let typing = tv.window?.firstResponder === tv && caret.length == 0
+                for r in SpellService.shared.misspelled(in: s, language: lang) {
+                    if typing, caret.location >= r.location, caret.location <= r.location + r.length { continue }
+                    // 1 = NSSpellingStateSpellingFlag: the red dotted underline.
+                    lm.addTemporaryAttribute(.spellingState, value: 1, forCharacterRange: r)
+                }
+            }
+            if let f = parent.findHighlight {
+                let tags = Markup.tagPattern.matches(in: s, range: full).map(\.range)
+                let ranges = FindController.ranges(of: f.query, in: s, matchCase: f.matchCase, wholeWord: f.wholeWord)
+                    .filter { r in !tags.contains { NSIntersectionRange($0, r).length > 0 } }
+                for (k, r) in ranges.enumerated() {
+                    let alpha: CGFloat = k == f.current ? 0.6 : 0.25
+                    lm.addTemporaryAttribute(.backgroundColor, value: Palette.teal.withAlphaComponent(alpha),
+                                             forCharacterRange: r)
+                }
+            }
         }
 
         func takeFocus(_ tv: NSTextView) {
             guard parent.focusNow, let window = tv.window else { return }
             if window.firstResponder !== tv {
                 window.makeFirstResponder(tv)
+                restoring = true
                 tv.setSelectedRange(NSRange(location: (tv.string as NSString).length, length: 0))
+                restoring = false
+                applyTypingStyle(tv)
             }
             parent.onFocusTaken()
         }
 
+        weak var view: NSTextView?
+
         func focusChanged(_ focused: Bool) {
+            if let view { DispatchQueue.main.async { [weak self] in self?.decorate(view) } }
             if focused {
                 wrapped = false
                 manualBreak = false
             } else {
                 parent.onEndEditing(wrapped && !manualBreak)
                 wrapped = false
+            }
+        }
+
+        /// Set while the editor moves the cursor itself, so that isn't taken for the user moving it.
+        var restoring = false
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard !restoring, let tv = notification.object as? TitleTextView else { return }
+            // Moving off a word marks it if it's misspelled.
+            if tv.spellLanguage != nil { decorate(tv) }
+            guard let at = tv.pendingLocation else { return }
+            let r = tv.selectedRange()
+            if r.length != 0 || r.location != at {
+                tv.pendingTyping = nil
+                tv.pendingLocation = nil
             }
         }
 
@@ -289,6 +526,12 @@ struct TitleEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
+            // What was typed carries the waiting style now; from here on the text decides.
+            if let t = tv as? TitleTextView, t.pendingTyping != nil {
+                t.pendingTyping = nil
+                t.pendingLocation = nil
+            }
+            if parent.startItalic, !tv.string.isEmpty { parent.onStartItalicUsed() }
             var markup = RichMarkup.markup(from: tv.attributedString())
             if !tv.hasMarkedText(), let broken = parent.liveBreak(markup), broken != markup {
                 let caret = caretKey(in: tv)
@@ -300,6 +543,7 @@ struct TitleEditor: NSViewRepresentable {
             }
             currentMarkup = markup
             parent.text = markup
+            decorate(tv)
         }
 
         // The caret is remembered as "after the Nth visible character", so it lands in the
@@ -325,7 +569,12 @@ struct TitleEditor: NSViewRepresentable {
             if caret.afterSpace {
                 while i < s.length && Self.isSpace(s.character(at: i)) { i += 1 }
             }
+            restoring = true
             tv.setSelectedRange(NSRange(location: i, length: 0))
+            restoring = false
+            // A style waiting from ⌘I stays with the cursor where it now is.
+            if let t = tv as? TitleTextView, t.pendingTyping != nil { t.pendingLocation = i }
+            applyTypingStyle(tv)
         }
 
         private static func isSpace(_ c: unichar) -> Bool { c == 32 || c == 10 || c == 13 || c == 9 || c == 0xA0 }

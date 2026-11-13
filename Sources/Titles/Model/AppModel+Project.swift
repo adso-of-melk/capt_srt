@@ -54,6 +54,7 @@ extension AppModel {
             }
             cardScrollTarget = rowKey
         }
+        if find.isShown { find.refresh() }
         bump()
     }
 
@@ -130,6 +131,7 @@ extension AppModel {
         if built != rows { rows = built }
         if let key = emptySlotRow, !built.contains(where: { $0.key == key }) { emptySlotRow = nil }
         updateCardColumnWidth()
+        if find.isShown { find.refresh() }
         bump()
     }
 
@@ -447,6 +449,7 @@ extension AppModel {
         closeProject(save: saveCurrent)
         self.project = project
         for v in project.videos { v.tracks.forEach(attach) }
+        syncSpellingWords()
         showHome = false
         rememberProject()
         if let v = project.video(currentVideoID) ?? project.videos.first { switchVideo(v) }
@@ -953,6 +956,7 @@ extension AppModel {
     func applySettings(_ settings: ProjectSettings, name: String) {
         guard let project else { return }
         project.settings = settings
+        syncSpellingWords()
         if !name.isEmpty { project.name = name }
         rememberProject()
         bump()

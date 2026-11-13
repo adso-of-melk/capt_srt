@@ -122,6 +122,25 @@ struct TitlesCommands: Commands {
                 .keyboardShortcut("z", modifiers: [.command, .shift])
                 .disabled(noProject)
         }
+        CommandGroup(replacing: .textEditing) {
+            Group {
+                Button("Find…") { model.find.show(replace: false) }
+                    .keyboardShortcut("f")
+                Button("Find and Replace…") { model.find.show(replace: true) }
+                    .keyboardShortcut("f", modifiers: [.command, .option])
+                Button("Find Next") { model.find.next() }
+                    .keyboardShortcut("g")
+                Button("Find Previous") { model.find.previous() }
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+                Divider()
+                Button("Next Misspelling") { model.nextMisspelling() }
+                    .keyboardShortcut(";")
+            }
+            .disabled(noProject)
+            Toggle("Check Spelling", isOn: $model.spellCheckOn)
+            Button("Show Dictionaries Folder") { model.showDictionariesFolder() }
+            Button("Reload Dictionaries") { model.reloadDictionaries() }
+        }
         CommandGroup(after: .toolbar) {
             Toggle("All Languages on the Waveform", isOn: Binding(get: { model.allWaveBands }, set: { model.allWaveBands = $0 }))
                 .disabled(model.openTracks.count < 2)
@@ -163,7 +182,7 @@ struct TitlesCommands: Commands {
                 Button("Play / Pause  (⇧Space)") { model.togglePlay() }
                 Button("Split at Playhead  (or ⌘-click a box)") { model.splitAtPlayhead() }
                     .keyboardShortcut("b")
-                Button("Delete Title  (⌫ when not typing)") { model.deleteSelected() }
+                Button("Delete Title  (⌃⌫)") { model.deleteSelected() }
                 Button("Re-break Lines") { model.rebreakSelected() }
                     .keyboardShortcut("b", modifiers: [.command, .option])
                 Button("Re-break All Lines in \(model.focusedTrack?.language.name ?? "This Language")") { model.rebreakAll() }

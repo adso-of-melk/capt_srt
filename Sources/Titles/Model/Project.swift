@@ -50,10 +50,12 @@ struct ProjectSettings: Codable, Equatable, Sendable {
     /// {video} and {lang} are replaced: "Film.hr".
     var namingPattern = "{video}.{lang}"
     var masterLanguage = Language.named("en")
+    /// The film's own words (names, places) that spell check accepts, per language code.
+    var spellingWords: [String: [String]] = [:]
 
     enum CodingKeys: String, CodingKey {
         case standard, frameRate, startTimecode, timecodeDisplay, exportFormat, utf8BOM, crlf,
-             namingPattern, masterLanguage
+             namingPattern, masterLanguage, spellingWords
     }
 }
 
@@ -72,6 +74,7 @@ extension ProjectSettings {
         crlf = c.value(.crlf, or: crlf)
         namingPattern = c.value(.namingPattern, or: namingPattern)
         masterLanguage = c.value(.masterLanguage, or: masterLanguage)
+        spellingWords = c.value(.spellingWords, or: spellingWords)
     }
 }
 

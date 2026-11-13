@@ -25,6 +25,16 @@ APP="$STAGE/$NAME.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/Titles" "$APP/Contents/MacOS/$NAME"
 
+# Spelling dictionaries (scripts/fetch-dictionaries.sh), with their licences, so a test
+# build on another Mac checks Croatian, Serbian, Bosnian, Persian and Thai too.
+DICTS="$HOME/Library/Application Support/KPTN.SUB/Dictionaries"
+if ls "$DICTS"/*.dic >/dev/null 2>&1; then
+  mkdir -p "$APP/Contents/Resources/Dictionaries"
+  cp "$DICTS"/*.aff "$DICTS"/*.dic "$APP/Contents/Resources/Dictionaries/"
+  cp "$DICTS"/*.license.txt "$APP/Contents/Resources/Dictionaries/" 2>/dev/null || true
+  echo "Bundled dictionaries: $(cd "$DICTS" && ls *.dic | sed 's/\.dic$//' | tr '\n' ' ')"
+fi
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

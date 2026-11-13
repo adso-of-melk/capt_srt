@@ -142,7 +142,22 @@ final class InputController {
     }
 
     private var isEditingText: Bool {
-        NSApp.keyWindow?.firstResponder is NSTextView
+        NSApp.keyWindow?.firstResponder is TitleTextView
+    }
+
+    enum DeleteKeyAction { case delete, remind, nothing }
+
+    /// Delete or Forward Delete outside a card: only with Control does it delete the title.
+    static func deleteKeyAction(_ flags: NSEvent.ModifierFlags) -> DeleteKeyAction {
+        let f = flags.intersection([.shift, .control, .option, .command])
+        if f.subtracting(.shift) == [.control] { return .delete }
+        return f.isEmpty ? .remind : .nothing
+    }
+
+    /// Another text field (Find, Replace) has the keyboard: it gets every key.
+    private var isInOtherTextField: Bool {
+        guard let fr = NSApp.keyWindow?.firstResponder as? NSTextView else { return false }
+        return !(fr is TitleTextView)
     }
 
     // MARK: Keys
@@ -167,6 +182,16 @@ final class InputController {
         if e.keyCode == Key.escape, model.isJogging {
             endJog(commit: false)
             return nil
+        }
+
+        // Typing in the Find or Replace field: every key is the field's.
+        // Esc there closes Find.
+        if isInOtherTextField {
+            if e.keyCode == Key.escape, model.find.isShown, model.sheet == nil {
+                model.find.close()
+                return nil
+            }
+            return e
         }
 
         let plain = flags.subtracting(.shift).isEmpty
@@ -200,16 +225,6 @@ final class InputController {
                 editor.toggle(RichMarkup.italic)
                 return nil
             }
-            if flags == [.command], e.charactersIgnoringModifiers?.lowercased() == "i",
-               let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
-                let range = editor.selectedRange()
-                let selected = (editor.string as NSString).substring(with: range)
-                editor.insertText("<i>" + selected + "</i>", replacementRange: range)
-                if range.length == 0 {
-                    editor.setSelectedRange(NSRange(location: range.location + 3, length: 0))
-                }
-                return nil
-            }
             // ⌘V: once the paste lands, break the title's lines by the rules.
             if flags == [.command], e.charactersIgnoringModifiers?.lowercased() == "v",
                let id = model.doc.selectedID {
@@ -228,6 +243,24 @@ final class InputController {
                 return nil
             }
             return e
+        }
+
+        // A selected title that isn't being typed in (say the waveform was clicked last):
+        // ⌘V pastes into it and ⌘I switches italics, just as typing goes straight into it.
+        if flags == [.command], model.hasTypingTarget, let key = e.charactersIgnoringModifiers?.lowercased() {
+            if key == "v" { model.pasteIntoSelected(); return nil }
+            if key == "i" { model.toggleItalicOnSelected(); return nil }
+        }
+
+        // Control-Delete deletes the selected title. Plain Delete doesn't, so a title can't
+        // be lost by a stray key press.
+        if e.keyCode == Key.delete || e.keyCode == Key.forwardDelete {
+            switch Self.deleteKeyAction(flags) {
+            case .delete: model.deleteSelected()
+            case .remind: if model.doc.selectedID != nil { model.flash("To delete the title, press Control-Delete.") }
+            case .nothing: break
+            }
+            return nil
         }
 
         if flags.contains(.command) || flags.contains(.control) || flags.contains(.option) { return e }
@@ -258,9 +291,6 @@ final class InputController {
             return nil
         case Key.returnKey, Key.enter:
             model.editSelected()
-            return nil
-        case Key.delete, Key.forwardDelete:
-            model.deleteSelected()
             return nil
         default:
             // Typing while a title is selected starts editing it (the keystroke isn't lost).

@@ -24,6 +24,7 @@ struct CardPane: View {
                 .buttonStyle(.plain)
                 .help(model.textOnly ? "Show the picture and waveform (⇧⌘T)" : "Text only: hide the picture and waveform (⇧⌘T)")
             }
+            FindBarSlot(find: model.find)
             GeometryReader { geo in
                 let gap: CGFloat = 8
                 let count = CGFloat(max(1, tracks.count))
@@ -258,6 +259,8 @@ struct LanguageMenuItems: View {
             ForEach([16, 23, 32, 37, 39, 42, 47], id: \.self) { Text("\($0)").tag($0) }
         }
         Divider()
+        Text(model.spellingStatus(for: track.language))
+        Divider()
         Button("Move Column Left") { model.moveColumn(track, by: -1) }
         Button("Move Column Right") { model.moveColumn(track, by: 1) }
         Button("Close Column") { model.closeColumn(track) }
@@ -333,6 +336,26 @@ struct CardView: View {
         return size
     }
 
+    /// The title as it shows on a card: formatted, misspelled words underlined in red,
+    /// Find's matches in teal (the current one stronger). Ranges are in the visible text.
+    static func decorated(_ text: String, misspelled: [NSRange], matches: [NSRange], current: Int?) -> AttributedString {
+        var a = Markup.attributed(text)
+        for r in misspelled {
+            if let range = Range(r, in: a) { a[range].underlineStyle = Text.LineStyle(pattern: .dot, color: Theme.red) }
+        }
+        for (k, r) in matches.enumerated() {
+            if let range = Range(r, in: a) { a[range].backgroundColor = Theme.teal.opacity(k == current ? 0.6 : 0.25) }
+        }
+        return a
+    }
+
+    private func decoratedText() -> AttributedString {
+        let misspelled = model.spellCheckOn
+            ? SpellService.shared.misspelled(in: Markup.plain(sub.text), language: track.language.code) : []
+        let found = model.find.highlights(in: sub.id)
+        return Self.decorated(sub.text, misspelled: misspelled, matches: found.ranges, current: found.current)
+    }
+
     @ObservedObject var model: AppModel
     let track: Track
     let sub: Subtitle
@@ -406,12 +429,18 @@ struct CardView: View {
                             model.autoBreak(sub.id, rebalance: rebalance)
                             track.doc.endTextCoalescing()
                         },
-                        liveBreak: { model.liveBreak($0, track: track) }
+                        liveBreak: { model.liveBreak($0, track: track) },
+                        startItalic: model.italicNext == sub.id,
+                        onStartItalicUsed: { if model.italicNext == sub.id { model.italicNext = nil } },
+                        spellLanguage: model.spellCheckOn ? track.language.code : nil,
+                        findHighlight: model.find.editorHighlight(for: sub.id),
+                        onLearn: { model.learnWord($0, language: track.language.code) },
+                        onProjectWord: { model.addProjectWord($0, language: track.language.code) }
                     )
                     // A fresh editor for each title, so nothing of the last one carries over.
                     .id(sub.id)
                 } else {
-                    Text(sub.text.isEmpty ? AttributedString(" ") : Markup.attributed(sub.text))
+                    Text(sub.text.isEmpty ? AttributedString(" ") : decoratedText())
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -451,5 +480,90 @@ struct CardView: View {
             model.select(sub.id, seekToStart: true)
             model.focusRequest = sub.id
         })
+    }
+}
+
+/// Shows the Find bar above the cards while Find is open.
+private struct FindBarSlot: View {
+    @ObservedObject var find: FindController
+
+    var body: some View {
+        if find.isShown { FindBar(find: find) }
+    }
+}
+
+/// Find and Replace, above the cards: ⌘F, ⌥⌘F; Return finds the next, ⌘G / ⇧⌘G next and
+/// previous, Esc closes it.
+private struct FindBar: View {
+    @ObservedObject var find: FindController
+    @FocusState private var field: Field?
+    private enum Field { case query, replacement }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 6) {
+                Button {
+                    find.showsReplace.toggle()
+                } label: {
+                    Image(systemName: find.showsReplace ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Theme.textDim)
+                        .frame(width: 12)
+                }
+                .buttonStyle(.plain)
+                .help(find.showsReplace ? "Hide Replace" : "Show Replace (⌥⌘F)")
+                TextField("Find", text: $find.query)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($field, equals: .query)
+                    .onSubmit { find.next() }
+                Text(find.countText)
+                    .font(Theme.mono(10))
+                    .foregroundStyle(find.matches.isEmpty && !find.query.isEmpty ? Theme.red : Theme.textDim)
+                    .lineLimit(1)
+                    .fixedSize()
+                Button { find.previous() } label: { Image(systemName: "chevron.up") }
+                    .help("Previous (⇧⌘G)")
+                Button { find.next() } label: { Image(systemName: "chevron.down") }
+                    .help("Next (⌘G, or Return)")
+                Button { find.close() } label: { Image(systemName: "xmark") }
+                    .help("Close (Esc)")
+            }
+            if find.showsReplace {
+                HStack(spacing: 6) {
+                    Color.clear.frame(width: 12, height: 1)
+                    TextField("Replace with", text: $find.replacement)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($field, equals: .replacement)
+                        .onSubmit { find.replaceCurrent() }
+                    Button("Replace") { find.replaceCurrent() }
+                        .disabled(find.matches.isEmpty)
+                        .help("Replace this one and go to the next")
+                    Button("All") { _ = find.replaceAll() }
+                        .disabled(find.matches.isEmpty)
+                        .help("Replace every match (one undo per language)")
+                }
+            }
+            HStack(spacing: 10) {
+                Color.clear.frame(width: 2, height: 1)
+                Picker("", selection: $find.scope) {
+                    ForEach(FindScope.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                Toggle("Match Case", isOn: $find.matchCase)
+                Toggle("Whole Word", isOn: $find.wholeWord)
+                Spacer(minLength: 0)
+            }
+            .toggleStyle(.checkbox)
+        }
+        .controlSize(.small)
+        .font(Theme.label(11, .medium))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Theme.panelRaised.opacity(0.6))
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.rule).frame(height: 1) }
+        .onAppear { field = .query }
+        .onChange(of: find.focusTick) { _, _ in field = .query }
     }
 }

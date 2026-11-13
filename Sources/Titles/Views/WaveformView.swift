@@ -105,6 +105,8 @@ final class WaveformNSView: NSView {
     /// Where the pointer was when the title stopped at a barrier.
     private var heldLowerAt: Double?, heldUpperAt: Double?
     private var downPoint: CGPoint = .zero
+    /// Where a click on empty waveform landed (a plain click places the playhead there).
+    private var createClickTime: Double = 0
     private var didDrag = false
     private var swipeAccumulator: CGFloat = 0
 
@@ -456,9 +458,27 @@ final class WaveformNSView: NSView {
             let path = NSBezierPath(roundedRect: r, xRadius: 6, yRadius: 6)
             base.withAlphaComponent(isSel ? 0.24 : 0.13 * dim).setFill()
             path.fill()
-            (isSel ? Palette.amber : base.withAlphaComponent(0.75 * dim)).setStroke()
-            path.lineWidth = isSel ? 2 : 1
-            path.stroke()
+            if isSel {
+                // Selected: a thick amber frame around the box, with the title's own timing
+                // colour kept as a line just inside it, so its CPS status still shows.
+                Palette.amber.setStroke()
+                path.lineWidth = 3
+                path.stroke()
+                let inner = NSBezierPath(roundedRect: r.insetBy(dx: 2.5, dy: 2.5), xRadius: 4, yRadius: 4)
+                base.setStroke()
+                inner.lineWidth = 1.5
+                inner.stroke()
+            } else {
+                base.withAlphaComponent(0.75 * dim).setStroke()
+                path.lineWidth = 1
+                path.stroke()
+            }
+            // Find: a teal bar along the bottom of every title that has a match.
+            if model.find.isShown, !model.find.highlights(in: s.id).ranges.isEmpty {
+                Palette.teal.withAlphaComponent(dim).setFill()
+                NSBezierPath(roundedRect: CGRect(x: r.minX + 4, y: r.maxY - 6, width: max(2, r.width - 8), height: 3),
+                             xRadius: 1.5, yRadius: 1.5).fill()
+            }
 
             // Number pill, then the full title text (all lines), wrapped inside the box.
             NSGraphicsContext.saveGraphicsState()
@@ -819,8 +839,14 @@ final class WaveformNSView: NSView {
             }
             NSCursor.closedHand.set()
         case .empty:
-            let t0 = t(p.x)
-            drag = .creating(t0: t0, t1: t0)
+            // Drawing a new title: it stops at the minimum gap from its neighbours, just
+            // like stretching one (starting inside a gap moves the start out to it).
+            createClickTime = t(p.x)
+            let b = Self.createBarriers(at: createClickTime, in: model.doc.subtitles, gap: model.minGap)
+            resetResistance()
+            barrierLower = b.lower
+            barrierUpper = b.upper
+            drag = .creating(t0: b.start, t1: b.start)
         }
         needsDisplay = true
     }
@@ -868,7 +894,8 @@ final class WaveformNSView: NSView {
         case .ruler:
             model.placePlayhead(t(p.x))
         case let .creating(t0, _):
-            drag = .creating(t0: t0, t1: t(p.x))
+            let raw = t(p.x)
+            drag = .creating(t0: t0, t1: raw >= t0 ? stick(raw, lower: false) : stick(raw, lower: true))
         case let .moving(id, grab, length):
             var start = stick(max(0, t(p.x) - grab), lower: true)
             start = stick(start + length, lower: false) - length
@@ -903,7 +930,7 @@ final class WaveformNSView: NSView {
             if didDrag, abs(t1 - t0) >= 0.15 {
                 model.createTitle(start: min(t0, t1), end: max(t0, t1))
             } else {
-                model.placePlayhead(t0)
+                model.placePlayhead(createClickTime)
             }
         case let .moving(id, _, _):
             model.doc.commitLive()
@@ -920,12 +947,32 @@ final class WaveformNSView: NSView {
         }
     }
 
-    /// Notes where the neighbours are (minus the minimum gap) when a drag starts.
-    private func setBarriers(around id: UUID, model: AppModel) {
+    private func resetResistance() {
         holdingLower = false; holdingUpper = false
         brokeLower = false; brokeUpper = false
         heldLowerAt = nil; heldUpperAt = nil
         barrierLower = nil; barrierUpper = nil
+    }
+
+    /// Where a title drawn from `t0` stops: the minimum gap after the title before it and
+    /// before the title after it. A start inside one of those gaps moves out to it. Starting
+    /// inside a title, or where the gap leaves no room, nothing holds.
+    static func createBarriers(at t0: Double, in subs: [Subtitle], gap: Double)
+        -> (start: Double, lower: Double?, upper: Double?) {
+        let eps = 0.0005
+        if subs.contains(where: { $0.start < t0 - eps && $0.end > t0 + eps }) { return (t0, nil, nil) }
+        let lower = subs.filter { $0.end <= t0 + eps }.map(\.end).max().map { $0 + gap }
+        let upper = subs.filter { $0.start >= t0 - eps }.map(\.start).min().map { $0 - gap }
+        if let l = lower, let u = upper, l > u { return (t0, nil, nil) }
+        var start = t0
+        if let l = lower, start < l { start = l }
+        if let u = upper, start > u { start = u }
+        return (start, lower.map { min($0, start) }, upper.map { max($0, start) })
+    }
+
+    /// Notes where the neighbours are (minus the minimum gap) when a drag starts.
+    private func setBarriers(around id: UUID, model: AppModel) {
+        resetResistance()
         guard let s = model.doc.subtitle(id) else { return }
         let gap = model.minGap
         if let prev = model.doc.previous(of: id), prev.end <= s.start + 0.0005 {

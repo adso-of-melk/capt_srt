@@ -11,7 +11,10 @@ enum Palette {
     static let rule = NSColor(hex: 0x1C2742)
     static let lane = NSColor(hex: 0x080C17)
 
+    /// Selection and focus only ("you are here"). Never a timing status.
     static let amber = NSColor(hex: 0xFF9D4A)
+    /// Timing status "near the limit": a pale LCARS gold, kept well apart from amber.
+    static let gold = NSColor(hex: 0xFFCC66)
     static let peach = NSColor(hex: 0xFFC994)
     static let lilac = NSColor(hex: 0xC49BDB)
     static let periwinkle = NSColor(hex: 0x8EA1FF)
@@ -25,7 +28,7 @@ enum Palette {
     static func status(_ s: TimingStatus) -> NSColor {
         switch s {
         case .ok: return periwinkle
-        case .warn: return amber
+        case .warn: return gold
         case .bad: return red
         }
     }
@@ -37,6 +40,7 @@ enum Theme {
     static let panelRaised = Color(nsColor: Palette.panelRaised)
     static let rule = Color(nsColor: Palette.rule)
     static let amber = Color(nsColor: Palette.amber)
+    static let gold = Color(nsColor: Palette.gold)
     static let peach = Color(nsColor: Palette.peach)
     static let lilac = Color(nsColor: Palette.lilac)
     static let periwinkle = Color(nsColor: Palette.periwinkle)
@@ -153,7 +157,7 @@ struct ConsoleButtonStyle: ButtonStyle {
 extension SpotTimerStatus {
     var nsColor: NSColor {
         switch self {
-        case .short, .near: return Palette.amber
+        case .short, .near: return Palette.gold
         case .ok: return Palette.periwinkle
         case .over: return Palette.red
         }
