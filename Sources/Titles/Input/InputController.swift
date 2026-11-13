@@ -29,6 +29,8 @@ final class InputController {
     // nothing typed with it). Typing "I am" fast just types the space.
     private var shiftDownAt: TimeInterval = 0
     private var typedSinceShift = false
+    /// Space put the cursor into a card; its key repeats are swallowed until another key.
+    private var spaceOpenedCard = false
     private var shiftHeld = false
 
     init(model: AppModel) {
@@ -178,7 +180,7 @@ final class InputController {
         static let rightBracket: UInt16 = 30
     }
 
-    private func keyDown(_ e: NSEvent, flags: NSEvent.ModifierFlags, model: AppModel) -> NSEvent? {
+    func keyDown(_ e: NSEvent, flags: NSEvent.ModifierFlags, model: AppModel) -> NSEvent? {
         if e.keyCode == Key.escape, model.isJogging {
             endJog(commit: false)
             return nil
@@ -220,6 +222,9 @@ final class InputController {
         }
 
         if isEditingText {
+            // Space opened this card: holding it down doesn't type spaces into it.
+            if e.keyCode == Key.space, e.isARepeat, spaceOpenedCard { return nil }
+            spaceOpenedCard = false
             // ⌘I: italic on or off (in a card it shows as italic; it's saved as <i>…</i>).
             if flags == [.command], e.charactersIgnoringModifiers?.lowercased() == "i",
                let editor = NSApp.keyWindow?.firstResponder as? TitleTextView {
@@ -274,7 +279,12 @@ final class InputController {
 
         switch e.keyCode {
         case Key.space:
-            // Space alone does nothing outside a card; Shift+Space plays and pauses.
+            // Space outside a card puts the cursor at the end of the selected title's text (no
+            // space is typed), like Return; Shift+Space plays and pauses.
+            if !e.isARepeat, model.hasTypingTarget {
+                model.editSelected()
+                spaceOpenedCard = true
+            }
             return nil
         case Key.down:
             if model.clock.isPlaying {

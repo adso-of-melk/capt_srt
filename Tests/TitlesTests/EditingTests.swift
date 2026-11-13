@@ -123,6 +123,28 @@ final class EditingTests: XCTestCase {
         XCTAssertEqual(f.model.doc.selectedID, a.id)
     }
 
+    func testSpaceOutsideACardPutsTheCursorAtTheEndWithoutTypingASpace() throws {
+        let a = sub(1, 2, "Hello")
+        let f = makeFixture([("en", [a])])
+        f.model.select(a.id)
+        let input = InputController(model: f.model)
+        func space(repeat: Bool = false) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                           windowNumber: 0, context: nil, characters: " ",
+                                           charactersIgnoringModifiers: " ", isARepeat: `repeat`, keyCode: 49))
+        }
+        XCTAssertNil(input.keyDown(try space(), flags: [], model: f.model))   // the key is used up
+        XCTAssertEqual(f.model.focusRequest, a.id)                             // the card takes the cursor
+        XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "Hello")                 // and no space is typed
+
+        // Nothing selected: Space still does nothing.
+        f.model.focusRequest = nil
+        f.model.doc.selectedID = nil
+        f.model.emptySlotRow = nil
+        XCTAssertNil(input.keyDown(try space(), flags: [], model: f.model))
+        XCTAssertNil(f.model.focusRequest)
+    }
+
     func testTabWithNothingSelectedStartsFromThePlayhead() {
         let a = sub(1, 2, "A"), b = sub(5, 6, "B")
         let f = makeFixture([("en", [a, b]), ("hr", [sub(3, 4, "x")])])
@@ -281,7 +303,7 @@ final class EditingTests: XCTestCase {
 
     func testTypingOnAnEmptySlotCreatesTheTitleThere() throws {
         let a = sub(1, 2, "Hello")
-        let f = makeFixture([("en", [a]), ("hr", [])])
+        let f = makeFixture([("en", [a])])
         f.model.select(a.id)
         f.model.focusTrack(f.hr.id, edit: false)
         XCTAssertNil(f.hr.doc.selectedID)

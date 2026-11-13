@@ -45,6 +45,7 @@ Each video has a **master** language (★) and any number of others, shown side 
 
 - **A small "esc" while you type.** The card with the text cursor shows a little "esc" key on the lower edge of its text box. Esc takes the cursor out; then ⌘I makes the whole title italic again, ⌘V pastes at its end, and Tab, ⌘I runs through titles quickly.
 - **Language Options…** in each language's menu: change the language (or its code and name), master and timing, its own reading speed, characters per line and lines, spell check with its project words, and export text encoding (UTF-8 or an older Windows code page) plus right-to-left marks for Arabic, Hebrew and Persian.
+- **Space puts the cursor back in the card.** With no cursor active (after Esc), Space puts it at the end of the selected title's text, without typing a space. Shift+Space still plays and pauses.
 - **Shift+Tab goes back to the start of this title first**, like a player's Back button; pressed again at the start (or right after tabbing onto it), it goes to the previous title.
 - **Italics show on the waveform.** Italic (and bold) words in a title are drawn that way in its waveform box too, as in the card.
 
@@ -129,7 +130,7 @@ Dragging the body of a box moves the whole title. After adjusting an edge, the w
 | Tab / Shift+Tab | Next / previous title in the focused language (rows where it has no title are skipped). The playhead jumps to it, and editing carries over if you were typing. Shift+Tab works like a player's Back button: with the playhead part way into the title, it first goes back to that title's start. With a group selected, Tab lets go of it and moves past it |
 | ← / → | Step one frame back / forward (Shift: one second) |
 | ↑ / ↓ while paused | Select the previous / next title and jump to it |
-| Return, or just start typing | Edit the selected card's text (cursor at the end), or fill a selected empty slot |
+| Return, Space, or just start typing | Edit the selected card's text (cursor at the end; Space types no space), or fill a selected empty slot |
 | Return while typing | New line in the title (Esc leaves the text; Tab goes on to the next card) |
 | ⌥⌘B | Re-break the selected title's lines |
 | ⇧⌥⌘B | Re-break every title in the focused language |
