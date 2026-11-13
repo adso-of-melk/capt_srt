@@ -14,6 +14,9 @@ struct LanguageOptions: Equatable {
     var makeMaster: Bool
     var locked: Bool
     var removedWords: Set<String> = []
+    /// nil: UTF-8.
+    var exportEncoding: String?
+    var directionMarks: Bool
 
     @MainActor init(_ track: Track, isMaster: Bool) {
         language = track.language
@@ -23,6 +26,8 @@ struct LanguageOptions: Equatable {
         spellCheck = track.spellCheck
         makeMaster = isMaster
         locked = track.locked
+        exportEncoding = track.exportEncoding
+        directionMarks = track.directionMarks
     }
 }
 
@@ -1004,6 +1009,13 @@ extension AppModel {
     }
 
     /// Spell check on or off for one language.
+    func setExportOptions(_ track: Track, encoding: String?, directionMarks: Bool) {
+        guard track.exportEncoding != encoding || track.directionMarks != directionMarks else { return }
+        track.exportEncoding = encoding
+        track.directionMarks = directionMarks
+        saveProject()
+    }
+
     func setSpellCheck(_ track: Track, _ on: Bool) {
         guard track.spellCheck != on else { return }
         track.spellCheck = on
@@ -1020,6 +1032,7 @@ extension AppModel {
         changeLanguage(track, to: o.language)
         setOverrides(track, maxCPS: .some(o.maxCPS), maxChars: .some(o.maxChars), maxLines: .some(o.maxLines))
         setSpellCheck(track, o.spellCheck)
+        setExportOptions(track, encoding: o.exportEncoding, directionMarks: o.directionMarks)
         if o.makeMaster, video?.masterTrackID != track.id {
             setMaster(track)
         } else if video?.masterTrackID != track.id, o.locked != track.locked {
@@ -1046,7 +1059,12 @@ extension AppModel {
 
     // MARK: Export
 
-    struct ExportItem { let name: String; let data: Data }
+    struct ExportItem {
+        let name: String
+        let data: Data
+        /// Characters the language's code page couldn't hold (written as "?").
+        var lost = 0
+    }
 
     func exportItems(allLanguages: Bool, allVideos: Bool, format: ExportFormat) -> [ExportItem] {
         guard let project, let video else { return [] }
@@ -1060,8 +1078,10 @@ extension AppModel {
                     .replacingOccurrences(of: "{video}", with: ProjectStore.sanitize(v.name))
                     .replacingOccurrences(of: "{lang}", with: t.language.code)
                     .replacingOccurrences(of: "{project}", with: ProjectStore.sanitize(project.name))
-                let data = SubtitleFormats.data(t.doc.subtitles, format: format, bom: s.utf8BOM, crlf: s.crlf)
-                items.append(ExportItem(name: "\(base).\(format.rawValue)", data: data))
+                let out = SubtitleFormats.encoded(t.doc.subtitles, format: format, bom: s.utf8BOM, crlf: s.crlf,
+                                                  encoding: t.exportEncoding,
+                                                  directionMarks: t.directionMarks && t.language.isRightToLeft)
+                items.append(ExportItem(name: "\(base).\(format.rawValue)", data: out.data, lost: out.lost))
             }
         }
         return items
@@ -1080,6 +1100,7 @@ extension AppModel {
             panel.roomy()
             guard panel.runModal() == .OK, let url = panel.url else { return }
             write(items[0].data, to: url)
+            warnAboutLostCharacters(items)
             return
         }
         let panel = NSOpenPanel()
@@ -1102,6 +1123,18 @@ extension AppModel {
         var written = 0
         for item in items where write(item.data, to: folder.appendingPathComponent(item.name), quiet: true) { written += 1 }
         flash("Exported \(written) file\(written == 1 ? "" : "s") to \(folder.lastPathComponent)")
+        warnAboutLostCharacters(items)
+    }
+
+    /// A code page can't hold every character: say so, rather than leave "?" to be found later.
+    private func warnAboutLostCharacters(_ items: [ExportItem]) {
+        let lossy = items.filter { $0.lost > 0 }
+        guard !lossy.isEmpty else { return }
+        let alert = NSAlert()
+        alert.messageText = "Some characters couldn't be written"
+        alert.informativeText = lossy.map { "\($0.name): \($0.lost) character\($0.lost == 1 ? "" : "s") became “?”" }
+            .joined(separator: "\n") + "\n\nThe language's text encoding is set in Language Options. UTF-8 holds every character."
+        alert.runModal()
     }
 
     @discardableResult

@@ -160,6 +160,70 @@ enum SubtitleFormats {
         return out
     }
 
+    /// Older code pages a language can be exported in (Language Options), for clients whose
+    /// systems still need one. nil is UTF-8.
+    struct LegacyEncoding: Identifiable, Sendable {
+        let name: String
+        let title: String
+        var id: String { name }
+    }
+
+    static let legacyEncodings: [LegacyEncoding] = [
+        LegacyEncoding(name: "windows-1250", title: "Windows-1250 · Central European (Croatian, Bosnian, Serbian Latin, Slovenian, Polish, Czech, Hungarian)"),
+        LegacyEncoding(name: "windows-1251", title: "Windows-1251 · Cyrillic (Serbian, Macedonian, Bulgarian, Russian, Ukrainian)"),
+        LegacyEncoding(name: "windows-1252", title: "Windows-1252 · Western European"),
+        LegacyEncoding(name: "windows-1253", title: "Windows-1253 · Greek"),
+        LegacyEncoding(name: "windows-1254", title: "Windows-1254 · Turkish"),
+        LegacyEncoding(name: "windows-1255", title: "Windows-1255 · Hebrew"),
+        LegacyEncoding(name: "windows-1256", title: "Windows-1256 · Arabic, Persian"),
+        LegacyEncoding(name: "windows-1257", title: "Windows-1257 · Baltic"),
+        LegacyEncoding(name: "windows-874", title: "Windows-874 · Thai")
+    ]
+
+    /// Core Foundation's numbers for the Windows code pages, in case a name isn't recognised.
+    private static let windowsCodePages: [String: CFStringEncoding] = [
+        "windows-1250": 0x0501, "windows-1251": 0x0502, "windows-1252": 0x0500, "windows-1253": 0x0503,
+        "windows-1254": 0x0504, "windows-1255": 0x0505, "windows-1256": 0x0506, "windows-1257": 0x0507,
+        "windows-874": 0x041D
+    ]
+
+    /// The encoding for a charset name such as "windows-1250".
+    static func encoding(named name: String) -> String.Encoding? {
+        var cf = CFStringConvertIANACharSetNameToEncoding(name as CFString)
+        if cf == kCFStringEncodingInvalidId, let known = windowsCodePages[name.lowercased()] { cf = known }
+        guard cf != kCFStringEncodingInvalidId else { return nil }
+        return String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(cf))
+    }
+
+    /// Right-to-left text: a right-to-left mark (U+200F) at both ends of every line, so a
+    /// line keeps its direction in any player and punctuation shows on the correct side.
+    /// Marks already there are replaced, never doubled.
+    static func withDirectionMarks(_ text: String) -> String {
+        let controls = CharacterSet(charactersIn: "\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}")
+        return text.components(separatedBy: "\n").map { line -> String in
+            let bare = String(String.UnicodeScalarView(line.unicodeScalars.filter { !controls.contains($0) }))
+                .trimmingCharacters(in: .whitespaces)
+            return bare.isEmpty ? bare : "\u{200F}" + bare + "\u{200F}"
+        }.joined(separator: "\n")
+    }
+
+    /// A file's bytes, as a language's export options ask: UTF-8 (optionally with a
+    /// byte-order mark) or an older code page, and right-to-left marks. `lost` counts
+    /// characters the code page can't hold (written as "?").
+    static func encoded(_ subs: [Subtitle], format: ExportFormat, bom: Bool, crlf: Bool,
+                        encoding name: String? = nil, directionMarks: Bool = false) -> (data: Data, lost: Int) {
+        let marked = directionMarks ? subs.map { s -> Subtitle in var s = s; s.text = withDirectionMarks(s.text); return s } : subs
+        guard let name, let enc = encoding(named: name), enc != .utf8 else {
+            return (data(marked, format: format, bom: bom, crlf: crlf), 0)
+        }
+        var text = format == .srt ? srt(marked) : vtt(marked)
+        text = text.replacingOccurrences(of: "\r\n", with: "\n")
+        if crlf { text = text.replacingOccurrences(of: "\n", with: "\r\n") }
+        if let exact = text.data(using: enc) { return (exact, 0) }
+        let lost = text.filter { String($0).data(using: enc) == nil }.count
+        return (text.data(using: enc, allowLossyConversion: true) ?? Data(text.utf8), lost)
+    }
+
     /// A file's bytes: UTF-8 (optionally with a byte-order mark), CRLF or LF line endings.
     static func data(_ subs: [Subtitle], format: ExportFormat, bom: Bool, crlf: Bool) -> Data {
         var text = format == .srt ? srt(subs) : vtt(subs)

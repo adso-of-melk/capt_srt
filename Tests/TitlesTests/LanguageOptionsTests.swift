@@ -74,6 +74,61 @@ final class LanguageOptionsTests: XCTestCase {
         XCTAssertEqual(f.video.masterTrackID, f.hr.id)
     }
 
+    // MARK: Export
+
+    func testEveryOfferedCodePageIsKnown() {
+        for e in SubtitleFormats.legacyEncodings {
+            XCTAssertNotNil(SubtitleFormats.encoding(named: e.name), e.name)
+        }
+    }
+
+    func testALanguageCanExportInAnOlderCodePage() throws {
+        let f = makeFixture([("en", [sub(1, 2, "Hello")]), ("hr", [sub(1, 2, "Čađa i šljive")])])
+        var o = LanguageOptions(f.hr, isMaster: false)
+        o.exportEncoding = "windows-1250"
+        f.model.applyLanguageOptions(f.hr, o)
+
+        let items = f.model.exportItems(allLanguages: true, allVideos: false, format: .srt)
+        let hr = try XCTUnwrap(items.first { $0.name == "Film.hr.srt" })
+        let en = try XCTUnwrap(items.first { $0.name == "Film.en.srt" })
+        XCTAssertEqual(hr.lost, 0)
+        let text = try XCTUnwrap(String(data: hr.data, encoding: .windowsCP1250))
+        XCTAssertTrue(text.contains("Čađa i šljive"))
+        XCTAssertNil(String(data: hr.data, encoding: .utf8))          // really not UTF-8
+        XCTAssertNotNil(String(data: en.data, encoding: .utf8))       // other languages unchanged
+    }
+
+    func testCharactersACodePageCantHoldAreCounted() {
+        let out = SubtitleFormats.encoded([sub(1, 2, "Kyoto 京都")], format: .srt, bom: false, crlf: false,
+                                          encoding: "windows-1250")
+        XCTAssertEqual(out.lost, 2)
+        XCTAssertTrue(String(decoding: out.data, as: UTF8.self).contains("Kyoto ??"))
+    }
+
+    func testRightToLeftMarksGoOnEveryLineOnce() {
+        let rlm = "\u{200F}"
+        let marked = SubtitleFormats.withDirectionMarks("שלום!\n\(rlm)מה שלומך?\(rlm) ")
+        XCTAssertEqual(marked, "\(rlm)שלום!\(rlm)\n\(rlm)מה שלומך?\(rlm)")
+        XCTAssertEqual(SubtitleFormats.withDirectionMarks(marked), marked)
+
+        XCTAssertTrue(Language.named("ar").isRightToLeft)
+        XCTAssertTrue(Language.named("he").isRightToLeft)
+        XCTAssertTrue(Language.named("fa").isRightToLeft)
+        XCTAssertFalse(Language.named("hr").isRightToLeft)
+
+        // Only when asked, and only for a right-to-left language.
+        let f = makeFixture([("en", [sub(1, 2, "Hi!")]), ("he", [sub(1, 2, "שלום!")])])
+        let plain = f.model.exportItems(allLanguages: true, allVideos: false, format: .srt)
+        XCTAssertFalse(plain.contains { String(decoding: $0.data, as: UTF8.self).contains(rlm) })
+        f.video.tracks[1].directionMarks = true
+        f.en.directionMarks = true
+        let items = f.model.exportItems(allLanguages: true, allVideos: false, format: .srt)
+        let he = items.first { $0.name == "Film.he.srt" }.map { String(decoding: $0.data, as: UTF8.self) } ?? ""
+        let en = items.first { $0.name == "Film.en.srt" }.map { String(decoding: $0.data, as: UTF8.self) } ?? ""
+        XCTAssertTrue(he.contains("\(rlm)שלום!\(rlm)"))
+        XCTAssertFalse(en.contains(rlm))
+    }
+
     func testOlderProjectsOpenWithSpellCheckOnAndTheStandardLineCount() throws {
         let json = #"{"id":"\#(UUID().uuidString)","language":{"code":"hr","name":"Croatian"},"locked":false,"subtitles":[]}"#
         let file = try JSONDecoder().decode(TrackFile.self, from: Data(json.utf8))
@@ -81,10 +136,17 @@ final class LanguageOptionsTests: XCTestCase {
         XCTAssertTrue(track.spellCheck)
         XCTAssertNil(track.maxLines)
 
+        XCTAssertNil(track.exportEncoding)
+        XCTAssertFalse(track.directionMarks)
+
         track.spellCheck = false
         track.maxLines = 3
+        track.exportEncoding = "windows-1250"
+        track.directionMarks = true
         let again = Track(try JSONDecoder().decode(TrackFile.self, from: JSONEncoder().encode(track.file)))
         XCTAssertFalse(again.spellCheck)
         XCTAssertEqual(again.maxLines, 3)
+        XCTAssertEqual(again.exportEncoding, "windows-1250")
+        XCTAssertTrue(again.directionMarks)
     }
 }

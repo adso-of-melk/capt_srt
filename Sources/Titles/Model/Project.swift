@@ -9,6 +9,12 @@ struct Language: Hashable, Identifiable, Codable, Sendable {
     var name: String
     var id: String { code }
 
+    /// Written right to left (Arabic, Hebrew, Persian, Urdu…).
+    var isRightToLeft: Bool {
+        let base = code.split(separator: "-").first.map { $0.lowercased() } ?? code.lowercased()
+        return ["ar", "he", "iw", "fa", "ur", "yi", "ps", "ckb", "dv", "sd", "ug"].contains(base)
+    }
+
     static let common: [Language] = [
         ("en", "English"), ("en-GB", "English (UK)"), ("hr", "Croatian"), ("sr-Latn", "Serbian (Latin)"),
         ("sr-Cyrl", "Serbian (Cyrillic)"), ("bs", "Bosnian"), ("sl", "Slovenian"), ("mk", "Macedonian"),
@@ -89,6 +95,10 @@ struct TrackFile: Codable, Sendable {
     var maxLines: Int?
     /// true: spell check is off for this language (absent in older projects: on).
     var spellCheckOff: Bool?
+    /// An older code page for this language's exported files (nil: UTF-8).
+    var exportEncoding: String?
+    /// Right-to-left marks on each line when exporting.
+    var directionMarks: Bool?
     var subtitles: [Subtitle]
 }
 
@@ -125,6 +135,10 @@ final class Track: ObservableObject, Identifiable {
     @Published var maxLines: Int?
     /// Spell check for this language (Language Options). The app-wide switch is in the Edit menu.
     @Published var spellCheck = true
+    /// An older code page for exports (nil: UTF-8, with the project's BOM setting).
+    @Published var exportEncoding: String?
+    /// Add right-to-left marks to each line on export (right-to-left languages only).
+    @Published var directionMarks = false
     let doc = SubtitleDocument()
 
     init(id: UUID = UUID(), language: Language, locked: Bool = false, subtitles: [Subtitle] = []) {
@@ -141,12 +155,15 @@ final class Track: ObservableObject, Identifiable {
         maxCharsPerLine = f.maxCharsPerLine
         maxLines = f.maxLines
         spellCheck = f.spellCheckOff != true
+        exportEncoding = f.exportEncoding
+        directionMarks = f.directionMarks ?? false
     }
 
     var file: TrackFile {
         TrackFile(id: id, language: language, locked: locked, maxCPS: maxCPS,
                   maxCharsPerLine: maxCharsPerLine, maxLines: maxLines,
-                  spellCheckOff: spellCheck ? nil : true, subtitles: doc.subtitles)
+                  spellCheckOff: spellCheck ? nil : true, exportEncoding: exportEncoding,
+                  directionMarks: directionMarks ? true : nil, subtitles: doc.subtitles)
     }
 
     /// The project standard with this language's own overrides.

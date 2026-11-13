@@ -35,7 +35,7 @@ Each video has a **master** language (★) and any number of others, shown side 
 - **Import Language…** reads an SRT or VTT and links each title to the master title it overlaps most.
 - Rows line up by link, not by number, so an empty slot keeps later rows aligned. Double-click an empty slot, or select it and start typing, to make a title with that row's timing.
 - Column headers have a menu (⋯ or right-click): **Language Options…**, lock or unlock, make master, move left or right, close, delete. **+** reopens a closed column or adds one.
-- **Language Options…** changes which language a column is (from the list, or any code and name; spell check, line breaking and the export file name follow, and the project words go along), makes it the master or sets free/locked timing, sets its own reading speed, characters per line and lines, and turns spell check on or off for that language, with its project words listed to review or remove.
+- **Language Options…** changes which language a column is (from the list, or any code and name; spell check, line breaking and the export file name follow, and the project words go along), makes it the master or sets free/locked timing, sets its own reading speed, characters per line and lines, turns spell check on or off for that language, with its project words listed to review or remove, and sets how it exports: UTF-8 or an older code page (Windows-1250 Central European, 1251 Cyrillic, 1252–1257, 874 Thai; characters a code page can't hold become “?” and export says how many), and for right-to-left languages (Arabic, Hebrew, Persian…) right-to-left marks on each line so punctuation lands on the correct side.
 - **⌘L / ⇧⌘L** move focus to the next / previous language (wrapping), and **⌘1–⌘9** jump to a column, even while typing. The focused language is the one you edit, in the cards and the waveform.
 - The waveform shows the other open languages as slim lanes above it. Click a lane to focus that language. The selected row is outlined in every lane.
 - **Text Only (⇧⌘T)** hides picture and waveform, leaving the columns and a slim transport.
@@ -44,7 +44,7 @@ Each video has a **master** language (★) and any number of others, shown side 
 ## Coming in the next build
 
 - **A small "esc" while you type.** The card with the text cursor shows a little "esc" key on the lower edge of its text box. Esc takes the cursor out; then ⌘I makes the whole title italic again, ⌘V pastes at its end, and Tab, ⌘I runs through titles quickly.
-- **Language Options…** in each language's menu: change the language (or its code and name), master and timing, its own reading speed, characters per line and lines, and spell check with its project words.
+- **Language Options…** in each language's menu: change the language (or its code and name), master and timing, its own reading speed, characters per line and lines, spell check with its project words, and export text encoding (UTF-8 or an older Windows code page) plus right-to-left marks for Arabic, Hebrew and Persian.
 - **Shift+Tab goes back to the start of this title first**, like a player's Back button; pressed again at the start (or right after tabbing onto it), it goes to the previous title.
 - **Italics show on the waveform.** Italic (and bold) words in a title are drawn that way in its waveform box too, as in the card.
 

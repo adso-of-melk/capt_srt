@@ -438,6 +438,21 @@ struct LanguageOptionsSheet: View {
                     }
                 }
             }
+            Section("Export") {
+                Picker("Text encoding", selection: o.exportEncoding) {
+                    Text("UTF-8 (recommended)").tag(String?.none)
+                    ForEach(SubtitleFormats.legacyEncodings) { Text($0.title).tag(String?.some($0.name)) }
+                }
+                Text(v.exportEncoding == nil
+                     ? "UTF-8 holds every language. Choose an older code page only if a client's system needs it."
+                     : "Characters this code page can't hold are written as “?”, and export tells you how many.")
+                    .font(Theme.label(11, .regular)).foregroundStyle(Theme.textDim)
+                if v.language.isRightToLeft {
+                    Toggle("Add right-to-left marks to each line", isOn: o.directionMarks)
+                    Text("Keeps each line right to left in every player, so punctuation lands on the correct side.")
+                        .font(Theme.label(11, .regular)).foregroundStyle(Theme.textDim)
+                }
+            }
         }
         .formStyle(.grouped)
     }
