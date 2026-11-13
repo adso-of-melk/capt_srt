@@ -538,6 +538,24 @@ final class AppModel: ObservableObject {
         doc.endTextCoalescing()
     }
 
+    /// ⌘I, the same whether or not the cursor is in the card: with words selected in the
+    /// card, just those; otherwise the whole title (an empty one: what's typed next).
+    /// ⇧⌘I (`nextOnly`): italics for what you type next, at the cursor or at the end.
+    func italicCommand(nextOnly: Bool = false) {
+        if let editor = mainWindow?.firstResponder as? TitleTextView, !editor.string.isEmpty,
+           nextOnly || editor.selectedRange().length > 0 {
+            editor.toggle(RichMarkup.italic)
+            return
+        }
+        if nextOnly, doc.selectedID != nil, let id = doc.selectedID, let s = doc.subtitle(id),
+           !Markup.plain(s.text).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            italicNext = italicNext == id ? nil : id
+            flash(italicNext == nil ? "Italics off for what you type next." : "What you type or paste next is italic.")
+            return
+        }
+        toggleItalicOnSelected()
+    }
+
     /// ⌘I on a selected title that isn't being typed in: the whole title goes italic, or back.
     /// An empty title opens for typing in italics; an empty slot remembers it for the title
     /// that typing or pasting creates there.

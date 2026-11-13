@@ -196,6 +196,22 @@ final class ItalicsPasteTests: XCTestCase {
         XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "<i>Hello there</i>")
     }
 
+    func testCommandIIsTheWholeTitleAndShiftCommandIIsWhatYouTypeNext() {
+        let a = sub(1, 2, "Hello")
+        let f = makeFixture([("en", [a])])
+        f.model.select(a.id)
+        f.model.italicCommand()
+        XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "<i>Hello</i>")
+        f.model.italicCommand()
+        XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "Hello")
+        f.model.italicCommand(nextOnly: true)
+        XCTAssertEqual(f.model.italicNext, a.id)
+        f.model.typeIntoSelected(" there")
+        XCTAssertEqual(Markup.plain(f.en.doc.subtitle(a.id)?.text ?? ""), "Hello there")
+        XCTAssertTrue(f.en.doc.subtitle(a.id)?.text.hasPrefix("Hello<i>") ?? false)
+        XCTAssertNil(f.model.italicNext)
+    }
+
     func testTypingIntoASelectedItalicTitleStaysItalic() {
         let a = sub(1, 2, "<i>Hello</i>")
         let f = makeFixture([("en", [a])])

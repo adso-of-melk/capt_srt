@@ -219,16 +219,9 @@ final class InputController {
         }
 
         if isEditingText {
-            // ⌘I: italic on or off (in a card it shows as italic; it's saved as <i>…</i>).
-            if flags == [.command], e.charactersIgnoringModifiers?.lowercased() == "i",
-               let editor = NSApp.keyWindow?.firstResponder as? TitleTextView {
-                // An empty title's italics belong to the title (its card shows a badge), so
-                // they hold until typing starts, however the card is reloaded.
-                if editor.string.isEmpty, model.doc.selectedID != nil {
-                    model.toggleItalicOnSelected()
-                } else {
-                    editor.toggle(RichMarkup.italic)
-                }
+            // ⌘I: the whole title, or just the selected words. ⇧⌘I: what you type next.
+            if flags == [.command] || flags == [.command, .shift], e.charactersIgnoringModifiers?.lowercased() == "i" {
+                model.italicCommand(nextOnly: flags.contains(.shift))
                 return nil
             }
             // ⌘V: once the paste lands, break the title's lines by the rules.
@@ -255,7 +248,11 @@ final class InputController {
         // ⌘V pastes into it and ⌘I switches italics, just as typing goes straight into it.
         if flags == [.command], model.hasTypingTarget, let key = e.charactersIgnoringModifiers?.lowercased() {
             if key == "v" { model.pasteIntoSelected(); return nil }
-            if key == "i" { model.toggleItalicOnSelected(); return nil }
+            if key == "i" { model.italicCommand(); return nil }
+        }
+        if flags == [.command, .shift], model.hasTypingTarget, e.charactersIgnoringModifiers?.lowercased() == "i" {
+            model.italicCommand(nextOnly: true)
+            return nil
         }
 
         // Control-Delete deletes the selected title. Plain Delete doesn't, so a title can't

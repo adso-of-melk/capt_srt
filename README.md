@@ -129,7 +129,9 @@ Dragging the body of a box moves the whole title. After adjusting an edge, the w
 | Click a card | Select it, move the playhead to its start, and edit its text with the cursor at the end |
 | Esc | Leave text editing |
 | ⌃⌫ or ⌃⌦ (when not typing) | Delete the selected title (plain ⌫ doesn't) |
-| ⌘V / ⌘I on a selected title you aren't typing in | Paste at the end / make the whole title italic (an empty title: what comes next is italic) |
+| ⌘I | Italics on or off for the whole title, whether or not the cursor is in it; with words selected in the card, just those (an empty title: what comes next is italic) |
+| ⇧⌘I | Italics for what you type next (at the cursor, or added to the end) |
+| ⌘V on a selected title you aren't typing in | Paste at the end and break the lines |
 | ⌘F, ⌥⌘F | Find, Find and Replace |
 | ⌘G / ⇧⌘G | Next / previous match |
 | ⌘; | Next title with a misspelled word |
