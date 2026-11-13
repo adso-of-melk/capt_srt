@@ -3,9 +3,32 @@ import AppKit
 import UniformTypeIdentifiers
 import Combine
 
+/// What the Language Options dialog edits, until Done.
+struct LanguageOptions: Equatable {
+    var language: Language
+    /// nil: the project standard.
+    var maxCPS: Double?
+    var maxChars: Int?
+    var maxLines: Int?
+    var spellCheck: Bool
+    var makeMaster: Bool
+    var locked: Bool
+    var removedWords: Set<String> = []
+
+    @MainActor init(_ track: Track, isMaster: Bool) {
+        language = track.language
+        maxCPS = track.maxCPS
+        maxChars = track.maxCharsPerLine
+        maxLines = track.maxLines
+        spellCheck = track.spellCheck
+        makeMaster = isMaster
+        locked = track.locked
+    }
+}
+
 /// The dialogs the editor can show.
 enum SheetKind: Identifiable, Equatable {
-    case newProject, projectSettings, newLanguage, importLanguage, export, openLink, shiftTitles
+    case newProject, projectSettings, newLanguage, importLanguage, export, openLink, shiftTitles, languageOptions
     var id: Self { self }
 }
 
@@ -946,11 +969,69 @@ extension AppModel {
         saveProject()
     }
 
-    func setOverrides(_ track: Track, maxCPS: Double?? = nil, maxChars: Int?? = nil) {
+    func setOverrides(_ track: Track, maxCPS: Double?? = nil, maxChars: Int?? = nil, maxLines: Int?? = nil) {
         if let maxCPS { track.maxCPS = maxCPS }
         if let maxChars { track.maxCharsPerLine = maxChars }
+        if let maxLines { track.maxLines = maxLines }
         bump()
         saveProject()
+    }
+
+    /// Language Options: this column is really another language (or the code or name was
+    /// wrong). Spell check, line breaking and the export file name follow. The project's
+    /// own words go along, and the project's master language follows its master.
+    func changeLanguage(_ track: Track, to language: Language) {
+        let code = language.code.trimmingCharacters(in: .whitespaces)
+        let name = language.name.trimmingCharacters(in: .whitespaces)
+        let new = Language(code: code, name: name.isEmpty ? Language.named(code).name : name)
+        guard !new.code.isEmpty, new != track.language else { return }
+        let old = track.language
+        if let project {
+            if let words = project.settings.spellingWords[old.code], new.code != old.code {
+                let merged = Set(project.settings.spellingWords[new.code] ?? []).union(words)
+                project.settings.spellingWords[new.code] = merged.sorted()
+            }
+            if video?.masterTrackID == track.id, project.settings.masterLanguage == old {
+                project.settings.masterLanguage = new
+            }
+        }
+        track.language = new
+        syncSpellingWords()
+        find.refresh()
+        rebuildRows()
+        saveProject()
+        flash(old.name == new.name ? "Language code is now \(new.code)" : "\(old.name) is now \(new.name)")
+    }
+
+    /// Spell check on or off for one language.
+    func setSpellCheck(_ track: Track, _ on: Bool) {
+        guard track.spellCheck != on else { return }
+        track.spellCheck = on
+        bump()
+        saveProject()
+    }
+
+    /// Whether this language's titles are checked: the app-wide switch and the language's own.
+    func checksSpelling(_ track: Track) -> Bool { spellCheckOn && track.spellCheck }
+
+    /// Language Options, applied together when the dialog closes with Done.
+    func applyLanguageOptions(_ track: Track, _ o: LanguageOptions) {
+        for word in o.removedWords { removeProjectWord(word, language: track.language.code) }
+        changeLanguage(track, to: o.language)
+        setOverrides(track, maxCPS: .some(o.maxCPS), maxChars: .some(o.maxChars), maxLines: .some(o.maxLines))
+        setSpellCheck(track, o.spellCheck)
+        if o.makeMaster, video?.masterTrackID != track.id {
+            setMaster(track)
+        } else if video?.masterTrackID != track.id, o.locked != track.locked {
+            // Locking asks first (titles with no partner in the master would go).
+            DispatchQueue.main.async { [weak self] in self?.setLocked(track, o.locked) }
+        }
+    }
+
+    /// Opens Language Options for a language.
+    func showLanguageOptions(_ track: Track) {
+        languageOptionsID = track.id
+        sheet = .languageOptions
     }
 
     func applySettings(_ settings: ProjectSettings, name: String) {

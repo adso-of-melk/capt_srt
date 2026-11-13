@@ -23,6 +23,15 @@ extension AppModel {
         scheduleAutosave()
     }
 
+    /// Language Options: a project word that shouldn't be there after all.
+    func removeProjectWord(_ word: String, language code: String) {
+        guard let project, var words = project.settings.spellingWords[code], words.contains(word) else { return }
+        words.removeAll { $0 == word }
+        project.settings.spellingWords[code] = words.isEmpty ? nil : words
+        syncSpellingWords()
+        scheduleAutosave()
+    }
+
     /// "Learn Spelling": right in every project, from now on.
     func learnWord(_ word: String, language code: String) {
         SpellService.shared.learn(word, language: code)
@@ -53,6 +62,10 @@ extension AppModel {
     @discardableResult
     func nextMisspelling() -> UUID? {
         guard let track = focusedTrack else { return nil }
+        if !track.spellCheck {
+            flash("Spell check is off for \(track.language.name) (Language Options).")
+            return nil
+        }
         if let note = spellingNote(for: track.language) {
             flash(note)
             return nil

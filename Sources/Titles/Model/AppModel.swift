@@ -517,6 +517,9 @@ final class AppModel: ObservableObject {
     /// Esc leaves the text, so ⌘I, ⌘V and Tab work on whole titles again).
     @Published var cursorIn: UUID?
 
+    /// The language whose Language Options dialog is open.
+    @Published var languageOptionsID: UUID?
+
     /// A card's editor took the keyboard (`on`) or let it go. When Tab moves the cursor on,
     /// the next card may take it before the last one lets go: that never clears the new one.
     func textCursor(_ on: Bool, in id: UUID) {

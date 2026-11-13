@@ -22,7 +22,7 @@ Or, from Terminal in this folder: `swift run -c release`.
 Everything lives in a **project**, one per film: a single `.kptnsub` file (JSON) holding the film's videos (cuts, reels, trailers) and, for each video, every language.
 
 - **New Project… (⌘N)** asks for a name, a folder (default `~/Movies/KPTN.SUB`, outside iCloud), the video, the master language and, optionally, an existing SRT. Pick a standard (General 17 CPS / 42 chars, Broadcast 15 / 37, Children's 13 / 37); **Advanced** covers reading speed, characters per line, lines, min/max duration, gap, frame rate, start timecode, frames or milliseconds, export format, BOM, line endings and file naming.
-- **File ▸ Project Settings… (⌥⌘,)** changes those later. Each language can override reading speed and characters per line from its column menu.
+- **File ▸ Project Settings… (⌥⌘,)** changes those later. Each language can override reading speed, characters per line and lines in its **Language Options…**.
 - Projects **autosave**. A working copy is also kept in `~/Library/Application Support/KPTN.SUB`, with timestamped backups (the newest 30). If the project file is in iCloud and not downloaded, the app opens the working copy at once and shows a banner instead of waiting; if the two differ, it asks which to keep.
 - The **Home** screen lists recent projects. **HOME** in the top strip (⇧⌘H) goes back there.
 - The **video menu** in the top strip switches videos, adds a video file (⌥⌘N) or link (⌥⌘O), renames or removes one.
@@ -34,7 +34,8 @@ Each video has a **master** language (★) and any number of others, shown side 
 - **Language ▸ New Language from Master…** makes a new language with the master's timecodes and empty text (or a copy of the text). It can be **free** (default: retime anything) or **locked** (🔒: master timing, text-only edits, follows master changes automatically).
 - **Import Language…** reads an SRT or VTT and links each title to the master title it overlaps most.
 - Rows line up by link, not by number, so an empty slot keeps later rows aligned. Double-click an empty slot, or select it and start typing, to make a title with that row's timing.
-- Column headers have a menu: lock or unlock, make master, reading speed, characters per line, move left or right, close, delete. **+** reopens a closed column or adds one.
+- Column headers have a menu (⋯ or right-click): **Language Options…**, lock or unlock, make master, move left or right, close, delete. **+** reopens a closed column or adds one.
+- **Language Options…** changes which language a column is (from the list, or any code and name; spell check, line breaking and the export file name follow, and the project words go along), makes it the master or sets free/locked timing, sets its own reading speed, characters per line and lines, and turns spell check on or off for that language, with its project words listed to review or remove.
 - **⌘L / ⇧⌘L** move focus to the next / previous language (wrapping), and **⌘1–⌘9** jump to a column, even while typing. The focused language is the one you edit, in the cards and the waveform.
 - The waveform shows the other open languages as slim lanes above it. Click a lane to focus that language. The selected row is outlined in every lane.
 - **Text Only (⇧⌘T)** hides picture and waveform, leaving the columns and a slim transport.
@@ -43,6 +44,7 @@ Each video has a **master** language (★) and any number of others, shown side 
 ## Coming in the next build
 
 - **A small "esc" while you type.** The card with the text cursor shows a little "esc" key on the lower edge of its text box. Esc takes the cursor out; then ⌘I makes the whole title italic again, ⌘V pastes at its end, and Tab, ⌘I runs through titles quickly.
+- **Language Options…** in each language's menu: change the language (or its code and name), master and timing, its own reading speed, characters per line and lines, and spell check with its project words.
 - **Italics show on the waveform.** Italic (and bold) words in a title are drawn that way in its waveform box too, as in the card.
 
 ## New in 0.30

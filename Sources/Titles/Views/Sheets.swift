@@ -17,6 +17,10 @@ struct SheetHost: View {
             case .export: ExportSheet(model: model)
             case .openLink: OpenLinkSheet(model: model)
             case .shiftTitles: ShiftTitlesSheet(model: model)
+            case .languageOptions:
+                if let track = model.video?.track(model.languageOptionsID) {
+                    LanguageOptionsSheet(model: model, track: track)
+                }
             }
         }
         .preferredColorScheme(.dark)
@@ -326,6 +330,116 @@ struct LanguagePicker: View {
             }
             ForEach(Language.common) { Text("\($0.name)  ·  \($0.code)").tag($0) }
         }
+    }
+}
+
+// MARK: - Language options
+
+/// Everything about how one language is handled: which language it is, master and lock,
+/// its own reading limits, and spell check. Changes apply with Done.
+struct LanguageOptionsSheet: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var track: Track
+    @State private var o: LanguageOptions?
+
+    var body: some View {
+        let isMaster = model.video?.masterTrackID == track.id
+        let standard = model.project?.settings.standard ?? .general
+        VStack(alignment: .leading, spacing: 14) {
+            SheetHeader(title: "\(track.language.name) options", color: Theme.teal)
+            if let binding = Binding($o) {
+                form(binding, isMaster: isMaster, standard: standard)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { model.sheet = nil }.keyboardShortcut(.cancelAction)
+                    .buttonStyle(ConsoleButtonStyle(secondary: true))
+                Button("Done") {
+                    model.sheet = nil
+                    if let o { model.applyLanguageOptions(track, o) }
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(ConsoleButtonStyle(color: Theme.teal))
+                .disabled(o?.language.code.trimmingCharacters(in: .whitespaces).isEmpty ?? true)
+            }
+        }
+        .padding(20)
+        .frame(width: 560, height: 640)
+        .background(Theme.panel)
+        .onAppear { if o == nil { o = LanguageOptions(track, isMaster: isMaster) } }
+    }
+
+    @ViewBuilder
+    private func form(_ o: Binding<LanguageOptions>, isMaster: Bool, standard: TimingPreset) -> some View {
+        let v = o.wrappedValue
+        let words = (model.project?.settings.spellingWords[track.language.code] ?? [])
+            .filter { !v.removedWords.contains($0) }
+        Form {
+            Section("Language") {
+                LanguagePicker(title: "Language", selection: o.language)
+                TextField("Name", text: o.language.name)
+                TextField("Code", text: o.language.code)
+                Text("Spell check and line breaking follow the language. Exported files are named with the code: \(model.video?.name ?? "Film").\(v.language.code).srt")
+                    .font(Theme.label(11, .regular)).foregroundStyle(Theme.textDim)
+                if let video = model.video,
+                   video.tracks.contains(where: { $0.id != track.id && $0.language.code == v.language.code }) {
+                    Text("\(video.name) already has \(v.language.name) in another column; both will export to the same file name.")
+                        .font(Theme.label(11, .regular)).foregroundStyle(Theme.amber)
+                }
+            }
+            Section("Master and timing") {
+                if isMaster {
+                    LabeledContent("Master", value: "This is the master language")
+                } else {
+                    Toggle("Make this the master language", isOn: o.makeMaster)
+                    if !v.makeMaster {
+                        Picker("Timing", selection: o.locked) {
+                            Text("Free: its own timing, edited independently").tag(false)
+                            Text("Locked: always the master's timing, text only").tag(true)
+                        }
+                        .pickerStyle(.radioGroup)
+                    }
+                }
+            }
+            Section("Limits for this language") {
+                Picker("Reading speed", selection: o.maxCPS) {
+                    Text("Project standard (\(Int(standard.maxCPS)) CPS)").tag(Double?.none)
+                    ForEach([10.0, 12, 13, 15, 17, 20, 25], id: \.self) { Text("\(Int($0)) CPS").tag(Double?.some($0)) }
+                }
+                Picker("Characters per line", selection: o.maxChars) {
+                    Text("Project standard (\(standard.maxCharsPerLine))").tag(Int?.none)
+                    ForEach([13, 16, 23, 32, 37, 39, 42, 47], id: \.self) { Text("\($0)").tag(Int?.some($0)) }
+                }
+                Picker("Lines", selection: o.maxLines) {
+                    Text("Project standard (\(standard.maxLines))").tag(Int?.none)
+                    ForEach([1, 2, 3], id: \.self) { Text("\($0)").tag(Int?.some($0)) }
+                }
+            }
+            Section("Spelling") {
+                Toggle("Check spelling in this language", isOn: o.spellCheck)
+                Text(model.spellingStatus(for: v.language))
+                    .font(Theme.label(11, .regular)).foregroundStyle(Theme.textDim)
+                if !model.spellCheckOn {
+                    Text("Spell check is off for every language (Edit ▸ Check Spelling).")
+                        .font(Theme.label(11, .regular)).foregroundStyle(Theme.amber)
+                }
+                if words.isEmpty {
+                    Text("No project words yet. Right-click a word in a card ▸ Add to Project Words.")
+                        .font(Theme.label(11, .regular)).foregroundStyle(Theme.textFaint)
+                } else {
+                    ForEach(words, id: \.self) { word in
+                        HStack {
+                            Text(word)
+                            Spacer()
+                            Button { o.wrappedValue.removedWords.insert(word) } label: { Image(systemName: "minus.circle") }
+                                .buttonStyle(.plain)
+                                .help("Remove from this project's words")
+                        }
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 

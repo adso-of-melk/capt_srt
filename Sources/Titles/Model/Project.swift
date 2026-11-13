@@ -86,6 +86,9 @@ struct TrackFile: Codable, Sendable {
     var locked: Bool
     var maxCPS: Double?
     var maxCharsPerLine: Int?
+    var maxLines: Int?
+    /// true: spell check is off for this language (absent in older projects: on).
+    var spellCheckOff: Bool?
     var subtitles: [Subtitle]
 }
 
@@ -119,6 +122,9 @@ final class Track: ObservableObject, Identifiable {
     @Published var locked: Bool
     @Published var maxCPS: Double?
     @Published var maxCharsPerLine: Int?
+    @Published var maxLines: Int?
+    /// Spell check for this language (Language Options). The app-wide switch is in the Edit menu.
+    @Published var spellCheck = true
     let doc = SubtitleDocument()
 
     init(id: UUID = UUID(), language: Language, locked: Bool = false, subtitles: [Subtitle] = []) {
@@ -133,11 +139,14 @@ final class Track: ObservableObject, Identifiable {
         self.init(id: f.id, language: f.language, locked: f.locked, subtitles: f.subtitles)
         maxCPS = f.maxCPS
         maxCharsPerLine = f.maxCharsPerLine
+        maxLines = f.maxLines
+        spellCheck = f.spellCheckOff != true
     }
 
     var file: TrackFile {
         TrackFile(id: id, language: language, locked: locked, maxCPS: maxCPS,
-                  maxCharsPerLine: maxCharsPerLine, subtitles: doc.subtitles)
+                  maxCharsPerLine: maxCharsPerLine, maxLines: maxLines,
+                  spellCheckOff: spellCheck ? nil : true, subtitles: doc.subtitles)
     }
 
     /// The project standard with this language's own overrides.
@@ -145,6 +154,7 @@ final class Track: ObservableObject, Identifiable {
         var p = base
         if let c = maxCPS { p.maxCPS = c }
         if let l = maxCharsPerLine { p.maxCharsPerLine = l }
+        if let n = maxLines { p.maxLines = n }
         return p
     }
 }

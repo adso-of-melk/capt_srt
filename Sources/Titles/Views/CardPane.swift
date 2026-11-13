@@ -271,28 +271,13 @@ struct LanguageMenuItems: View {
 
     var body: some View {
         let isMaster = model.video?.masterTrackID == track.id
+        Button("Language Options…") { model.showLanguageOptions(track) }
+        Divider()
         if !isMaster {
             Button(track.locked ? "Unlock from Master" : "Lock to Master") { model.setLocked(track, !track.locked) }
             Button("Make This the Master") { model.setMaster(track) }
             Divider()
         }
-        Picker("Reading Speed", selection: Binding(
-            get: { track.maxCPS ?? 0 },
-            set: { model.setOverrides(track, maxCPS: .some($0 == 0 ? nil : $0)) }
-        )) {
-            Text("Project standard").tag(0.0)
-            ForEach([12.0, 13, 15, 17, 20, 25], id: \.self) { Text("\(Int($0)) CPS").tag($0) }
-        }
-        Picker("Characters per Line", selection: Binding(
-            get: { track.maxCharsPerLine ?? 0 },
-            set: { model.setOverrides(track, maxChars: .some($0 == 0 ? nil : $0)) }
-        )) {
-            Text("Project standard").tag(0)
-            ForEach([16, 23, 32, 37, 39, 42, 47], id: \.self) { Text("\($0)").tag($0) }
-        }
-        Divider()
-        Text(model.spellingStatus(for: track.language))
-        Divider()
         Button("Move Column Left") { model.moveColumn(track, by: -1) }
         Button("Move Column Right") { model.moveColumn(track, by: 1) }
         Button("Close Column") { model.closeColumn(track) }
@@ -382,7 +367,7 @@ struct CardView: View {
     }
 
     private func decoratedText() -> AttributedString {
-        let misspelled = model.spellCheckOn
+        let misspelled = model.checksSpelling(track)
             ? SpellService.shared.misspelled(in: Markup.plain(sub.text), language: track.language.code) : []
         let found = model.find.highlights(in: sub.id)
         return Self.decorated(sub.text, misspelled: misspelled, matches: found.ranges, current: found.current)
@@ -464,7 +449,7 @@ struct CardView: View {
                         liveBreak: { model.liveBreak($0, track: track) },
                         startItalic: model.italicNext == sub.id,
                         onStartItalicUsed: { if model.italicNext == sub.id { model.italicNext = nil } },
-                        spellLanguage: model.spellCheckOn ? track.language.code : nil,
+                        spellLanguage: model.checksSpelling(track) ? track.language.code : nil,
                         findHighlight: model.find.editorHighlight(for: sub.id),
                         onLearn: { model.learnWord($0, language: track.language.code) },
                         onProjectWord: { model.addProjectWord($0, language: track.language.code) },
