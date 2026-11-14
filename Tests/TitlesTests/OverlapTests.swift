@@ -135,7 +135,7 @@ final class OverlapTests: XCTestCase {
         let f = makeFixture([("en", [sub(1, 2)])])
         XCTAssertFalse(f.model.allowOverlaps)
         // The choice is remembered for the next time KPTN.SUB opens.
-        func reopened() -> Bool {
+        @MainActor func reopened() -> Bool {
             let m = AppModel(engine: FakeEngine())
             m.persists = false
             return m.allowOverlaps

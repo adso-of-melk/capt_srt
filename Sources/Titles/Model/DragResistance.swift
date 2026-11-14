@@ -222,7 +222,7 @@ struct DragResistance {
         for _ in 0..<16 {
             let upper = limit(.later, from: from)
             let lower = limit(.earlier, from: from)
-            if let u = upper, let l = lower, u < l - Self.eps { return nil }
+            if let u = upper, let l = lower, u.value < l.value - Self.eps { return nil }
             if let u = upper, wanted > u.value + Self.eps {
                 if pulledThrough(u.contact, by: wanted - (heldAt[u.contact] ?? wanted)) { continue }
                 hold(u.contact, at: heldAt[u.contact].map { min($0, wanted) } ?? wanted)
