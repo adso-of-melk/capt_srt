@@ -96,14 +96,14 @@ final class WaveformNSView: NSView {
     }
     private var drag: Drag = .none
 
-    // Resistance: while dragging, a title stops at the minimum gap from its neighbours.
-    // Drag about 12 px further and it gives, letting the titles overlap.
-    private var barrierLower: Double?
-    private var barrierUpper: Double?
-    private var holdingLower = false, holdingUpper = false
-    private var brokeLower = false, brokeUpper = false
-    /// Where the pointer was when the title stopped at a barrier.
-    private var heldLowerAt: Double?, heldUpperAt: Double?
+    // Resistance: while dragging, a title stops at the minimum gap from the next title in
+    // its way. With overlapping titles on (Title menu), pulling on `breakPixels` further lets
+    // it through, and it holds again as soon as the two stop overlapping. See DragResistance.
+    private var resistance: DragResistance?
+    /// How far past the stopping point the pointer has to pull before a title gives.
+    static let breakPixels = 40.0
+    /// The "overlapping titles are off" note has been shown during this drag.
+    private var refusalShown = false
     private var downPoint: CGPoint = .zero
     /// Where a click on empty waveform landed (a plain click places the playhead there).
     private var createClickTime: Double = 0
@@ -894,6 +894,7 @@ final class WaveformNSView: NSView {
            case let .body(id) = hit(p), model.multiSelection.contains(id) {
             var originals: [UUID: Double] = [:]
             for s in model.doc.subtitles where model.multiSelection.contains(s.id) { originals[s.id] = s.start }
+            startResistance(.move, ids: model.multiSelection, model: model)
             model.doc.beginLive()
             drag = .movingGroup(grab: t(p.x), originals: originals)
             NSCursor.closedHand.set()
@@ -929,10 +930,9 @@ final class WaveformNSView: NSView {
             }
         }
 
-        if case let .edge(id, _) = hit(p) { setBarriers(around: id, model: model) }
-        if case let .body(id) = hit(p) { setBarriers(around: id, model: model) }
         switch hit(p) {
         case let .edge(id, edge):
+            startResistance(.edge(edge), ids: [id], model: model)
             model.select(id)
             model.doc.beginLive()
             drag = .resizing(id: id, edge: edge)
@@ -946,6 +946,7 @@ final class WaveformNSView: NSView {
                 return
             }
             if let s = model.doc.subtitle(id) {
+                startResistance(.move, ids: [id], model: model)
                 model.doc.beginLive()
                 drag = .moving(id: id, grab: t(p.x) - s.start, length: s.duration)
             }
@@ -955,9 +956,14 @@ final class WaveformNSView: NSView {
             // like stretching one (starting inside a gap moves the start out to it).
             createClickTime = t(p.x)
             let b = Self.createBarriers(at: createClickTime, in: model.doc.subtitles, gap: model.minGap)
-            resetResistance()
-            barrierLower = b.lower
-            barrierUpper = b.upper
+            refusalShown = false
+            // Inside another title's time (its box sits a lane up or down): with overlapping
+            // titles off, nothing can be drawn there.
+            let inside = model.doc.subtitles.contains { $0.start < b.start - 0.0005 && $0.end > b.start + 0.0005 }
+            resistance = inside && !model.allowOverlaps ? nil : DragResistance(
+                mode: .draw(from: b.start), original: [.init(start: b.start, end: b.start)],
+                others: model.doc.subtitles, gap: model.minGap, allowOverlap: model.allowOverlaps,
+                breakDistance: Self.breakPixels / pps)
             drag = .creating(t0: b.start, t1: b.start)
         }
         needsDisplay = true
@@ -993,6 +999,7 @@ final class WaveformNSView: NSView {
         case let .movingGroup(grab, originals):
             var delta = t(p.x) - grab
             if let earliest = originals.values.min() { delta = max(delta, -earliest) }
+            delta = resist(delta)
             for (id, start) in originals {
                 model.doc.liveUpdate(id) { s in
                     let length = s.duration
@@ -1006,16 +1013,20 @@ final class WaveformNSView: NSView {
         case .ruler:
             model.placePlayhead(t(p.x))
         case let .creating(t0, _):
-            let raw = t(p.x)
-            drag = .creating(t0: t0, t1: raw >= t0 ? stick(raw, lower: false) : stick(raw, lower: true))
+            guard resistance != nil else {
+                showRefusal()
+                break
+            }
+            drag = .creating(t0: t0, t1: resist(max(0, t(p.x))))
         case let .moving(id, grab, length):
-            var start = stick(max(0, t(p.x) - grab), lower: true)
-            start = stick(start + length, lower: false) - length
+            let from = resistance?.original.first?.start ?? 0
+            let start = from + resist(max(0, t(p.x) - grab) - from)
             model.doc.liveUpdate(id) { $0.start = start; $0.end = start + length }
             model.engine.seek(to: start, exact: true)
         case let .resizing(id, edge):
-            let target = stick(t(p.x), lower: edge == .start)
+            let target = resist(t(p.x))
             if let value = model.moveEdge(edge, of: id, to: target, clamp: false) {
+                resistance?.settle(at: value)
                 model.scrubTo(value)
             }
         }
@@ -1026,6 +1037,7 @@ final class WaveformNSView: NSView {
         guard let model else { return }
         defer {
             drag = .none
+            resistance = nil
             needsDisplay = true
             updateCursor(event)
         }
@@ -1057,11 +1069,32 @@ final class WaveformNSView: NSView {
         }
     }
 
-    private func resetResistance() {
-        holdingLower = false; holdingUpper = false
-        brokeLower = false; brokeUpper = false
-        heldLowerAt = nil; heldUpperAt = nil
-        barrierLower = nil; barrierUpper = nil
+    /// A drag of these titles (or one edge of one) begins: note what's in their way.
+    private func startResistance(_ mode: DragResistance.Mode, ids: Set<UUID>, model: AppModel) {
+        refusalShown = false
+        let dragged = model.doc.subtitles.filter { ids.contains($0.id) }
+        resistance = DragResistance(
+            mode: mode, original: dragged.map { .init(start: $0.start, end: $0.end) },
+            others: model.doc.subtitles.filter { !ids.contains($0.id) }, gap: model.minGap,
+            allowOverlap: model.allowOverlaps, breakDistance: Self.breakPixels / pps)
+    }
+
+    /// Where the drag goes for what the pointer asks: held at the next title in the way.
+    private func resist(_ wanted: Double) -> Double {
+        guard var r = resistance else { return wanted }
+        r.breakDistance = Self.breakPixels / pps
+        let v = r.drag(to: wanted)
+        resistance = r
+        if r.bumped { tick() }
+        if r.refused { showRefusal() }
+        return v
+    }
+
+    /// Pulled hard against a title with overlapping titles off: say where to turn them on (once a drag).
+    private func showRefusal() {
+        guard !refusalShown else { return }
+        refusalShown = true
+        model?.flash("Titles can't overlap. To allow it: Title ▸ Enable Overlapping Titles.")
     }
 
     /// Where a title drawn from `t0` stops: the minimum gap after the title before it and
@@ -1078,50 +1111,6 @@ final class WaveformNSView: NSView {
         if let l = lower, start < l { start = l }
         if let u = upper, start > u { start = u }
         return (start, lower.map { min($0, start) }, upper.map { max($0, start) })
-    }
-
-    /// Notes where the neighbours are (minus the minimum gap) when a drag starts.
-    private func setBarriers(around id: UUID, model: AppModel) {
-        resetResistance()
-        guard let s = model.doc.subtitle(id) else { return }
-        let gap = model.minGap
-        if let prev = model.doc.previous(of: id), prev.end <= s.start + 0.0005 {
-            barrierLower = min(s.start, prev.end + gap)
-        }
-        if let next = model.doc.next(of: id), next.start >= s.end - 0.0005 {
-            barrierUpper = max(s.end, next.start - gap)
-        }
-    }
-
-    /// Holds a dragged title at the minimum gap from its neighbour, however fast it was
-    /// dragged there. Pull on about 16 px further (into the neighbour) and it lets go, so
-    /// titles can still overlap on purpose. Move back out past the gap and it holds again.
-    private func stick(_ value: Double, lower: Bool) -> Double {
-        let breakDistance = 16.0 / Double(pps)
-        if lower {
-            guard let b = barrierLower else { return value }
-            // Back out past the gap: the resistance is there again next time.
-            if value >= b { holdingLower = false; heldLowerAt = nil; brokeLower = false; return value }
-            if brokeLower { return value }
-            guard let from = heldLowerAt else {
-                heldLowerAt = value; holdingLower = true; tick()
-                return b
-            }
-            if from - value > breakDistance { brokeLower = true; tick(); return value }
-            heldLowerAt = max(from, value)
-            return b
-        } else {
-            guard let b = barrierUpper else { return value }
-            if value <= b { holdingUpper = false; heldUpperAt = nil; brokeUpper = false; return value }
-            if brokeUpper { return value }
-            guard let from = heldUpperAt else {
-                heldUpperAt = value; holdingUpper = true; tick()
-                return b
-            }
-            if value - from > breakDistance { brokeUpper = true; tick(); return value }
-            heldUpperAt = min(from, value)
-            return b
-        }
     }
 
     /// A light trackpad tap (Force Touch trackpads only; nothing elsewhere).

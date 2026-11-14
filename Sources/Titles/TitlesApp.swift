@@ -193,6 +193,7 @@ struct TitlesCommands: Commands {
             }
             .disabled(noProject)
             Toggle("Break Long Lines Automatically", isOn: $model.autoLineBreaks)
+            Toggle("Enable Overlapping Titles", isOn: $model.allowOverlaps)
             Divider()
             Toggle("Replay Title After Jog or Nudge", isOn: $model.replayAfterJog)
             Toggle("Replay Title After Drag-Resize", isOn: $model.replayAfterResize)

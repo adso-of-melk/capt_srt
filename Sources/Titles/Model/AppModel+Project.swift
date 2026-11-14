@@ -238,9 +238,18 @@ extension AppModel {
               let row = rows.first(where: { $0.key == key }), row.cells[track.id] == nil else { return }
         let reference = row.cells[video.masterTrackID] ?? row.cells.values.sorted { $0.start < $1.start }.first
         guard let ref = reference else { return }
+        var span = (start: ref.start, end: ref.end)
+        if !allowOverlaps {
+            // Overlapping titles off: the new title keeps clear of this language's others.
+            guard let room = Self.room(for: span, among: doc.subtitles, gap: minGap) else {
+                flash("No room for a title here without overlapping another (Title ▸ Enable Overlapping Titles).")
+                return
+            }
+            span = room
+        }
         let isMaster = track.id == video.masterTrackID
         let link: UUID? = isMaster ? nil : row.cells[video.masterTrackID]?.id
-        let id = doc.add(start: ref.start, end: ref.end, text: text, link: link)
+        let id = doc.add(start: span.start, end: span.end, text: text, link: link)
         if isMaster {
             // The translations in this row now have a master title to belong to.
             for other in video.tracks where other.id != track.id {
@@ -255,6 +264,20 @@ extension AppModel {
         }
         emptySlotRow = nil
         focusRequest = id
+    }
+
+    /// The part of `span` that keeps the minimum gap from every title in `subs`, or nil when
+    /// that leaves less than a tenth of a second (or a title sits inside it).
+    static func room(for span: (start: Double, end: Double), among subs: [Subtitle], gap: Double)
+        -> (start: Double, end: Double)? {
+        var start = span.start, end = span.end
+        let eps = 0.0005
+        for o in subs {
+            if o.start >= span.start - eps && o.end <= span.end + eps { return nil }   // inside it
+            if o.start < span.start + eps && o.end > span.start - gap { start = max(start, o.end + gap) }
+            if o.end > span.end - eps && o.start < span.end + gap { end = min(end, o.start - gap) }
+        }
+        return end - start >= 0.1 ? (start, end) : nil
     }
 
     // MARK: Undo across languages
@@ -1356,6 +1379,26 @@ extension AppModel {
         let tracks = allLanguages ? video.tracks.filter { !$0.locked || $0.id == video.masterTrackID }
                                   : [focusedTrack].compactMap { $0 }
         if !allLanguages, refuseIfLocked() { return }
+        var offset = offset
+        var stopped = false
+        if onlySelected, !allowOverlaps {
+            // Overlapping titles off: the picked titles stop at the minimum gap from the next
+            // title in their way, as when they're dragged.
+            var r = DragResistance(
+                mode: .move,
+                original: doc.subtitles.filter { picked.contains($0.id) }.map { .init(start: $0.start, end: $0.end) },
+                others: doc.subtitles.filter { !picked.contains($0.id) }, gap: minGap,
+                allowOverlap: false, breakDistance: .infinity)
+            let allowed = r.drag(to: offset)
+            if abs(allowed - offset) > 0.0005 {
+                stopped = true
+                offset = allowed
+            }
+            guard abs(offset) > 0.0005 else {
+                flash("The next title is in the way, and titles can't overlap (Title ▸ Enable Overlapping Titles).")
+                return
+            }
+        }
         for track in tracks {
             let isFocused = track.id == focusedTrack?.id
             track.doc.perform { subs in
@@ -1367,7 +1410,8 @@ extension AppModel {
             }
         }
         enforceLocks(in: video)
-        flash(String(format: "Moved titles %@%.3f s", offset > 0 ? "+" : "", offset))
+        flash(String(format: "Moved titles %@%.3f s", offset > 0 ? "+" : "", offset)
+              + (stopped ? ", stopped by the next title (titles can't overlap)" : ""))
     }
 
     /// Reads "+1.5", "-0.25", or a timecode "-00:00:01:12" (frames at the project rate).

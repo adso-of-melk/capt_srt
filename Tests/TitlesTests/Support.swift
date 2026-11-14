@@ -67,6 +67,8 @@ func makeModel() -> (model: AppModel, engine: FakeEngine) {
     let model = AppModel(engine: engine)
     model.persists = false
     model.autoLineBreaks = true
+    // The default, whatever an earlier test left behind.
+    model.allowOverlaps = false
     model.waveBands = []
     return (model, engine)
 }

@@ -44,6 +44,11 @@ Each video has a **master** language (★) and any number of others, shown side 
 
 ## Coming in the next build
 
+- **Overlapping titles are off by default.** A dragged title (whole box, an edge, a group, or a title being drawn) stops at the minimum gap from the next title and never goes over it. Spotting, a new title in an empty slot and Shift Titles keep clear of other titles too. Titles that already overlap (in an imported file) stay as they are, and can be pulled apart. **Title ▸ Enable Overlapping Titles** (also in Settings) lets a title go over its neighbour when pulled on.
+- **Stronger resistance, and it comes back.** With overlaps enabled, a title has to be pulled 40 px past the stopping point (was 16) before it gives. Every time two titles stop overlapping during a drag, the resistance is back at full strength, and after passing through one title the next one holds it in turn. A fast drag can't jump over a title.
+
+## New in 0.45
+
 - **Duplicate Language.** Under **+** (and in the Language menu): a copy of a language with all its titles, in a new column beside it.
 - **Mouse jog really does work outside the window now** (0.42's version didn't). Hold Control or Option with the pointer anywhere (the desktop, another window, another display) and move the mouse: after a few points of travel the jog starts. The hidden pointer is brought inside the window for the hold and put back where it was when you let go. KPTN.SUB watches the pointer's position itself while the key is held, so this no longer depends on how macOS reports movement out there.
 - **Two languages with the same code export to two files** (`Film.en.srt`, `Film.en-2.srt`) instead of one writing over the other.
@@ -73,7 +78,7 @@ Each video has a **master** language (★) and any number of others, shown side 
 - **Italics behave.** Once italics are on, they stay on as you type: the text shrinking to fit, a line re-breaking, the CPS colour changing, clicking away or playing no longer switch them off. ⌘I in an empty card works first time. ⌘I on a selected title you aren't typing in makes the whole title italic (or plain again); on an empty one, what you type or paste next is italic. Typing into a selected italic title carries on in italics.
 - **Paste into the selected title** even when the waveform was clicked last (copying lines from a dialogue list): ⌘V puts the text at the end and breaks the lines by the rules. ⌘I then ⌘V pastes it in italics.
 - **Deleting a title takes Control-Delete** (⌃⌫ or ⌃⌦), so a stray Delete can't lose one. Plain Delete only reminds you. Right-click ▸ Delete Title on a box still works.
-- **Drawing a title stops at the minimum gap** from its neighbours, like stretching one does; pull on about 16 px to overlap. Starting a drag inside the gap starts it at the gap's edge.
+- **Drawing a title stops at the minimum gap** from its neighbours, like stretching one does; with overlapping titles enabled, pull on about 40 px to overlap. Starting a drag inside the gap starts it at the gap's edge.
 - **Selection and warning colours no longer clash.** A selected box keeps its timing colour (0.30: inside amber brackets); amber now means only "selected". Near the limit is pale gold everywhere (cards, chips, waveform, spotting timer).
 
 ## Since the build of 2026-11-09
@@ -83,7 +88,7 @@ Each video has a **master** language (★) and any number of others, shown side 
 - **Typing.** Shift+Space plays unless you typed a letter while holding Shift (a capital then a space). Tab puts the cursor at the end of the next card. Hover a column's coloured cap to close it.
 - **Formatting.** Cards show and edit italics, bold and underline as they look (⌘I toggles italic); the file keeps the tags.
 - **Line breaks while typing.** When a line runs past the limit, the title is re-broken by the rules as you type; leaving the card evens the lines out, unless you broke them yourself with Return. Title ▸ Re-break All Lines (⇧⌥⌘B) does every title in the focused language.
-- **Waveform.** Clicking a title moves the playhead to its start. A dragged title stops at the minimum gap from its neighbour; pull on further to overlap. Double-click the timecode to type a time to go to (Tab between fields). The scroll bar under the waveform scrolls through the film.
+- **Waveform.** Clicking a title moves the playhead to its start. A dragged title stops at the minimum gap from its neighbour; with overlapping titles enabled (Title menu), pull on further to overlap. Double-click the timecode to type a time to go to (Tab between fields). The scroll bar under the waveform scrolls through the film.
 - **Jogging settings** (KPTN.SUB ▸ Settings): mouse jog and wheel jog can each be switched off, step by 1 frame, 10 ms, 5 ms or 1 ms, and have their own sensitivity. The mouse needs the same travel per step however fast you move, and a jerk can't throw an edge far; one wheel click back always undoes one forward. Mouse, wheel and the [ ] keys can be mixed under one hold of Control or Option (wheel for rough, mouse for fine): they move the same edge, so each carries on exactly where the other stopped, and the whole hold is one undo step that plays once when you let go.
 - **Several languages on the waveform.** Double-click a slim language lane's tag to open it as a full band (or View ▸ All Languages on the Waveform). Click or drag in any band to work on that language; drag the line between bands to share the height; double-click a band's tag to fold it back.
 - **New Project** takes several subtitle files at once (one per language; the language is guessed from the file name or text).
@@ -131,7 +136,7 @@ When playback stops, the title under the playhead becomes the selected title.
 | Two-finger trackpad swipe over a box, no key (off by default; turn on under Title ▸ Trackpad Swipe Over a Title Adjusts Its Edges) | left half of the box | right half of the box |
 | Mouse drag | box's left edge | box's right edge |
 
-Dragging the body of a box moves the whole title, and it plays from half a second before its new start. After adjusting an edge, the whole title plays from 1 s before its start to just after its end. Each replay (jogs/nudges, drag-resizes, drag-moves) can be turned off on its own in the Title menu. A plain scroll wheel, trackball or Shift+scroll only pans the waveform and never changes a title. Jogs and nudges stop at the neighbouring title, keeping a 2-frame gap. Mouse drags stop at the minimum gap from a neighbour; drag about 16 px further and it gives, so titles can overlap; overlapping titles turn lilac and are drawn one slightly higher and one slightly lower.
+Dragging the body of a box moves the whole title, and it plays from half a second before its new start. After adjusting an edge, the whole title plays from 1 s before its start to just after its end. Each replay (jogs/nudges, drag-resizes, drag-moves) can be turned off on its own in the Title menu. A plain scroll wheel, trackball or Shift+scroll only pans the waveform and never changes a title. Jogs and nudges stop at the neighbouring title, keeping a 2-frame gap. Mouse drags stop at the minimum gap from a neighbour. With Title ▸ Enable Overlapping Titles on, drag about 40 px further and it gives, so titles can overlap, and it holds again each time they come apart; overlapping titles turn lilac and are drawn one slightly higher and one slightly lower.
 
 **Navigation**
 

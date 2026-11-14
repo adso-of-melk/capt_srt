@@ -58,6 +58,15 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle("Enable overlapping titles", isOn: $model.allowOverlaps)
+                Text(model.allowOverlaps
+                     ? "A dragged title stops at the minimum gap from the next one; pull a little further and it goes over it. Once they're apart again, it stops again."
+                     : "A dragged title stops at the minimum gap from the next one and never goes over it. Titles that already overlap (in an imported file) stay as they are.")
+                    .font(Theme.label(11, .regular))
+                    .foregroundStyle(Theme.textDim)
+            }
+
+            Section {
                 Toggle("Trackpad swipe over the selected title adjusts its edges", isOn: $model.swipeOverTitleAdjusts)
                 Toggle("Replay title after jog or nudge", isOn: $model.replayAfterJog)
                 Toggle("Replay title after drag-resize", isOn: $model.replayAfterResize)

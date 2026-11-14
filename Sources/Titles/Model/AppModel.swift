@@ -113,6 +113,12 @@ final class AppModel: ObservableObject {
     @Published var replayAfterMove = true {
         didSet { UserDefaults.standard.set(replayAfterMove, forKey: "replayAfterMove") }
     }
+    /// Title ▸ Enable Overlapping Titles. Off (the default): a dragged title stops at the
+    /// minimum gap from the next one and never goes over it, and spotting, new titles and
+    /// Shift Titles keep clear of other titles too. On: pull a little further and it gives.
+    @Published var allowOverlaps = false {
+        didSet { UserDefaults.standard.set(allowOverlaps, forKey: "allowOverlaps") }
+    }
 
     // Fine-tuning with Control/Option held (Settings ▸ Jogging).
     /// Moving the mouse moves the edge.
@@ -169,6 +175,7 @@ final class AppModel: ObservableObject {
         if defaults.object(forKey: "replayAfterJog") != nil { replayAfterJog = defaults.bool(forKey: "replayAfterJog") }
         if defaults.object(forKey: "replayAfterResize") != nil { replayAfterResize = defaults.bool(forKey: "replayAfterResize") }
         if defaults.object(forKey: "replayAfterMove") != nil { replayAfterMove = defaults.bool(forKey: "replayAfterMove") }
+        if defaults.object(forKey: "allowOverlaps") != nil { allowOverlaps = defaults.bool(forKey: "allowOverlaps") }
         if defaults.object(forKey: "autoLineBreaks") != nil { autoLineBreaks = defaults.bool(forKey: "autoLineBreaks") }
         if defaults.object(forKey: "spellCheckOn") != nil { spellCheckOn = defaults.bool(forKey: "spellCheckOn") }
         loadRecentProjects()
@@ -866,6 +873,10 @@ final class AppModel: ObservableObject {
         } else {
             start = t
         }
+        if !allowOverlaps, let reason = Self.spotBlocked(at: start, in: doc.subtitles, gap: minGap) {
+            flash(reason)
+            return
+        }
         let s = Subtitle(start: start, end: start + 0.1)
         doc.live { $0.append(s) }
         doc.selectedID = s.id
@@ -935,7 +946,11 @@ final class AppModel: ObservableObject {
         guard let id = spottingID else { return }
         spottingID = nil
         if let t, let s = doc.subtitle(id) {
-            let end = max(s.start + 0.3, t)
+            var end = max(s.start + 0.3, t)
+            if !allowOverlaps, let next = doc.subtitles.filter({ $0.id != id && $0.start >= s.start }).map(\.start).min() {
+                // Overlapping titles off: it ends the minimum gap before the next title.
+                end = max(s.start + 0.1, min(end, next - minGap))
+            }
             let link = autoLink(start: s.start, end: end)
             doc.liveUpdate(id) { $0.end = end; $0.link = link }
         }
@@ -943,6 +958,18 @@ final class AppModel: ObservableObject {
     }
 
     var isSpotting: Bool { spottingID != nil }
+
+    /// With overlapping titles off: why a title can't be spotted from `start` (inside another
+    /// title, or too close before the next one), or nil when it can.
+    static func spotBlocked(at start: Double, in subs: [Subtitle], gap: Double) -> String? {
+        if subs.contains(where: { $0.start <= start + 0.0005 && $0.end > start + 0.0005 }) {
+            return "The playhead is inside a title, and titles can't overlap (Title ▸ Enable Overlapping Titles)."
+        }
+        if let next = subs.filter({ $0.start > start }).map(\.start).min(), next - gap - start < 0.1 {
+            return "No room before the next title, and titles can't overlap (Title ▸ Enable Overlapping Titles)."
+        }
+        return nil
+    }
 }
 
 /// Keeps the export panel's file type and extension in step with its Format menu.
