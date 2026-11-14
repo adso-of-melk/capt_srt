@@ -144,6 +144,32 @@ final class JogTests: XCTestCase {
 
     // MARK: Mouse jog outside the window
 
+    /// Stands in for the real pointer: where it "is", and what a jog asked of it (in place
+    /// of hiding, moving and freezing the real one).
+    private final class Pointer {
+        var at = CGPoint(x: 400, y: 300)
+        var held = 0, released = 0
+        var movedTo: CGPoint?
+        var putBack: CGPoint?
+
+        @MainActor
+        var capture: InputController.PointerCapture {
+            InputController.PointerCapture(
+                location: { self.at },
+                hold: { self.held += 1; self.movedTo = $0 },
+                release: { self.released += 1; self.putBack = $0 })
+        }
+    }
+
+    /// A controller that never touches the real pointer, with its editor window "here".
+    private func controller(_ f: Fixture, pointer: Pointer,
+                            window: CGRect? = CGRect(x: 100, y: 100, width: 1000, height: 600)) -> InputController {
+        let input = InputController(model: f.model)
+        input.pointer = pointer.capture
+        input.editorFrame = { window }
+        return input
+    }
+
     /// Mouse movement as macOS reports it with the pointer over the desktop: no window.
     private func movement(dx: Int64, flags: CGEventFlags, at stamp: UInt64) throws -> NSEvent {
         let cg = try XCTUnwrap(CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
@@ -161,9 +187,9 @@ final class JogTests: XCTestCase {
         f.model.mouseJogStep = .frame
         f.model.mouseJogSensitivity = 0.35
         f.model.select(a.id)
-        let input = InputController(model: f.model)
-        var held = 0, released = 0
-        input.pointer = InputController.PointerCapture(hold: { held += 1 }, release: { released += 1 })
+        let pointer = Pointer()
+        pointer.at = CGPoint(x: 1400, y: 40)          // over the desktop, right of the window
+        let input = controller(f, pointer: pointer)
         func start() throws -> Double { try XCTUnwrap(f.en.doc.subtitle(a.id)).start }
 
         // Control held, pointer over the desktop: the first movement takes hold of the
@@ -175,7 +201,10 @@ final class JogTests: XCTestCase {
             XCTAssertTrue(input.mouseMovedOutside(e, appActive: true, editorIsKey: true))
             last = e
         }
-        XCTAssertEqual(held, 1)
+        XCTAssertEqual(pointer.held, 1)
+        // The hidden pointer was brought inside the editor window for the hold.
+        let home = try XCTUnwrap(pointer.movedTo)
+        XCTAssertTrue(CGRect(x: 100, y: 100, width: 1000, height: 600).contains(home))
         XCTAssertTrue(f.model.isJogging)
         XCTAssertEqual(f.model.jogEdge, .start)
         let moved = try start()
@@ -188,9 +217,155 @@ final class JogTests: XCTestCase {
         // The key let go: the pointer is free again, and movement is just movement.
         let free = try movement(dx: 8, flags: [], at: 900_000_000)
         XCTAssertFalse(input.mouseMovedOutside(free, appActive: true, editorIsKey: true))
-        XCTAssertEqual(released, 1)
+        XCTAssertEqual(pointer.released, 1)
+        XCTAssertEqual(pointer.putBack, CGPoint(x: 1400, y: 40))     // back where it was taken from
         XCTAssertEqual(try start(), moved, accuracy: 0.0001)
         f.model.endJog(commit: true)
+    }
+
+    func testAJogStartedInsideTheWindowLeavesThePointerWhereItIs() throws {
+        let a = sub(1, 5, "A")
+        let f = makeFixture([("en", [a])])
+        f.model.mouseJogOn = true
+        f.model.select(a.id)
+        let pointer = Pointer()                       // inside the window
+        let input = controller(f, pointer: pointer)
+        // (Reported with no window all the same: the hold is what's looked at here.)
+        XCTAssertTrue(input.mouseMovedOutside(try movement(dx: 8, flags: .maskAlternate, at: 10_000_000),
+                                              appActive: true, editorIsKey: true))
+        XCTAssertEqual(pointer.held, 1)
+        XCTAssertNil(pointer.movedTo)
+        input.mouseMovedOutside(try movement(dx: 8, flags: [], at: 20_000_000), appActive: true, editorIsKey: true)
+        XCTAssertEqual(pointer.released, 1)
+        XCTAssertNil(pointer.putBack)
+        f.model.endJog(commit: true)
+    }
+
+    func testAWobbleOfTheHandOutsideTheWindowIsNotAJog() throws {
+        let a = sub(1, 5, "A")
+        let f = makeFixture([("en", [a])])
+        f.model.mouseJogOn = true
+        f.model.select(a.id)
+        let pointer = Pointer()
+        pointer.at = CGPoint(x: 1400, y: 40)
+        let input = controller(f, pointer: pointer)
+        // Control-click on something out there: a point or two of travel isn't a jog.
+        XCTAssertFalse(input.mouseMovedOutside(try movement(dx: 1, flags: .maskControl, at: 10_000_000),
+                                               appActive: true, editorIsKey: true))
+        XCTAssertFalse(input.mouseMovedOutside(try movement(dx: -1, flags: .maskControl, at: 20_000_000),
+                                               appActive: true, editorIsKey: true))
+        XCTAssertEqual(pointer.held, 0)
+        // Going on moving is one.
+        XCTAssertTrue(input.mouseMovedOutside(try movement(dx: 2, flags: .maskControl, at: 30_000_000),
+                                              appActive: true, editorIsKey: true))
+        XCTAssertEqual(pointer.held, 1)
+        input.mouseMovedOutside(try movement(dx: 2, flags: [], at: 40_000_000), appActive: true, editorIsKey: true)
+        XCTAssertEqual(pointer.released, 1)
+        f.model.endJog(commit: true)
+    }
+
+    /// The pointer's position is watched while the key is held, so the jog starts out there
+    /// even when macOS reports no movement to KPTN.SUB at all.
+    func testWatchingThePointerStartsAJogOutsideTheWindowWithNoMovementReported() throws {
+        let a = sub(1, 5, "A")
+        let f = makeFixture([("en", [a])])
+        f.model.mouseJogOn = true
+        f.model.mouseJogStep = .frame
+        f.model.mouseJogSensitivity = 0.35
+        f.model.select(a.id)
+
+        // Inside the window: movement comes as events there, and the watch leaves it alone.
+        let inside = Pointer()
+        let first = controller(f, pointer: inside)
+        first.pointerWatchTick(.start, held: [.control], appActive: true, editorIsKey: true)
+        inside.at.x += 40
+        first.pointerWatchTick(.start, held: [.control], appActive: true, editorIsKey: true)
+        XCTAssertEqual(inside.held, 0)
+
+        let pointer = Pointer()
+        pointer.at = CGPoint(x: 1400, y: 40)          // over the desktop
+        let input = controller(f, pointer: pointer)
+        func tick(_ held: NSEvent.ModifierFlags = [.control], active: Bool = true, key: Bool = true) {
+            input.pointerWatchTick(.start, held: held, appActive: active, editorIsKey: key)
+        }
+
+        // Control goes down: travel is measured from here. Still, or a wobble: nothing.
+        tick()
+        tick()
+        pointer.at.x += 2
+        tick()
+        XCTAssertEqual(pointer.held, 0)
+
+        // Real travel, but another app is in front, or a sheet is up: nothing.
+        pointer.at.x += 20
+        tick(active: false)
+        tick(key: false)
+        XCTAssertEqual(pointer.held, 0)
+
+        // The key let go (or the other one pressed): the watch is over.
+        tick([])
+        tick([.option])
+        XCTAssertEqual(pointer.held, 0)
+
+        // Control again, and real travel: the jog takes the pointer and brings it inside.
+        tick()
+        pointer.at.x += 6
+        tick()
+        XCTAssertEqual(pointer.held, 1)
+        XCTAssertNotNil(pointer.movedTo)
+        // Taken once: later ticks ask nothing more of it.
+        tick()
+        XCTAssertEqual(pointer.held, 1)
+
+        // From there the reported movement jogs, and letting go puts the pointer back.
+        for k in 1...40 {
+            input.mouseMovedOutside(try movement(dx: 8, flags: .maskControl, at: UInt64(k) * 10_000_000),
+                                    appActive: true, editorIsKey: true)
+        }
+        XCTAssertTrue(f.model.isJogging)
+        XCTAssertGreaterThan(try XCTUnwrap(f.en.doc.subtitle(a.id)).start, 1.2)
+        input.mouseMovedOutside(try movement(dx: 8, flags: [], at: 900_000_000), appActive: true, editorIsKey: true)
+        XCTAssertEqual(pointer.released, 1)
+        XCTAssertEqual(pointer.putBack, CGPoint(x: 1428, y: 40))
+        f.model.endJog(commit: true)
+    }
+
+    func testTheWatchLeavesThePointerAloneWithNoTitleSelectedOrMouseJogOff() {
+        let a = sub(1, 5, "A")
+        let f = makeFixture([("en", [a])])
+        let pointer = Pointer()
+        pointer.at = CGPoint(x: 1400, y: 40)
+        let input = controller(f, pointer: pointer)
+        func travel() {
+            pointer.at.x += 30
+            input.pointerWatchTick(.end, held: [.option], appActive: true, editorIsKey: true)
+        }
+        f.model.mouseJogOn = true
+        f.model.select(nil)
+        input.pointerWatchTick(.end, held: [.option], appActive: true, editorIsKey: true)   // Option goes down
+        travel()
+        f.model.select(a.id)
+        f.model.mouseJogOn = false
+        travel()
+        XCTAssertEqual(pointer.held, 0)
+        f.model.mouseJogOn = true
+        travel()
+        XCTAssertEqual(pointer.held, 1)
+    }
+
+    func testWhereTheHiddenPointerGoesForAJogFromOutside() throws {
+        let window = CGRect(x: 100, y: 100, width: 1000, height: 600)
+        // Inside already (or no window to go to): it stays put.
+        XCTAssertNil(InputController.jogHome(pointer: CGPoint(x: 400, y: 300), window: window))
+        XCTAssertNil(InputController.jogHome(pointer: CGPoint(x: 1400, y: 40), window: nil))
+        XCTAssertNil(InputController.jogHome(pointer: CGPoint(x: 1400, y: 40), window: .zero))
+        // Outside: over the waveform's part of the window (right of the cards, near the bottom).
+        let home = try XCTUnwrap(InputController.jogHome(pointer: CGPoint(x: 1400, y: 40), window: window))
+        XCTAssertEqual(home.x, 700, accuracy: 0.001)
+        XCTAssertEqual(home.y, 220, accuracy: 0.001)
+        // The Mac moves the pointer in coordinates that run down from the top of the main display.
+        XCTAssertEqual(InputController.PointerCapture.quartz(CGPoint(x: 700, y: 220), mainDisplayHeight: 1440),
+                       CGPoint(x: 700, y: 1220))
     }
 
     func testMovementOutsideIsLeftAloneWhenKPTNSUBIsntInFrontOrASheetIsUp() throws {
@@ -198,15 +373,15 @@ final class JogTests: XCTestCase {
         let f = makeFixture([("en", [a])])
         f.model.mouseJogOn = true
         f.model.select(a.id)
-        let input = InputController(model: f.model)
-        var held = 0
-        input.pointer = InputController.PointerCapture(hold: { held += 1 }, release: {})
+        let pointer = Pointer()
+        pointer.at = CGPoint(x: 1400, y: 40)
+        let input = controller(f, pointer: pointer)
         for k in 1...60 {
             let e = try movement(dx: 8, flags: .maskControl, at: UInt64(k) * 10_000_000)
             XCTAssertFalse(input.mouseMovedOutside(e, appActive: false, editorIsKey: true))   // another app in front
             XCTAssertFalse(input.mouseMovedOutside(e, appActive: true, editorIsKey: false))   // a sheet or Settings
         }
-        XCTAssertEqual(held, 0)
+        XCTAssertEqual(pointer.held, 0)
         XCTAssertFalse(f.model.isJogging)
         XCTAssertEqual(try XCTUnwrap(f.en.doc.subtitle(a.id)).start, 1, accuracy: 0.0001)
     }

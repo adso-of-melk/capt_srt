@@ -20,6 +20,9 @@ struct SheetHost: View {
             case .languageOptions:
                 if let track = model.video?.track(model.languageOptionsID) {
                     LanguageOptionsSheet(model: model, track: track)
+                } else {
+                    // The language is gone (deleted, another video): never leave an empty sheet up.
+                    Color.clear.frame(width: 1, height: 1).onAppear { model.sheet = nil }
                 }
             }
         }
@@ -445,7 +448,7 @@ struct LanguageOptionsSheet: View {
                 }
                 Text(v.exportEncoding == nil
                      ? "UTF-8 holds every language. Choose an older code page only if a client's system needs it."
-                     : "Characters this code page can't hold are written as “?”, and export tells you how many.")
+                     : "For SRT files (WebVTT is always UTF-8). Characters this code page can't hold are written as “?”, and export tells you how many.")
                     .font(Theme.label(11, .regular)).foregroundStyle(Theme.textDim)
                 if v.language.isRightToLeft {
                     Toggle("Add right-to-left marks to each line", isOn: o.directionMarks)

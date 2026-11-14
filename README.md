@@ -45,7 +45,10 @@ Each video has a **master** language (★) and any number of others, shown side 
 ## Coming in the next build
 
 - **Duplicate Language.** Under **+** (and in the Language menu): a copy of a language with all its titles, in a new column beside it.
-- **Mouse jog really does work outside the window now** (0.42's version didn't): a jog starts and carries on with the pointer over the desktop or another window.
+- **Mouse jog really does work outside the window now** (0.42's version didn't). Hold Control or Option with the pointer anywhere (the desktop, another window, another display) and move the mouse: after a few points of travel the jog starts. The hidden pointer is brought inside the window for the hold and put back where it was when you let go. KPTN.SUB watches the pointer's position itself while the key is held, so this no longer depends on how macOS reports movement out there.
+- **Two languages with the same code export to two files** (`Film.en.srt`, `Film.en-2.srt`) instead of one writing over the other.
+- **WebVTT is always UTF-8**; a language's older code page applies to SRT only.
+- **Smoother waveform with many titles**: each box's formatted text is worked out once, not on every redraw.
 
 ## New in 0.42
 

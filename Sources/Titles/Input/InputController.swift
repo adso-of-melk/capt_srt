@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import os
 
 /// App-wide keyboard, modifier-jog and wheel handling.
 ///
@@ -23,15 +24,66 @@ final class InputController {
     /// The time of the last movement taken from outside the window, so one movement reported
     /// both to KPTN.SUB and to the app under the pointer counts once.
     private var lastOutsideMove: TimeInterval = -1
+    /// One line in the Mac's log per hold of Control/Option with the pointer outside the
+    /// window, saying how the movement was seen and whether it was taken. If a jog out there
+    /// ever fails again, the log says why (Console, or `log show`, subsystem KPTN.SUB).
+    private let jogLog = Logger(subsystem: "KPTN.SUB", category: "jog")
+    private var loggedOutsideHold = false
 
     /// Hiding and freezing the pointer for a jog. Tests swap in one that leaves the real
     /// mouse alone.
     @MainActor
     struct PointerCapture {
-        var hold: @MainActor () -> Void = { NSCursor.hide(); CGAssociateMouseAndMouseCursorPosition(0) }
-        var release: @MainActor () -> Void = { CGAssociateMouseAndMouseCursorPosition(1); NSCursor.unhide() }
+        /// Where the pointer is on the screen (AppKit's coordinates: y goes up).
+        var location: @MainActor () -> CGPoint = { NSEvent.mouseLocation }
+        /// Hides the pointer and freezes it. With `moveTo`, it is put there first: a jog that
+        /// starts outside the editor window brings the hidden pointer inside.
+        var hold: @MainActor (_ moveTo: CGPoint?) -> Void = { target in
+            NSCursor.hide()
+            if let target {
+                CGWarpMouseCursorPosition(PointerCapture.quartz(target))
+                // After moving the pointer, macOS ignores the mouse for a quarter of a
+                // second; joining the two again ends that at once.
+                CGAssociateMouseAndMouseCursorPosition(1)
+            }
+            CGAssociateMouseAndMouseCursorPosition(0)
+        }
+        /// Lets the pointer go and shows it, back where it was taken from (`putBack`).
+        var release: @MainActor (_ putBack: CGPoint?) -> Void = { back in
+            CGAssociateMouseAndMouseCursorPosition(1)
+            if let back {
+                CGWarpMouseCursorPosition(PointerCapture.quartz(back))
+                CGAssociateMouseAndMouseCursorPosition(1)
+            }
+            NSCursor.unhide()
+        }
+
+        /// AppKit's screen point (y up from the bottom of the main display) as Quartz wants
+        /// it (y down from the top of the main display).
+        static func quartz(_ p: CGPoint, mainDisplayHeight: CGFloat? = nil) -> CGPoint {
+            let height = mainDisplayHeight ?? CGDisplayBounds(CGMainDisplayID()).height
+            return CGPoint(x: p.x, y: height - p.y)
+        }
     }
     var pointer = PointerCapture()
+    /// The editor window's place on the screen. Tests give one; the app reads its window.
+    var editorFrame: (@MainActor () -> CGRect?)?
+
+    /// Where the pointer was when a jog took it from outside the editor window. It goes back
+    /// there when the key is let go.
+    private var takenFrom: CGPoint?
+    /// The first movement reported after the pointer was brought inside includes that move.
+    private var skipNextMovement = false
+    /// How far the mouse has travelled outside the window during this hold of the key.
+    private var outsideTravel: CGFloat = 0
+    /// Outside the window a jog starts after this much travel (points), so a Control-click or
+    /// Option-click out there, with a slight wobble of the hand, isn't taken for one.
+    static let outsideStartDistance: CGFloat = 3
+    /// While Control or Option is held, the pointer's position is also watched directly, so
+    /// a jog starts out there whether or not macOS reports the movement to KPTN.SUB.
+    private var watch: Timer?
+    /// Where the pointer was when the key went down (or last was, inside the window).
+    private var watchFrom: CGPoint?
     private var resignObserver: NSObjectProtocol?
 
     /// The mouse is hidden and frozen for jogging, on behalf of this edge.
@@ -64,12 +116,13 @@ final class InputController {
         }
         // Mouse events only (no keys), so this needs no Accessibility permission.
         outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
-            MainActor.assumeIsolated { _ = self?.mouseMovedOutside(event) }
+            MainActor.assumeIsolated { _ = self?.mouseMovedOutside(event, viaOtherApp: true) }
         }
         resignObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
+                self?.stopWatching()
                 self?.endJog(commit: true)
             }
         }
@@ -84,6 +137,10 @@ final class InputController {
         // A jog starts and carries on out there exactly as it does over the waveform.
         if e.type == .mouseMoved, e.window == nil {
             return mouseMovedOutside(e) ? nil : e
+        }
+        if e.type == .flagsChanged {
+            loggedOutsideHold = false
+            outsideTravel = 0
         }
         let flags = e.modifierFlags.intersection([.shift, .control, .option, .command])
         // The mouse is only ever held for as long as the key that asked for it.
@@ -113,6 +170,8 @@ final class InputController {
             if let held = model.jogEdge, edge != held { endJog(commit: true) }
             jogAccumulator = 0
             wheelAccumulator = 0
+            watchPointer(for: Self.mouseJogEdge(flags: flags, mouseJogOn: model.mouseJogOn, hasMedia: model.hasMedia,
+                                                hasSelection: model.doc.selectedID != nil))
             // Control / Option let go: a nudge made while holding them plays now.
             if !e.modifierFlags.contains(.control) && !e.modifierFlags.contains(.option) {
                 model.modifiersReleased()
@@ -120,6 +179,12 @@ final class InputController {
             return e
 
         case .mouseMoved:
+            // A jog that began outside the window brought the pointer inside: the first
+            // movement reported after that is the move itself, not the hand.
+            if skipNextMovement, capturedEdge != nil {
+                skipNextMovement = false
+                return nil
+            }
             // The key's own state travels with the event, so this never depends on having
             // seen the key go down.
             return jogWithMouse(e, flags: flags, model: model) ? nil : e
@@ -359,12 +424,27 @@ final class InputController {
     }
 
     /// Mouse movement with Control / Option held: jog the selected title's edge.
-    private func jogWithMouse(_ e: NSEvent, flags: NSEvent.ModifierFlags, model: AppModel) -> Bool {
+    private func jogWithMouse(_ e: NSEvent, flags: NSEvent.ModifierFlags, model: AppModel,
+                              seenBy route: String = "its own events") -> Bool {
         guard let edge = Self.mouseJogEdge(flags: flags, mouseJogOn: model.mouseJogOn, hasMedia: model.hasMedia,
                                            hasSelection: model.doc.selectedID != nil) else { return false }
-        captureCursor(for: edge)
+        captureCursor(for: edge, seenBy: route)
         mouseJog(edge, dx: e.deltaX, coarse: flags.contains(.shift))
         return true
+    }
+
+    /// Whether the editor is showing (not Home, the project's videos, or a timecode being typed).
+    private func isEditing(_ model: AppModel) -> Bool {
+        !model.showHome && model.project != nil && !model.showProjectView && !model.editingTimecode
+    }
+
+    /// One line in the log per hold of the key with the pointer outside the window.
+    private func logOutside(_ route: String, key: Bool, editing: Bool, model: AppModel) {
+        guard !loggedOutsideHold else { return }
+        loggedOutsideHold = true
+        let selected = model.doc.selectedID != nil
+        let jogOn = model.mouseJogOn, media = model.hasMedia
+        jogLog.notice("jog key held, pointer outside the window: seen by \(route, privacy: .public) editorKey=\(key) editing=\(editing) selection=\(selected) mouseJog=\(jogOn) media=\(media)")
     }
 
     /// Mouse movement with the pointer outside every KPTN.SUB window (the desktop, or another
@@ -372,15 +452,17 @@ final class InputController {
     /// whether the movement was used. `appActive` and `editorIsKey` are read from the app
     /// unless a test says otherwise.
     @discardableResult
-    func mouseMovedOutside(_ e: NSEvent, appActive: Bool? = nil, editorIsKey: Bool? = nil) -> Bool {
+    func mouseMovedOutside(_ e: NSEvent, viaOtherApp: Bool = false,
+                           appActive: Bool? = nil, editorIsKey: Bool? = nil) -> Bool {
         // Cheap first: this also sees every mouse movement while another app is in front.
         guard appActive ?? NSApp.isActive, let model else { return false }
         let flags = e.modifierFlags.intersection([.shift, .control, .option, .command])
         if capturedEdge != nil, Self.edge(for: flags) != capturedEdge { releaseCursor() }
-        let editing = !model.showHome && model.project != nil && !model.showProjectView && !model.editingTimecode
-        guard Self.acceptsOutsideMovement(appActive: true,
-                                          editorIsKey: editorIsKey ?? (model.mainWindow?.isKeyWindow ?? false),
-                                          editing: editing) else {
+        let editing = isEditing(model)
+        let key = editorIsKey ?? (model.mainWindow?.isKeyWindow ?? false)
+        let route = viaOtherApp ? "another app's events" : "its own events"
+        if Self.edge(for: flags) != nil { logOutside(route, key: key, editing: editing, model: model) }
+        guard Self.acceptsOutsideMovement(appActive: true, editorIsKey: key, editing: editing) else {
             // A sheet or Settings took the keyboard mid-jog: lock what was done.
             if model.isJogging { endJog(commit: true) }
             return false
@@ -389,20 +471,106 @@ final class InputController {
         // under the pointer): it counts once.
         guard e.timestamp != lastOutsideMove else { return capturedEdge != nil }
         lastOutsideMove = e.timestamp
-        return jogWithMouse(e, flags: flags, model: model)
+        // Not held yet: a few points of travel first (see `outsideStartDistance`).
+        if capturedEdge == nil {
+            guard Self.edge(for: flags) != nil else { return false }
+            outsideTravel += abs(e.deltaX)
+            guard outsideTravel >= Self.outsideStartDistance else { return false }
+        }
+        return jogWithMouse(e, flags: flags, model: model, seenBy: route)
     }
 
-    /// Hides the pointer and freezes it, so mouse movement is raw and never hits the screen edge.
-    private func captureCursor(for edge: Edge) {
+    // MARK: Watching the pointer
+
+    /// Starts (or with nil, stops) watching the pointer's position for a jog of this edge.
+    private func watchPointer(for edge: Edge?) {
+        stopWatching()
+        guard let edge, capturedEdge == nil else { return }
+        watchFrom = pointer.location()
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pointerWatchTick(edge) }
+        }
+        // Not while a menu is open or a window is being dragged (those pause this mode).
+        RunLoop.main.add(timer, forMode: .default)
+        watch = timer
+    }
+
+    private func stopWatching() {
+        watch?.invalidate()
+        watch = nil
+        watchFrom = nil
+    }
+
+    /// 60 times a second while Control or Option is held and the pointer isn't taken yet:
+    /// has it moved, outside the editor window? Then the jog takes it, exactly as reported
+    /// movement would. `held`, `appActive` and `editorIsKey` are read from the Mac unless a
+    /// test says otherwise.
+    func pointerWatchTick(_ edge: Edge, held: NSEvent.ModifierFlags? = nil,
+                          appActive: Bool? = nil, editorIsKey: Bool? = nil) {
+        guard let model, capturedEdge == nil else { stopWatching(); return }
+        let flags = (held ?? NSEvent.modifierFlags).intersection([.shift, .control, .option, .command])
+        // The key was let go (perhaps while another app had the keyboard).
+        guard Self.edge(for: flags) == edge else { stopWatching(); return }
+        let at = pointer.location()
+        guard let from = watchFrom else { watchFrom = at; return }
+        // Inside the window, movement arrives as events, the way a jog has always started.
+        guard Self.jogHome(pointer: at, window: editorRect()) != nil else {
+            watchFrom = at
+            return
+        }
+        guard abs(at.x - from.x) >= Self.outsideStartDistance else { return }
+        let editing = isEditing(model)
+        let key = editorIsKey ?? (model.mainWindow?.isKeyWindow ?? false)
+        logOutside("watching the pointer", key: key, editing: editing, model: model)
+        guard Self.acceptsOutsideMovement(appActive: appActive ?? NSApp.isActive, editorIsKey: key, editing: editing),
+              Self.mouseJogEdge(flags: flags, mouseJogOn: model.mouseJogOn, hasMedia: model.hasMedia,
+                                hasSelection: model.doc.selectedID != nil) == edge else { return }
+        captureCursor(for: edge, seenBy: "watching the pointer")
+    }
+
+    /// The part of the editor window that is on its screen.
+    private func editorRect() -> CGRect? {
+        if let given = editorFrame { return given() }
+        guard let window = model?.mainWindow else { return nil }
+        guard let screen = window.screen else { return window.frame }
+        return window.frame.intersection(screen.frame)
+    }
+
+    /// Where the hidden pointer is put for a jog that starts outside the editor window: over
+    /// the waveform's part of it (right of the cards, near the bottom). nil: the pointer is
+    /// inside already, and stays where it is.
+    static func jogHome(pointer: CGPoint, window frame: CGRect?) -> CGPoint? {
+        guard let frame, !frame.isEmpty, !frame.contains(pointer) else { return nil }
+        return CGPoint(x: frame.minX + frame.width * 0.6, y: frame.minY + frame.height * 0.2)
+    }
+
+    // MARK: Holding the pointer
+
+    /// Hides the pointer and freezes it, so mouse movement is raw and never hits the screen
+    /// edge. From outside the editor window, the hidden pointer is first brought inside:
+    /// there its movement is reported the way it always has been, whatever macOS does with
+    /// movement over the desktop or another app. It goes back when the key is let go.
+    private func captureCursor(for edge: Edge, seenBy route: String = "its own events") {
         guard capturedEdge == nil else { return }
         capturedEdge = edge
-        pointer.hold()
+        stopWatching()
+        let at = pointer.location()
+        let home = Self.jogHome(pointer: at, window: editorRect())
+        if home != nil {
+            takenFrom = at
+            skipNextMovement = true
+            jogLog.notice("jog started with the pointer outside the window, seen by \(route, privacy: .public)")
+        }
+        pointer.hold(home)
     }
 
     private func releaseCursor() {
         guard capturedEdge != nil else { return }
         capturedEdge = nil
-        pointer.release()
+        skipNextMovement = false
+        outsideTravel = 0
+        pointer.release(takenFrom)
+        takenFrom = nil
     }
 
     private func endJog(commit: Bool) {

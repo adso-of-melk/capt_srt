@@ -487,7 +487,7 @@ final class WaveformNSView: NSView {
             (isSel ? Palette.amber : base).setFill()
             NSBezierPath(roundedRect: pill, xRadius: 7.5, yRadius: 7.5).fill()
             drawText(numberText, at: CGPoint(x: pill.minX + 5, y: pill.minY + 1), font: font, color: Palette.background)
-            let fullText = Self.boxText(s.text, color: Palette.text.withAlphaComponent(0.9 * dim))
+            let fullText = cachedBoxText(s.text, focused: focused, dim: dim)
             // Beside the number pill when there's room; otherwise underneath it.
             let besidePill = r.maxX - pill.maxX - 9 >= 40
             let textRect = besidePill
@@ -530,13 +530,36 @@ final class WaveformNSView: NSView {
         }
     }
 
+    /// Box texts already formatted. The waveform redraws many times a second while playing,
+    /// and working out a title's italics afresh for every box on every frame would cost
+    /// smoothness; a title's text only changes when it's edited.
+    private var boxTextCache: [String: NSAttributedString] = [:]
+
+    private func cachedBoxText(_ markup: String, focused: Bool, dim: CGFloat) -> NSAttributedString {
+        // The focused language and the others are drawn at different strengths.
+        let key = (focused ? "1" : "0") + markup
+        if let hit = boxTextCache[key] { return hit }
+        if boxTextCache.count > 1500 { boxTextCache.removeAll(keepingCapacity: true) }
+        let built = Self.boxText(markup, color: Palette.text.withAlphaComponent(0.9 * dim))
+        boxTextCache[key] = built
+        return built
+    }
+
     /// A box's text as the waveform shows it: italic and bold as in the card, every tag
     /// hidden ({\an8}, <font …>), blank space at either end left out.
     static func boxText(_ markup: String, color: NSColor, size: CGFloat = 11) -> NSAttributedString {
-        let a = NSMutableAttributedString(attributedString: RichMarkup.attributed(markup, size: size))
-        // RichMarkup keeps position and colour codes as typed; the waveform hides them.
-        for m in Markup.tagPattern.matches(in: a.string, range: NSRange(location: 0, length: a.length)).reversed() {
-            a.deleteCharacters(in: m.range)
+        let a: NSMutableAttributedString
+        if markup.contains("<") || markup.contains("{") {
+            a = NSMutableAttributedString(attributedString: RichMarkup.attributed(markup, size: size))
+            // RichMarkup keeps position and colour codes as typed; the waveform hides them.
+            for m in Markup.tagPattern.matches(in: a.string, range: NSRange(location: 0, length: a.length)).reversed() {
+                a.deleteCharacters(in: m.range)
+            }
+        } else {
+            // No tags at all (most titles): nothing to work out.
+            a = NSMutableAttributedString(string: markup, attributes: [
+                .font: RichMarkup.font(size: size, italic: false, bold: false)
+            ])
         }
         let s = a.string as NSString
         let visible = CharacterSet.whitespacesAndNewlines.inverted

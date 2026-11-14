@@ -393,6 +393,10 @@ final class ItalicsPasteTests: XCTestCase {
         XCTAssertEqual(all.string, "Two\nlines")
         XCTAssertTrue((0..<all.length).allSatisfy { italic(all, $0) })
         XCTAssertEqual(WaveformNSView.boxText("<i> </i>", color: .white).length, 0)
+        // No tags at all: the text as it is, upright.
+        let plain = WaveformNSView.boxText("  Plain & simple \n", color: .white)
+        XCTAssertEqual(plain.string, "Plain & simple")
+        XCTAssertFalse(italic(plain, 0))
     }
 
     func testSelectionAndWarningNeverShareAColour() {

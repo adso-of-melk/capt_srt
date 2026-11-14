@@ -213,14 +213,17 @@ enum SubtitleFormats {
     static func encoded(_ subs: [Subtitle], format: ExportFormat, bom: Bool, crlf: Bool,
                         encoding name: String? = nil, directionMarks: Bool = false) -> (data: Data, lost: Int) {
         let marked = directionMarks ? subs.map { s -> Subtitle in var s = s; s.text = withDirectionMarks(s.text); return s } : subs
-        guard let name, let enc = encoding(named: name), enc != .utf8 else {
+        // WebVTT is UTF-8 by definition: a code page only ever applies to SRT.
+        guard format == .srt, let name, let enc = encoding(named: name), enc != .utf8 else {
             return (data(marked, format: format, bom: bom, crlf: crlf), 0)
         }
-        var text = format == .srt ? srt(marked) : vtt(marked)
+        var text = srt(marked)
         text = text.replacingOccurrences(of: "\r\n", with: "\n")
         if crlf { text = text.replacingOccurrences(of: "\n", with: "\r\n") }
         if let exact = text.data(using: enc) { return (exact, 0) }
-        let lost = text.filter { String($0).data(using: enc) == nil }.count
+        // Each different character is tried once, however long the file.
+        let unknown = Set(text).filter { String($0).data(using: enc) == nil }
+        let lost = text.filter { unknown.contains($0) }.count
         return (text.data(using: enc, allowLossyConversion: true) ?? Data(text.utf8), lost)
     }
 
