@@ -841,6 +841,51 @@ extension AppModel {
         flash("Added \(language.name): \(subs.count) titles from \(master.language.name)")
     }
 
+    /// Duplicate Language: a copy of a language with all its titles (text and timing), as a
+    /// new column right beside it. From then on the copy is a language of its own: a copy
+    /// of the master is linked to it title by title, and a copy of another language keeps
+    /// that language's links (and its lock).
+    @discardableResult
+    func duplicateLanguage(_ source: Track) -> Track? {
+        guard let video, video.tracks.contains(where: { $0.id == source.id }) else { return nil }
+        let isMaster = source.id == video.masterTrackID
+        let subs = source.doc.subtitles.map {
+            Subtitle(start: $0.start, end: $0.end, text: $0.text, link: isMaster ? $0.id : $0.link)
+        }
+        let names = Set(video.tracks.map(\.language.name))
+        let copy = Track(language: Language(code: source.language.code,
+                                            name: Self.copyName(for: source.language.name, taken: names)),
+                         locked: isMaster ? false : source.locked, subtitles: subs)
+        copy.maxCPS = source.maxCPS
+        copy.maxCharsPerLine = source.maxCharsPerLine
+        copy.maxLines = source.maxLines
+        copy.spellCheck = source.spellCheck
+        copy.exportEncoding = source.exportEncoding
+        copy.directionMarks = source.directionMarks
+        attach(copy)
+        let at = video.tracks.firstIndex { $0.id == source.id }.map { $0 + 1 } ?? video.tracks.count
+        video.tracks.insert(copy, at: at)
+        if let column = video.openTrackIDs.firstIndex(of: source.id) {
+            video.openTrackIDs.insert(copy.id, at: column + 1)
+        } else {
+            video.openTrackIDs.append(copy.id)
+        }
+        rebuildRows()
+        focusTrack(copy.id, edit: false)
+        saveProject()
+        flash("Duplicated \(source.language.name): \(subs.count) title\(subs.count == 1 ? "" : "s"). Its name and language are in Language Options.")
+        return copy
+    }
+
+    /// "English copy", then "English copy 2", "English copy 3"…
+    static func copyName(for name: String, taken: Set<String>) -> String {
+        let base = name.hasSuffix(" copy") ? name : "\(name) copy"
+        guard taken.contains(base) else { return base }
+        var n = 2
+        while taken.contains("\(base) \(n)") { n += 1 }
+        return "\(base) \(n)"
+    }
+
     func importLanguagePanel() {
         let panel = NSOpenPanel()
         let types: [UTType?] = [UTType(filenameExtension: "srt"), UTType(filenameExtension: "vtt"), .plainText]
@@ -1081,7 +1126,15 @@ extension AppModel {
                 let out = SubtitleFormats.encoded(t.doc.subtitles, format: format, bom: s.utf8BOM, crlf: s.crlf,
                                                   encoding: t.exportEncoding,
                                                   directionMarks: t.directionMarks && t.language.isRightToLeft)
-                items.append(ExportItem(name: "\(base).\(format.rawValue)", data: out.data, lost: out.lost))
+                // Two languages with the same code (a duplicate) must not write over each
+                // other: the second file is Film.en-2.srt, the third Film.en-3.srt.
+                var name = "\(base).\(format.rawValue)"
+                var n = 2
+                while items.contains(where: { $0.name.lowercased() == name.lowercased() }) {
+                    name = "\(base)-\(n).\(format.rawValue)"
+                    n += 1
+                }
+                items.append(ExportItem(name: name, data: out.data, lost: out.lost))
             }
         }
         return items

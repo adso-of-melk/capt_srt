@@ -288,6 +288,25 @@ struct LanguageMenuItems: View {
     }
 }
 
+/// "Duplicate Language": a copy of a language with all its titles. One language: a plain
+/// item; several: a submenu to choose which.
+struct DuplicateLanguageItems: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        let tracks = model.video?.tracks ?? []
+        if tracks.count == 1, let only = tracks.first {
+            Button("Duplicate \(only.language.name)") { model.duplicateLanguage(only) }
+        } else if !tracks.isEmpty {
+            Menu("Duplicate Language") {
+                ForEach(tracks) { track in
+                    Button("\(track.language.name)  ·  \(track.language.code)") { model.duplicateLanguage(track) }
+                }
+            }
+        }
+    }
+}
+
 /// "+" at the end of the language headers: reopen a closed language, or add one.
 private struct AddLanguageMenu: View {
     @ObservedObject var model: AppModel
@@ -304,6 +323,7 @@ private struct AddLanguageMenu: View {
             }
             Button("New Language from Master…") { model.sheet = .newLanguage }
             Button("Import Language…") { model.importLanguagePanel() }
+            DuplicateLanguageItems(model: model)
         } label: {
             Image(systemName: "plus.circle.fill").font(.system(size: 14)).foregroundStyle(Theme.teal)
         }

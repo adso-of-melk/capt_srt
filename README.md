@@ -33,6 +33,7 @@ Each video has a **master** language (★) and any number of others, shown side 
 
 - **Language ▸ New Language from Master…** makes a new language with the master's timecodes and empty text (or a copy of the text). It can be **free** (default: retime anything) or **locked** (🔒: master timing, text-only edits, follows master changes automatically).
 - **Import Language…** reads an SRT or VTT and links each title to the master title it overlaps most.
+- **Duplicate Language** (the **+** at the end of the column headers, or the Language menu) makes a copy of a language with all its titles, text and timing, in a new column beside it, named "English copy". A copy of the master is linked to it row for row; a copy of another language keeps that language's links, lock and options. Give it its own name or language in Language Options. Two languages with the same code export as `Film.en.srt` and `Film.en-2.srt`, so neither writes over the other.
 - Rows line up by link, not by number, so an empty slot keeps later rows aligned. Double-click an empty slot, or select it and start typing, to make a title with that row's timing.
 - Column headers have a menu (⋯ or right-click): **Language Options…**, lock or unlock, make master, move left or right, close, delete. **+** reopens a closed column or adds one.
 - **Language Options…** changes which language a column is (from the list, or any code and name; spell check, line breaking and the export file name follow, and the project words go along), makes it the master or sets free/locked timing, sets its own reading speed, characters per line and lines, turns spell check on or off for that language, with its project words listed to review or remove, and sets how it exports: UTF-8 or an older code page (Windows-1250 Central European, 1251 Cyrillic, 1252–1257, 874 Thai; characters a code page can't hold become “?” and export says how many), and for right-to-left languages (Arabic, Hebrew, Persian…) right-to-left marks on each line so punctuation lands on the correct side.
@@ -42,6 +43,11 @@ Each video has a **master** language (★) and any number of others, shown side 
 - Undo and redo (⌘Z / ⇧⌘Z) work across all languages in order. While paused, the playhead goes to what changed (half a second before a removed title).
 
 ## Coming in the next build
+
+- **Duplicate Language.** Under **+** (and in the Language menu): a copy of a language with all its titles, in a new column beside it.
+- **Mouse jog really does work outside the window now** (0.42's version didn't): a jog starts and carries on with the pointer over the desktop or another window.
+
+## New in 0.42
 
 - **A small "esc" while you type.** The card with the text cursor shows a little "esc" key on the lower edge of its text box. Esc takes the cursor out; then ⌘I makes the whole title italic again, ⌘V pastes at its end, and Tab, ⌘I runs through titles quickly.
 - **Language Options…** in each language's menu: change the language (or its code and name), master and timing, its own reading speed, characters per line and lines, spell check with its project words, and export text encoding (UTF-8 or an older Windows code page) plus right-to-left marks for Arabic, Hebrew and Persian.

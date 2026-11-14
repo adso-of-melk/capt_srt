@@ -162,6 +162,7 @@ struct TitlesCommands: Commands {
                 Divider()
                 Button("New Language from Master…") { model.sheet = .newLanguage }
                 Button("Import Language…") { model.importLanguagePanel() }
+                DuplicateLanguageItems(model: model)
                 if let track = model.focusedTrack {
                     Divider()
                     if track.id != model.masterTrack?.id {

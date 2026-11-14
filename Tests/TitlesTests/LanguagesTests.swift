@@ -28,6 +28,56 @@ final class LanguagesTests: XCTestCase {
         XCTAssertEqual(f.video.tracks[2].doc.subtitles.map(\.text), ["Hello", "World"])
     }
 
+    func testDuplicatingTheMasterCopiesEveryTitleAndLinksTheCopyToIt() throws {
+        let a = sub(1, 2, "Hello <i>there</i>"), b = sub(3, 4.5, "World")
+        let f = makeFixture([("en", [a, b]), ("hr", [sub(1, 2, "Bok")])])
+
+        let copy = try XCTUnwrap(f.model.duplicateLanguage(f.en))
+
+        XCTAssertEqual(copy.language, Language(code: "en", name: "English copy"))
+        XCTAssertEqual(copy.doc.subtitles.map(\.text), ["Hello <i>there</i>", "World"])
+        XCTAssertEqual(copy.doc.subtitles.map(\.start), [1, 3])
+        XCTAssertEqual(copy.doc.subtitles.map(\.end), [2, 4.5])
+        XCTAssertEqual(copy.doc.subtitles.map(\.link), [a.id, b.id])           // row for row with the master
+        XCTAssertTrue(Set(copy.doc.subtitles.map(\.id)).isDisjoint(with: [a.id, b.id]))   // titles of its own
+        XCTAssertFalse(copy.locked)
+        // Its column sits right beside the original, and it has the focus.
+        XCTAssertEqual(f.video.openTrackIDs, [f.en.id, copy.id, f.video.tracks[2].id])
+        XCTAssertEqual(f.video.focusedTrackID, copy.id)
+        XCTAssertEqual(f.video.masterTrackID, f.en.id)
+        XCTAssertEqual(f.model.rows.count, 2)
+
+        // The copy goes its own way: the original doesn't change with it.
+        copy.doc.setText(copy.doc.subtitles[0].id, "Changed")
+        XCTAssertEqual(f.en.doc.subtitle(a.id)?.text, "Hello <i>there</i>")
+
+        // Neither file writes over the other.
+        let names = f.model.exportItems(allLanguages: true, allVideos: false, format: .srt).map(\.name)
+        XCTAssertEqual(names, ["Film.en.srt", "Film.en-2.srt", "Film.hr.srt"])
+    }
+
+    func testDuplicatingAnotherLanguageKeepsItsLinksAndOptions() throws {
+        let a = sub(1, 2, "Hello"), b = sub(3, 4, "World")
+        let f = makeFixture([("en", [a, b]), ("hr", [sub(1, 2, "Bok"), sub(6, 7, "Samo ovdje")])])
+        f.hr.maxCPS = 12
+        f.hr.exportEncoding = "windows-1250"
+
+        let copy = try XCTUnwrap(f.model.duplicateLanguage(f.hr))
+        XCTAssertEqual(copy.language.name, "Croatian copy")
+        XCTAssertEqual(copy.doc.subtitles.map(\.text), ["Bok", "Samo ovdje"])
+        XCTAssertEqual(copy.doc.subtitles.map(\.link), f.hr.doc.subtitles.map(\.link))
+        XCTAssertEqual(copy.doc.subtitles.first?.link, a.id)
+        XCTAssertEqual(copy.maxCPS, 12)
+        XCTAssertEqual(copy.exportEncoding, "windows-1250")
+        XCTAssertEqual(f.video.openTrackIDs, [f.en.id, f.hr.id, copy.id])
+
+        // A second copy gets a name of its own.
+        let second = try XCTUnwrap(f.model.duplicateLanguage(f.hr))
+        XCTAssertEqual(second.language.name, "Croatian copy 2")
+        XCTAssertEqual(AppModel.copyName(for: "Croatian copy", taken: ["Croatian", "Croatian copy", "Croatian copy 2"]),
+                       "Croatian copy 3")
+    }
+
     func testALockedLanguageKeepsTheMastersTimingAndOnlyItsTextChanges() throws {
         let a = sub(1, 2, "Hello"), b = sub(3, 4, "World")
         let f = makeFixture([("en", [a, b])])
