@@ -17,9 +17,21 @@ import CoreGraphics
 final class InputController {
     weak var model: AppModel?
     private var monitor: Any?
-    /// Mouse movement over other apps' windows or the desktop, so a mouse jog carries on
-    /// past the edge of the KPTN.SUB window.
+    /// Mouse movement that macOS hands to another app (its window is under the pointer).
+    /// Movement over the desktop comes to KPTN.SUB itself, with no window: see `handle`.
     private var outsideMonitor: Any?
+    /// The time of the last movement taken from outside the window, so one movement reported
+    /// both to KPTN.SUB and to the app under the pointer counts once.
+    private var lastOutsideMove: TimeInterval = -1
+
+    /// Hiding and freezing the pointer for a jog. Tests swap in one that leaves the real
+    /// mouse alone.
+    @MainActor
+    struct PointerCapture {
+        var hold: @MainActor () -> Void = { NSCursor.hide(); CGAssociateMouseAndMouseCursorPosition(0) }
+        var release: @MainActor () -> Void = { CGAssociateMouseAndMouseCursorPosition(1); NSCursor.unhide() }
+    }
+    var pointer = PointerCapture()
     private var resignObserver: NSObjectProtocol?
 
     /// The mouse is hidden and frozen for jogging, on behalf of this edge.
@@ -52,7 +64,7 @@ final class InputController {
         }
         // Mouse events only (no keys), so this needs no Accessibility permission.
         outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
-            MainActor.assumeIsolated { self?.mouseMovedOutside(event) }
+            MainActor.assumeIsolated { _ = self?.mouseMovedOutside(event) }
         }
         resignObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
@@ -67,11 +79,17 @@ final class InputController {
 
     private func handle(_ e: NSEvent) -> NSEvent? {
         guard let model else { return e }
+        // The pointer isn't over any KPTN.SUB window (the desktop, the menu bar, past the
+        // window's edge): macOS still sends the active app its movement, with no window.
+        // A jog starts and carries on out there exactly as it does over the waveform.
+        if e.type == .mouseMoved, e.window == nil {
+            return mouseMovedOutside(e) ? nil : e
+        }
         let flags = e.modifierFlags.intersection([.shift, .control, .option, .command])
         // The mouse is only ever held for as long as the key that asked for it.
         if capturedEdge != nil, Self.edge(for: flags) != capturedEdge { releaseCursor() }
         // Only the editor window. Settings and sheets get their keys untouched.
-        // (While jogging, the frozen pointer can report no window; that still counts.)
+        // (While jogging, an event can report no window; that still counts.)
         let inEditor = e.window === model.mainWindow || (model.isJogging && e.window == nil)
         guard inEditor, let window = model.mainWindow else {
             if model.isJogging { endJog(commit: true) }
@@ -349,32 +367,42 @@ final class InputController {
         return true
     }
 
-    /// The pointer is over another app's window or the desktop: the jog goes on as if it
-    /// were over the waveform.
-    private func mouseMovedOutside(_ e: NSEvent) {
-        guard let model else { return }
-        let editing = !model.showHome && model.project != nil && !model.showProjectView && !model.editingTimecode
-        guard Self.acceptsOutsideMovement(appActive: NSApp.isActive,
-                                          editorIsKey: model.mainWindow?.isKeyWindow ?? false,
-                                          editing: editing) else { return }
+    /// Mouse movement with the pointer outside every KPTN.SUB window (the desktop, or another
+    /// app's window): the jog starts and goes on as if it were over the waveform. Returns
+    /// whether the movement was used. `appActive` and `editorIsKey` are read from the app
+    /// unless a test says otherwise.
+    @discardableResult
+    func mouseMovedOutside(_ e: NSEvent, appActive: Bool? = nil, editorIsKey: Bool? = nil) -> Bool {
+        // Cheap first: this also sees every mouse movement while another app is in front.
+        guard appActive ?? NSApp.isActive, let model else { return false }
         let flags = e.modifierFlags.intersection([.shift, .control, .option, .command])
         if capturedEdge != nil, Self.edge(for: flags) != capturedEdge { releaseCursor() }
-        _ = jogWithMouse(e, flags: flags, model: model)
+        let editing = !model.showHome && model.project != nil && !model.showProjectView && !model.editingTimecode
+        guard Self.acceptsOutsideMovement(appActive: true,
+                                          editorIsKey: editorIsKey ?? (model.mainWindow?.isKeyWindow ?? false),
+                                          editing: editing) else {
+            // A sheet or Settings took the keyboard mid-jog: lock what was done.
+            if model.isJogging { endJog(commit: true) }
+            return false
+        }
+        // The same movement can arrive twice (to KPTN.SUB and, as a copy, from the app
+        // under the pointer): it counts once.
+        guard e.timestamp != lastOutsideMove else { return capturedEdge != nil }
+        lastOutsideMove = e.timestamp
+        return jogWithMouse(e, flags: flags, model: model)
     }
 
     /// Hides the pointer and freezes it, so mouse movement is raw and never hits the screen edge.
     private func captureCursor(for edge: Edge) {
         guard capturedEdge == nil else { return }
         capturedEdge = edge
-        NSCursor.hide()
-        CGAssociateMouseAndMouseCursorPosition(0)
+        pointer.hold()
     }
 
     private func releaseCursor() {
         guard capturedEdge != nil else { return }
         capturedEdge = nil
-        CGAssociateMouseAndMouseCursorPosition(1)
-        NSCursor.unhide()
+        pointer.release()
     }
 
     private func endJog(commit: Bool) {

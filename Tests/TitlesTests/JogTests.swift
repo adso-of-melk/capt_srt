@@ -144,6 +144,73 @@ final class JogTests: XCTestCase {
 
     // MARK: Mouse jog outside the window
 
+    /// Mouse movement as macOS reports it with the pointer over the desktop: no window.
+    private func movement(dx: Int64, flags: CGEventFlags, at stamp: UInt64) throws -> NSEvent {
+        let cg = try XCTUnwrap(CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                                       mouseCursorPosition: CGPoint(x: 5, y: 5), mouseButton: .left))
+        cg.setIntegerValueField(.mouseEventDeltaX, value: dx)
+        cg.flags = flags
+        cg.timestamp = stamp
+        return try XCTUnwrap(NSEvent(cgEvent: cg))
+    }
+
+    func testAJogStartsAndCarriesOnWithThePointerOutsideTheWindow() throws {
+        let a = sub(1, 5, "A")
+        let f = makeFixture([("en", [a])])
+        f.model.mouseJogOn = true
+        f.model.mouseJogStep = .frame
+        f.model.mouseJogSensitivity = 0.35
+        f.model.select(a.id)
+        let input = InputController(model: f.model)
+        var held = 0, released = 0
+        input.pointer = InputController.PointerCapture(hold: { held += 1 }, release: { released += 1 })
+        func start() throws -> Double { try XCTUnwrap(f.en.doc.subtitle(a.id)).start }
+
+        // Control held, pointer over the desktop: the first movement takes hold of the
+        // pointer, and enough travel moves the start, wherever the pointer is.
+        var last: NSEvent?
+        for k in 1...60 {
+            let e = try movement(dx: 8, flags: .maskControl, at: UInt64(k) * 10_000_000)
+            XCTAssertNil(e.window)
+            XCTAssertTrue(input.mouseMovedOutside(e, appActive: true, editorIsKey: true))
+            last = e
+        }
+        XCTAssertEqual(held, 1)
+        XCTAssertTrue(f.model.isJogging)
+        XCTAssertEqual(f.model.jogEdge, .start)
+        let moved = try start()
+        XCTAssertGreaterThan(moved, 1.2)
+
+        // The same movement reported a second time counts once.
+        for _ in 1...60 { input.mouseMovedOutside(try XCTUnwrap(last), appActive: true, editorIsKey: true) }
+        XCTAssertEqual(try start(), moved, accuracy: 0.0001)
+
+        // The key let go: the pointer is free again, and movement is just movement.
+        let free = try movement(dx: 8, flags: [], at: 900_000_000)
+        XCTAssertFalse(input.mouseMovedOutside(free, appActive: true, editorIsKey: true))
+        XCTAssertEqual(released, 1)
+        XCTAssertEqual(try start(), moved, accuracy: 0.0001)
+        f.model.endJog(commit: true)
+    }
+
+    func testMovementOutsideIsLeftAloneWhenKPTNSUBIsntInFrontOrASheetIsUp() throws {
+        let a = sub(1, 5, "A")
+        let f = makeFixture([("en", [a])])
+        f.model.mouseJogOn = true
+        f.model.select(a.id)
+        let input = InputController(model: f.model)
+        var held = 0
+        input.pointer = InputController.PointerCapture(hold: { held += 1 }, release: {})
+        for k in 1...60 {
+            let e = try movement(dx: 8, flags: .maskControl, at: UInt64(k) * 10_000_000)
+            XCTAssertFalse(input.mouseMovedOutside(e, appActive: false, editorIsKey: true))   // another app in front
+            XCTAssertFalse(input.mouseMovedOutside(e, appActive: true, editorIsKey: false))   // a sheet or Settings
+        }
+        XCTAssertEqual(held, 0)
+        XCTAssertFalse(f.model.isJogging)
+        XCTAssertEqual(try XCTUnwrap(f.en.doc.subtitle(a.id)).start, 1, accuracy: 0.0001)
+    }
+
     func testMouseJogPicksTheEdgeFromTheKeyHeld() {
         func edge(_ flags: NSEvent.ModifierFlags, on: Bool = true, media: Bool = true, selection: Bool = true) -> Edge? {
             InputController.mouseJogEdge(flags: flags, mouseJogOn: on, hasMedia: media, hasSelection: selection)
