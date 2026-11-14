@@ -15,6 +15,8 @@ protocol PlaybackEngine: AnyObject {
     var onPlayStateChange: ((Bool) -> Void)? { get set }
 
     func load(url: URL) async throws
+    /// Closes the current video, leaving an empty engine.
+    func unload()
     func play()
     func pause()
     func setRate(_ rate: Float)
