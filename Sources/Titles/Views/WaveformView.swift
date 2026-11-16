@@ -1185,8 +1185,8 @@ final class WaveformNSView: NSView {
     }
 
     @objc private func menuDelete(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? UUID, let model, !model.refuseIfLocked() else { return }
-        model.doc.delete(id)
+        guard let id = sender.representedObject as? UUID, let model else { return }
+        model.deleteTitle(id)
     }
 
     /// Edit ▸ Select All (⌘A) while the waveform has focus: every title in this language.

@@ -676,7 +676,20 @@ final class AppModel: ObservableObject {
 
     func deleteSelected() {
         guard let id = doc.selectedID, !refuseIfLocked() else { return }
+        deleteTitle(id)
+    }
+
+    /// Deletes a title. The next one (or the one before, at the end) is selected, in the
+    /// cards and on the waveform alike: while paused the playhead goes to its start, so the
+    /// waveform follows it there too.
+    func deleteTitle(_ id: UUID) {
+        guard doc.subtitle(id) != nil, !refuseIfLocked() else { return }
         doc.delete(id)
+        multiSelection.remove(id)
+        guard let next = doc.selectedID, let s = doc.subtitle(next) else { return }
+        emptySlotRow = nil
+        if !clock.isPlaying { seek(s.start) }
+        bump()
     }
 
     /// Creates a title (used by click-drag) and opens its card for typing.

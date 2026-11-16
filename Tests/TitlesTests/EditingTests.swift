@@ -439,6 +439,21 @@ final class EditingTests: XCTestCase {
         XCTAssertEqual(f.model.doc.selectedID, b.id)
     }
 
+    func testDeletingMovesTheWaveformToTheNextTitleToo() {
+        let a = sub(1, 2, "A"), b = sub(3, 4, "B"), c = sub(30, 31, "C")
+        let f = makeFixture([("en", [a, b, c])])
+        f.model.select(b.id, seekToStart: true)
+        f.model.multiSelection = [b.id]
+        f.model.deleteSelected()
+        XCTAssertEqual(f.model.doc.selectedID, c.id)
+        XCTAssertEqual(f.engine.currentTime, 30, "the playhead (and so the waveform) goes to the next title")
+        XCTAssertTrue(f.model.multiSelection.isEmpty)
+        // The last title: the one before is selected.
+        f.model.deleteTitle(c.id)
+        XCTAssertEqual(f.model.doc.selectedID, a.id)
+        XCTAssertEqual(f.engine.currentTime, 1)
+    }
+
     // MARK: Undo across languages
 
     func testUndoGoesBackThroughTheLanguagesInOrder() {
