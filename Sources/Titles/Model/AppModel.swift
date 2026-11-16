@@ -125,7 +125,11 @@ final class AppModel: ObservableObject {
     @Published var qcMode = false
     /// The kinds of issue QC looks for, ticked in the QC bar.
     @Published var qcKinds: Set<QCIssue> = Set(QCIssue.allCases) {
-        didSet { UserDefaults.standard.set(qcKinds.map(\.rawValue).sorted(), forKey: "qcKinds") }
+        didSet {
+            // Saved as the kinds switched off, so a kind added in a later version starts on.
+            let off = Set(QCIssue.allCases).subtracting(qcKinds)
+            UserDefaults.standard.set(off.map(\.rawValue).sorted(), forKey: "qcKindsOff")
+        }
     }
 
     // Fine-tuning with Control/Option held (Settings ▸ Jogging).
@@ -184,7 +188,13 @@ final class AppModel: ObservableObject {
         if defaults.object(forKey: "replayAfterResize") != nil { replayAfterResize = defaults.bool(forKey: "replayAfterResize") }
         if defaults.object(forKey: "replayAfterMove") != nil { replayAfterMove = defaults.bool(forKey: "replayAfterMove") }
         if defaults.object(forKey: "allowOverlaps") != nil { allowOverlaps = defaults.bool(forKey: "allowOverlaps") }
-        if let kinds = defaults.array(forKey: "qcKinds") as? [String] { qcKinds = Set(kinds.compactMap(QCIssue.init(rawValue:))) }
+        if let off = defaults.array(forKey: "qcKindsOff") as? [String] {
+            qcKinds = Set(QCIssue.allCases).subtracting(off.compactMap(QCIssue.init(rawValue:)))
+        } else if let kinds = defaults.array(forKey: "qcKinds") as? [String] {
+            // Saved by 0.49 as the kinds switched on: those it had, plus every newer kind.
+            let had: Set<QCIssue> = [.spelling, .readingSpeed, .lineLength, .lineCount, .duration, .overlap, .gap, .empty]
+            qcKinds = Set(QCIssue.allCases).subtracting(had.subtracting(kinds.compactMap(QCIssue.init(rawValue:))))
+        }
         if defaults.object(forKey: "autoLineBreaks") != nil { autoLineBreaks = defaults.bool(forKey: "autoLineBreaks") }
         if defaults.object(forKey: "spellCheckOn") != nil { spellCheckOn = defaults.bool(forKey: "spellCheckOn") }
         loadRecentProjects()

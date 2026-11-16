@@ -23,6 +23,16 @@ struct QCBar: View {
             Rectangle().fill(Theme.alert.opacity(0.35)).frame(width: 1, height: 14)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 5) {
+                    // Every kind is looked for at first; ALL ticks them all again.
+                    Button {
+                        model.qcKinds = Set(QCIssue.allCases)
+                    } label: {
+                        Text("ALL").font(Theme.label(10, .bold)).tracking(0.8)
+                            .foregroundStyle(model.qcKinds.count == QCIssue.allCases.count ? Theme.textFaint : Theme.alert)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.qcKinds.count == QCIssue.allCases.count)
+                    .help("Look for every kind of issue. Click a kind to show or skip it.")
                     ForEach(QCIssue.allCases) { issue in
                         KindChip(issue: issue, count: counts[issue] ?? 0, on: model.qcKinds.contains(issue)) {
                             if model.qcKinds.contains(issue) { model.qcKinds.remove(issue) } else { model.qcKinds.insert(issue) }

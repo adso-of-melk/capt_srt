@@ -2,7 +2,7 @@ import Foundation
 
 /// What QC looks for in a title.
 enum QCIssue: String, CaseIterable, Identifiable, Codable, Sendable {
-    case spelling, readingSpeed, lineLength, lineCount, duration, overlap, gap, empty
+    case spelling, readingSpeed, nearReadingSpeed, lineLength, lineCount, duration, overlap, gap, empty
 
     var id: String { rawValue }
 
@@ -11,6 +11,7 @@ enum QCIssue: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .spelling: return "Spelling"
         case .readingSpeed: return "CPS"
+        case .nearReadingSpeed: return "Near CPS"
         case .lineLength: return "CPL"
         case .lineCount: return "Lines"
         case .duration: return "Duration"
@@ -24,7 +25,8 @@ enum QCIssue: String, CaseIterable, Identifiable, Codable, Sendable {
     var help: String {
         switch self {
         case .spelling: return "Words not in the dictionary"
-        case .readingSpeed: return "Reading speed over the limit"
+        case .readingSpeed: return "Reading speed over the limit, by any amount"
+        case .nearReadingSpeed: return "Reading speed close to the limit (amber on the card)"
         case .lineLength: return "A line longer than the characters-per-line limit"
         case .lineCount: return "More lines than allowed"
         case .duration: return "Shorter than the minimum or longer than the maximum duration"
@@ -49,7 +51,9 @@ extension AppModel {
                   !SpellService.shared.misspelled(in: plain, language: track.language.code).isEmpty {
             found.insert(.spelling)
         }
-        if rules.cpsStatus(s) == .bad { found.insert(.readingSpeed) }
+        // Over the limit by any amount (even 17.02 CPS, shown as 17.0); amber: within 2 of it.
+        if Self.overReadingSpeed(s, rules: rules) { found.insert(.readingSpeed) }
+        else if rules.cpsStatus(s) == .warn { found.insert(.nearReadingSpeed) }
         let lines = plain.split(separator: "\n", omittingEmptySubsequences: false)
         if lines.count > rules.maxLines { found.insert(.lineCount) }
         if lines.contains(where: { $0.count > rules.maxCharsPerLine }) { found.insert(.lineLength) }
@@ -145,7 +149,11 @@ extension AppModel {
         let rules = preset(for: track)
         return QCIssue.allCases.filter(issues.contains).map { issue -> String in
             switch issue {
-            case .readingSpeed: return String(format: "%.1f CPS (max %g)", s.cps, rules.maxCPS)
+            case .readingSpeed:
+                // Two decimals when one would hide that it's over (17.02 shows as 17.0).
+                let shown = (s.cps * 10).rounded() / 10 > rules.maxCPS ? String(format: "%.1f", s.cps) : String(format: "%.2f", s.cps)
+                return "\(shown) CPS (max \(String(format: "%g", rules.maxCPS)))"
+            case .nearReadingSpeed: return String(format: "%.1f CPS, close to the max %g", s.cps, rules.maxCPS)
             case .lineLength: return "\(rules.longestLine(s)) characters on a line (max \(rules.maxCharsPerLine))"
             case .lineCount: return "too many lines (max \(rules.maxLines))"
             case .duration:
@@ -199,9 +207,14 @@ extension AppModel {
         }
     }
 
+    /// Faster than the limit, by any amount.
+    static func overReadingSpeed(_ s: Subtitle, rules: TimingPreset) -> Bool {
+        s.characterCount > 0 && s.cps > rules.maxCPS + 1e-9
+    }
+
     /// Over the reading speed or under the minimum duration.
     static func needsMoreTime(_ s: Subtitle, rules: TimingPreset) -> Bool {
-        rules.cpsStatus(s) == .bad || (s.characterCount > 0 && s.duration < rules.minDuration - 0.0005)
+        overReadingSpeed(s, rules: rules) || (s.characterCount > 0 && s.duration < rules.minDuration - 0.0005)
     }
 
     /// A title made long enough to read (the limit's reading speed, and at least the minimum

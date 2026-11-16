@@ -12,6 +12,29 @@ final class QCTests: XCTestCase {
 
     // MARK: Finding issues
 
+    func testAnyReadingSpeedOverTheLimitIsAnIssueAndAmberIsItsOwnKind() {
+        // 17 characters over 0.999 s: 17.02 CPS, shown as 17.0 but still over.
+        let a = sub(1, 1.999, "Seventeen letters"),
+            b = sub(3, 4, "Sixteen letters."),           // 16 CPS: amber, close to the limit
+            c = sub(6, 8, "Fine.")
+        XCTAssertEqual(a.characterCount, 17)
+        let f = makeFixture([("en", [a, b, c])])
+        f.en.spellCheck = false
+        let report = Dictionary(uniqueKeysWithValues: f.model.qcReport(for: f.en).map { ($0.id, $0.issues) })
+        XCTAssertEqual(report[a.id], [.readingSpeed])
+        XCTAssertEqual(report[b.id], [.nearReadingSpeed])
+        XCTAssertNil(report[c.id])
+        f.model.focusTrack(f.en.id, edit: false)
+        XCTAssertTrue(f.model.describe([.readingSpeed], of: a, in: f.en).hasPrefix("17.02 CPS"))
+        // Amber titles can be skipped like any other kind.
+        f.model.qcKinds.remove(.nearReadingSpeed)
+        f.model.select(c.id)
+        XCTAssertEqual(f.model.nextIssue(1), a.id)
+        XCTAssertEqual(f.model.nextIssue(1), a.id, "the amber title is skipped")
+        f.model.qcKinds = Set(QCIssue.allCases)
+        XCTAssertEqual(f.model.nextIssue(1), b.id)
+    }
+
     func testEachKindOfIssueIsFound() throws {
         let a = sub(1, 2, "Hello there."),                        // 0.04 s before the next: gap
             b = sub(2.04, 2.5, "This one reads far too quickly."),  // CPS and duration
