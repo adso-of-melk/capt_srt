@@ -113,8 +113,8 @@ private struct AlertLight: View {
             .fill(Theme.alert)
             .frame(width: 22, height: 10)
             .opacity(bright ? 1 : 0.35)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { bright = true }
-            }
+            // Tied to this light alone, so nothing else in the window is ever animated with it.
+            .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: bright)
+            .onAppear { bright = true }
     }
 }

@@ -538,21 +538,6 @@ struct CardView: View {
                 }
                 .padding(.horizontal, 6)
                 .padding(.bottom, 6)
-
-            // QC mode: what's wrong with this title, in words.
-            if let marks = qcMarks, !marks.isEmpty {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 8))
-                    Text(QCIssue.allCases.filter(marks.contains).map { $0.label.uppercased() }.joined(separator: " · "))
-                        .font(Theme.label(9, .bold))
-                        .tracking(1)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .foregroundStyle(Theme.alert)
-                .padding(.horizontal, 10)
-                .padding(.bottom, 6)
-            }
         }
         .background(
             RoundedRectangle(cornerRadius: 10)
@@ -571,6 +556,19 @@ struct CardView: View {
                 .frame(width: 3)
                 .padding(.vertical, 10)
                 .offset(x: -1.5)
+        }
+        // QC mode: what's wrong with this title, on a tag that hangs on the card's lower edge.
+        // It takes no room of its own: a card is exactly as tall in QC mode as outside it, so
+        // the list keeps its place and scrolls evenly when QC mode or a kind is switched.
+        .overlay(alignment: .bottomLeading) {
+            if let marks = qcMarks, !marks.isEmpty {
+                QCTag(marks: marks)
+                    .help(model.describe(marks, of: sub, in: track))
+                    // Room on the right for the "esc" key on the text box's edge.
+                    .frame(maxWidth: max(60, width - 76), alignment: .leading)
+                    .padding(.leading, 12)
+                    .offset(y: QCTag.height / 2)
+            }
         }
         // QC mode: titles with nothing to fix step back.
         .opacity(qcMarks?.isEmpty == true && !isSelected && !inGroup ? 0.45 : 1)
@@ -612,6 +610,32 @@ struct CardView: View {
     /// This card's language becomes the one being edited (menus act on the focused language).
     private func focusColumn() {
         if model.video?.focusedTrackID != track.id { model.focusTrack(track.id, edit: false) }
+    }
+}
+
+/// QC mode: the kinds of issue a title has, on a small yellow-alert tag.
+struct QCTag: View {
+    /// Shorter than the space between two cards, half of it hangs below the card.
+    static let height: CGFloat = 13
+    let marks: Set<QCIssue>
+
+    /// The kinds in the QC bar's order: "CPS · GAP".
+    static func text(_ marks: Set<QCIssue>) -> String {
+        QCIssue.allCases.filter(marks.contains).map { $0.label.uppercased() }.joined(separator: " · ")
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 7))
+            Text(Self.text(marks))
+                .font(Theme.label(8.5, .bold))
+                .tracking(0.8)
+                .lineLimit(1)
+        }
+        .foregroundStyle(Theme.background)
+        .padding(.horizontal, 6)
+        .frame(height: Self.height)
+        .background(Capsule().fill(Theme.alert))
     }
 }
 

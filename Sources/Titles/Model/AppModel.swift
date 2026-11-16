@@ -133,6 +133,8 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(off.map(\.rawValue).sorted(), forKey: "qcKindsOff")
         }
     }
+    /// The QC bar's counts as last worked out, and what from: see `qcCounts()`.
+    var qcCountMemo: (key: QCCountKey, counts: [QCIssue: Int])?
 
     // Fine-tuning with Control/Option held (Settings ▸ Jogging).
     /// Moving the mouse moves the edge.

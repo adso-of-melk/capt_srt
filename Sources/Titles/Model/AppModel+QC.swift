@@ -37,6 +37,18 @@ enum QCIssue: String, CaseIterable, Identifiable, Codable, Sendable {
     }
 }
 
+/// Everything the QC bar's counts are worked out from. While none of it changes, the counts
+/// are kept (the bar asks for them every time anything in the window changes).
+struct QCCountKey: Equatable {
+    var track: UUID
+    var language: String
+    var subtitles: [Subtitle]
+    var rules: TimingPreset
+    var gap: Double
+    /// The spelling dictionaries' and word lists' version; -1 with spell check off.
+    var spelling: Int
+}
+
 // MARK: QC: finding issues
 
 extension AppModel {
@@ -79,13 +91,19 @@ extension AppModel {
         return out
     }
 
-    /// How many titles of the focused language have each kind of issue.
+    /// How many titles of the focused language have each kind of issue. Worked out once for
+    /// a given set of titles and rules: see `QCCountKey`.
     func qcCounts() -> [QCIssue: Int] {
         guard let track = focusedTrack else { return [:] }
+        let key = QCCountKey(track: track.id, language: track.language.code, subtitles: track.doc.subtitles,
+                             rules: preset(for: track), gap: minGap,
+                             spelling: checksSpelling(track) ? SpellService.shared.version : -1)
+        if let memo = qcCountMemo, memo.key == key { return memo.counts }
         var counts: [QCIssue: Int] = [:]
         for entry in qcReport(for: track) {
             for issue in entry.issues { counts[issue, default: 0] += 1 }
         }
+        qcCountMemo = (key, counts)
         return counts
     }
 

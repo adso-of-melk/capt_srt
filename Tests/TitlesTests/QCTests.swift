@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import Titles
 
 /// QC mode: finding titles with issues, going from one to the next, and the automatic fixes
@@ -143,6 +144,50 @@ final class QCTests: XCTestCase {
         reopened.persists = false
         XCTAssertEqual(reopened.qcKinds, [.gap, .overlap])
         XCTAssertFalse(reopened.qcMode)                                // QC mode itself starts off
+    }
+
+    func testTheCountsAreKeptUntilSomethingTheyDependOnChanges() {
+        // 35 characters over one second: far too fast.
+        let a = sub(1, 2, sentence), b = sub(4, 8, "Fine.")
+        let f = makeFixture([("en", [a, b])])
+        f.en.spellCheck = false
+        f.model.focusTrack(f.en.id, edit: false)
+        XCTAssertEqual(f.model.qcCounts(), [.readingSpeed: 1])
+        XCTAssertNotNil(f.model.qcCountMemo)
+        XCTAssertEqual(f.model.qcCounts(), [.readingSpeed: 1])
+        // The language's own reading speed limit goes up: no longer too fast.
+        f.model.setOverrides(f.en, maxCPS: .some(40))
+        XCTAssertEqual(f.model.qcCounts(), [:])
+        f.model.setOverrides(f.en, maxCPS: .some(nil))
+        XCTAssertEqual(f.model.qcCounts(), [.readingSpeed: 1])
+        // The text changes: nothing to read fast any more.
+        f.en.doc.setText(a.id, "Go.")
+        XCTAssertEqual(f.model.qcCounts(), [:])
+    }
+
+    // MARK: Cards in QC mode
+
+    func testACardsTagNamesItsIssuesInTheBarsOrder() {
+        XCTAssertEqual(QCTag.text([.gap, .readingSpeed]), "CPS · GAP")
+        XCTAssertEqual(QCTag.text([.nearReadingSpeed]), "NEAR CPS")
+    }
+
+    /// The tag hangs on the card's edge and takes no room, so the list of cards is laid out
+    /// the same in and out of QC mode (cards that grew made the list jump while scrolling).
+    func testACardIsTheSameHeightWithAndWithoutIssues() {
+        let a = sub(1, 2, sentence)
+        let f = makeFixture([("en", [a])])
+        f.en.spellCheck = false
+        func height(_ marks: Set<QCIssue>?) -> CGFloat {
+            let card = CardView(model: f.model, track: f.en, sub: a, number: 1, isSelected: false,
+                                inSelectedRow: false, isOverlapping: false, qcMarks: marks,
+                                preset: .general, compact: false, width: 260, text: .constant(a.text))
+            return NSHostingView(rootView: card.frame(width: 260)).fittingSize.height
+        }
+        let plain = height(nil)
+        XCTAssertGreaterThan(plain, 60)
+        XCTAssertEqual(height([]), plain, accuracy: 0.01)
+        XCTAssertEqual(height([.readingSpeed, .gap, .spelling]), plain, accuracy: 0.01)
     }
 
     // MARK: Extend to fit reading speed
