@@ -842,10 +842,11 @@ final class WaveformNSView: NSView {
         if let b = bands.first(where: { $0.label.contains(p) }) {
             drag = .none
             if event.clickCount == 2 {
-                model.setWaveBand(b.track.id, shown: false)
+                // Focus moves to another band first, so the folded one isn't kept open.
                 if b.focused, let other = bands.first(where: { !$0.focused }) {
                     model.focusTrack(other.track.id, edit: false)
                 }
+                model.setWaveBand(b.track.id, shown: false)
             } else if !b.focused {
                 model.focusTrack(b.track.id, edit: false)
             }

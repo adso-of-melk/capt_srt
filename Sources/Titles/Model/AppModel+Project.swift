@@ -68,6 +68,12 @@ extension AppModel {
         let wasEditing = edit ?? (mainWindow?.firstResponder is NSTextView)
         let rowKey = selectedRowKey
         finishGesture()
+        // Two languages open as bands on the waveform both stay open when you move between
+        // them (a click in the other band, ⌘L, a click in its column): the one you leave
+        // doesn't fold back to a slim lane. Double-clicking a band's tag folds it.
+        if let old = video.focusedTrackID, old != id, waveBands.contains(id), !waveBands.contains(old) {
+            waveBands.insert(old)
+        }
         video.focusedTrackID = id
         doc = track.doc
         if let rowKey, let i = rows.firstIndex(where: { $0.key == rowKey }) {

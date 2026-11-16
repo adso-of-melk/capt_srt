@@ -235,6 +235,23 @@ final class LanguagesTests: XCTestCase {
         XCTAssertTrue(f.model.waveBands.isEmpty)
     }
 
+    func testTwoLanguagesOpenAsBandsStayOpenWhenFocusMovesBetweenThem() {
+        let f = makeFixture([("en", [sub(1, 2, "Hello")]), ("hr", [sub(1, 2, "Bok")])])
+        f.model.focusTrack(f.en.id, edit: false)
+        // Croatian was opened as a band; English shows as one only because it's focused.
+        f.model.waveBands = [f.hr.id]
+        // A click in the Croatian band focuses it: English stays open.
+        f.model.focusTrack(f.hr.id, edit: false)
+        XCTAssertEqual(f.model.waveBands, [f.en.id, f.hr.id])
+        XCTAssertTrue(f.model.allWaveBands)
+        f.model.focusTrack(f.en.id, edit: false)
+        XCTAssertTrue(f.model.allWaveBands)
+        // A language shown as a slim lane doesn't open the one you leave.
+        f.model.waveBands = []
+        f.model.focusTrack(f.hr.id, edit: false)
+        XCTAssertTrue(f.model.waveBands.isEmpty)
+    }
+
     // MARK: Sharing the window
 
     private let wide = "I never thought I would see you again, ever"
