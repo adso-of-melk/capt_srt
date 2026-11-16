@@ -456,6 +456,10 @@ struct TitleEditor: NSViewRepresentable {
                 tv.typingAttributes = a
                 parent.onEmptiedItalic()
             } else {
+                if let t = tv as? TitleTextView {
+                    t.pendingTyping = nil
+                    t.pendingLocation = nil
+                }
                 tv.typingAttributes = a
             }
             tv.needsDisplay = true
@@ -571,6 +575,18 @@ struct TitleEditor: NSViewRepresentable {
         func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString: String?) -> Bool {
             if let r = replacementString, r.contains("\n") { manualBreak = true }
             lastEditInserted = !(replacementString ?? "").isEmpty
+            // Deleting keeps the deleted text's style at the cursor, so retyping a deleted
+            // italic word is italic again, even after the card reloads the text (it shrinks
+            // or grows to fit, or the lines are re-broken) and the character before the
+            // cursor is plain. It holds until something is typed or the cursor moves.
+            if !lastEditInserted, range.length > 0, let storage = textView.textStorage,
+               range.location < storage.length, let t = textView as? TitleTextView {
+                var a = storage.attributes(at: range.location, effectiveRange: nil)
+                a.removeValue(forKey: .spellingState)
+                a[.font] = RichMarkup.refont(a, size: fontSize)
+                t.pendingTyping = a
+                t.pendingLocation = range.location
+            }
             return true
         }
 
@@ -578,7 +594,8 @@ struct TitleEditor: NSViewRepresentable {
             guard let tv = notification.object as? NSTextView else { return }
             let wasAllItalic = RichMarkup.isAllItalic(currentMarkup)
             // What was typed carries the waiting style now; from here on the text decides.
-            if let t = tv as? TitleTextView, t.pendingTyping != nil {
+            // (A deletion leaves the deleted text's style waiting instead.)
+            if lastEditInserted, let t = tv as? TitleTextView, t.pendingTyping != nil {
                 t.pendingTyping = nil
                 t.pendingLocation = nil
             }

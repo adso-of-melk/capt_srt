@@ -109,6 +109,40 @@ final class ItalicsPasteTests: XCTestCase {
         XCTAssertEqual(box.text, "<i>Next line</i>")
     }
 
+    func testRetypingADeletedItalicWordStaysItalicAfterAReload() {
+        let box = Box()
+        let (tv, c) = editor("Hello <i>world</i>", box: box)
+        for _ in 0..<5 { tv.deleteBackward(nil) }
+        XCTAssertEqual(box.text, "Hello ")
+        // The card shrinks or grows to fit the shorter text: the editor reloads it.
+        let caret = c.caretKey(in: tv)
+        c.load(box.text, into: tv, size: 14)
+        c.restoreCaret(caret, in: tv)
+        XCTAssertTrue(typingIsItalic(tv), "the deleted word's italics must stay at the cursor")
+        tv.insertText("there", replacementRange: tv.selectedRange())
+        XCTAssertEqual(box.text, "Hello <i>there</i>")
+    }
+
+    func testReplacingASelectedItalicWordKeepsItsItalics() {
+        let box = Box()
+        let (tv, c) = editor("Hello <i>world</i>!", box: box)
+        tv.setSelectedRange(NSRange(location: 6, length: 5))
+        tv.deleteBackward(nil)
+        let caret = c.caretKey(in: tv)
+        c.load(box.text, into: tv, size: 13)
+        c.restoreCaret(caret, in: tv)
+        tv.insertText("there", replacementRange: tv.selectedRange())
+        XCTAssertEqual(box.text, "Hello <i>there</i>!")
+    }
+
+    func testDeletingThenMovingTheCursorDropsTheDeletedStyle() {
+        let box = Box()
+        let (tv, _) = editor("Hello <i>world</i>", box: box)
+        for _ in 0..<5 { tv.deleteBackward(nil) }
+        tv.setSelectedRange(NSRange(location: 0, length: 0))
+        XCTAssertNil(tv.pendingTyping)
+    }
+
     func testClearingSelectiveItalicsStartsPlain() {
         let box = Box()
         var emptied = 0
