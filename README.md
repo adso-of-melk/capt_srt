@@ -49,6 +49,13 @@ Each video has a **master** language (★) and any number of others, shown side 
 - **Tab / Shift-Tab in QC mode go from one title with an issue to the next** (wrapping round), with the playhead at its start and the issue named at the bottom of the window. Typing in a card carries over, as with plain Tab.
 - **Automatic fixes** (QC menu, or FIX in the QC bar; one ⌘Z each): **Extend to Fit Reading Speed** (⌥⌘E for the selected titles, or all) lengthens titles that read too fast or are shorter than the minimum duration, into the free room after them first and then before, keeping the minimum gap and never past the maximum duration. **Widen Gaps to the Minimum** (selected or all) moves titles that are too close apart: the earlier title's end comes back, and only when that title is already at the minimum duration does the next one's start move. **Close Short Gaps** closes gaps under half a second down to the minimum by moving the earlier title's end on (not past the maximum duration).
 
+- **Reading speed over by any amount** counts in QC (17.02 CPS, shown as 17.0, is over), and titles close to the limit (amber on the card) are their own kind, **Near CPS**. Every kind is looked for at first; click a kind in the QC bar to skip it, **ALL** to look for every kind again.
+- **Drag a column's header bar** left or right to move the column (as Move Column Left / Right).
+- **Two languages open as bands on the waveform stay open** when you click from one to the other; double-click a band's tag to fold it.
+- **Deleting a title** selects the next one on the waveform too: the playhead goes to its start.
+- **Italics stick:** deleting italic text and typing again keeps the italics, even when the card resizes its text.
+- **Croatian spelling:** words the dictionary was missing (faliti, preplah, plahiji…) are added with all their forms. More can go in `dictionaries/hr.extra.dic` (see `dictionaries/README.md`); the same works for any Hunspell language.
+
 ## New in 0.47
 
 - **Overlapping titles are off by default.** A dragged title (whole box, an edge, a group, or a title being drawn) stops at the minimum gap from the next title and never goes over it. Spotting, a new title in an empty slot and Shift Titles keep clear of other titles too. Titles that already overlap (in an imported file) stay as they are, and can be pulled apart. **Title ▸ Enable Overlapping Titles** (also in Settings) lets a title go over its neighbour when pulled on.
