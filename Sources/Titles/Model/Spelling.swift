@@ -30,6 +30,14 @@ final class HunspellDictionary {
 
     deinit { Hunspell_destroy(handle) }
 
+    /// Adds a word list written for this dictionary's affix rules (`hr.extra.dic`): each
+    /// headword brings all its forms (conjugations, cases, comparatives).
+    @discardableResult
+    func addWords(dic: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: dic.path) else { return false }
+        return Hunspell_add_dic(handle, dic.path) == 0
+    }
+
     func isCorrect(_ word: String) -> Bool {
         // A word the dictionary's character set can't even write isn't in it.
         guard let c = word.cString(using: encoding) else { return false }
@@ -121,6 +129,10 @@ final class SpellService {
             for name in Self.dictionaryNames(for: code) {
                 if let d = HunspellDictionary(aff: folder.appendingPathComponent(name + ".aff"),
                                               dic: folder.appendingPathComponent(name + ".dic")) {
+                    // Words the dictionary is missing, with their forms: from every folder.
+                    for extras in folders {
+                        d.addWords(dic: extras.appendingPathComponent(name + ".extra.dic"))
+                    }
                     found = .hunspell(d)
                     break search
                 }

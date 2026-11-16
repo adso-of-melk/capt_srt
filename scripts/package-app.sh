@@ -32,7 +32,13 @@ if ls "$DICTS"/*.dic >/dev/null 2>&1; then
   mkdir -p "$APP/Contents/Resources/Dictionaries"
   cp "$DICTS"/*.aff "$DICTS"/*.dic "$APP/Contents/Resources/Dictionaries/"
   cp "$DICTS"/*.license.txt "$APP/Contents/Resources/Dictionaries/" 2>/dev/null || true
-  echo "Bundled dictionaries: $(cd "$DICTS" && ls *.dic | sed 's/\.dic$//' | tr '\n' ' ')"
+  echo "Bundled dictionaries: $(cd "$DICTS" && ls *.dic | grep -v '\.extra\.dic$' | sed 's/\.dic$//' | tr '\n' ' ')"
+fi
+# Words the dictionaries are missing, with all their forms (dictionaries/README.md).
+if ls dictionaries/*.extra.dic >/dev/null 2>&1; then
+  mkdir -p "$APP/Contents/Resources/Dictionaries"
+  cp dictionaries/*.extra.dic "$APP/Contents/Resources/Dictionaries/"
+  echo "Extra words: $(cd dictionaries && ls *.extra.dic | tr '\n' ' ')"
 fi
 
 cat > "$APP/Contents/Info.plist" <<PLIST

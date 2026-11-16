@@ -48,6 +48,42 @@ final class SpellingTests: XCTestCase {
         XCTAssertTrue(SpellService.shared.suggestions(for: "wrld", language: "xx").contains("world"))
     }
 
+    func testExtraWordsBringAllTheirFormsFromAnyFolder() throws {
+        let main = try tempFolder(), extras = try tempFolder()
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: main)
+            try? FileManager.default.removeItem(at: extras)
+        }
+        // A verb ending: -iti → -im, -io, -ila.
+        _ = try writeFile("zz.aff", "SET UTF-8\nSFX A Y 3\nSFX A iti im iti\nSFX A iti io iti\nSFX A iti ila iti\n", in: main)
+        _ = try writeFile("zz.dic", "1\nhvaliti/A\n", in: main)
+        _ = try writeFile("zz.extra.dic", "2\nfaliti/A\nokej\n", in: extras)
+        let spell = SpellService.shared
+        spell.persists = false
+        spell.extraFolders = [main, extras]
+        spell.projectWords = [:]
+        spell.reloadDictionaries()
+        XCTAssertEqual(words("hvalim falim falio Falila okej falx", "zz"), ["falx"])
+    }
+
+    /// The Croatian words that were missing, with the real Croatian dictionary (skipped when
+    /// it isn't installed on this Mac).
+    func testTheCroatianExtrasCoverTheMissingWords() throws {
+        let installed = SpellService.dictionariesFolder
+        guard FileManager.default.fileExists(atPath: installed.appendingPathComponent("hr.dic").path) else {
+            throw XCTSkip("no Croatian dictionary installed")
+        }
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("dictionaries")
+        let spell = SpellService.shared
+        spell.persists = false
+        spell.extraFolders = [installed, repo]
+        spell.projectWords = [:]
+        spell.reloadDictionaries()
+        addTeardownBlock { spell.extraFolders = []; spell.reloadDictionaries() }
+        XCTAssertEqual(words("Fali mi. Falio je, falila je. Preplaha je, plahija od nje, najplahiji.", "hr"), [])
+    }
+
     func testADictionaryInAnOlderCharacterSetWorks() throws {
         try useTestDictionaries()
         XCTAssertEqual(HunspellDictionary.encoding(named: "ISO8859-2"), latin2)

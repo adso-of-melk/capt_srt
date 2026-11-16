@@ -46,10 +46,16 @@ get() {
     esac
 }
 
+# Words the dictionaries are missing (dictionaries/README.md in the repository).
+REPO_EXTRAS="$(cd "$(dirname "$0")/.." && pwd)/dictionaries"
+
 codes=("$@")
 [ ${#codes[@]} -eq 0 ] && codes=(hr sr sr-Latn bs fa th)
 failed=0
-for c in "${codes[@]}"; do get "$c" || failed=1; done
+for c in "${codes[@]}"; do
+    get "$c" || failed=1
+    if [ -f "$REPO_EXTRAS/$c.extra.dic" ]; then cp "$REPO_EXTRAS/$c.extra.dic" .; echo "  + $c.extra.dic"; fi
+done
 
 echo
 ls -la "$DEST"
