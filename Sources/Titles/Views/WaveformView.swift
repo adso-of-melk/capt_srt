@@ -1134,6 +1134,8 @@ final class WaveformNSView: NSView {
         case let .edge(i, _), let .body(i): id = i
         case .empty: return nil
         }
+        // Right-clicking one of a picked group keeps the group (to join it).
+        if !model.multiSelection.contains(id) { model.clearMulti() }
         model.select(id)
         let menu = NSMenu()
         let play = NSMenuItem(title: "Play Title", action: #selector(menuPlay(_:)), keyEquivalent: "")
@@ -1145,8 +1147,15 @@ final class WaveformNSView: NSView {
         let delete = NSMenuItem(title: "Delete Title", action: #selector(menuDelete(_:)), keyEquivalent: "")
         delete.representedObject = id
         delete.target = self
-        menu.items = [play, edit, .separator(), delete]
+        let join = NSMenuItem(title: "Join \(model.multiSelection.count) Titles", action: #selector(menuJoin(_:)), keyEquivalent: "")
+        join.target = self
+        menu.items = model.canJoin ? [play, edit, .separator(), join, .separator(), delete]
+                                   : [play, edit, .separator(), delete]
         return menu
+    }
+
+    @objc private func menuJoin(_ sender: NSMenuItem) {
+        model?.joinSelected()
     }
 
     @objc private func menuPlay(_ sender: NSMenuItem) {

@@ -184,6 +184,8 @@ struct TitlesCommands: Commands {
                 Button("Split at Playhead  (or ⌘-click a box)") { model.splitAtPlayhead() }
                     .keyboardShortcut("b")
                 Button("Delete Title  (⌃⌫)") { model.deleteSelected() }
+                Button("Join Titles  (Shift-click to pick them)") { model.joinSelected() }
+                    .keyboardShortcut("j")
                 Button("Re-break Lines") { model.rebreakSelected() }
                     .keyboardShortcut("b", modifiers: [.command, .option])
                 Button("Re-break All Lines in \(model.focusedTrack?.language.name ?? "This Language")") { model.rebreakAll() }

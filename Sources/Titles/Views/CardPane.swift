@@ -110,6 +110,7 @@ struct CardPane: View {
                 sub: sub,
                 number: model.rowNumber(of: sub.id) ?? number,
                 isSelected: isFocusedColumn && doc.selectedID == sub.id,
+                inGroup: isFocusedColumn && model.multiSelection.count > 1 && model.multiSelection.contains(sub.id),
                 inSelectedRow: inSelectedRow,
                 isOverlapping: isFocusedColumn && overlaps.contains(sub.id),
                 preset: model.preset(for: track),
@@ -398,6 +399,8 @@ struct CardView: View {
     let sub: Subtitle
     let number: Int
     let isSelected: Bool
+    /// One of several titles picked together (Shift-click), e.g. to join them.
+    var inGroup = false
     let inSelectedRow: Bool
     let isOverlapping: Bool
     let preset: TimingPreset
@@ -410,7 +413,7 @@ struct CardView: View {
         let cps = preset.cpsStatus(sub)
         let dur = preset.durationStatus(sub)
         let line = preset.lineStatus(sub)
-        let accent = isSelected ? Theme.amber : (inSelectedRow ? Theme.amber.opacity(0.4) : Theme.rule)
+        let accent = isSelected || inGroup ? Theme.amber : (inSelectedRow ? Theme.amber.opacity(0.4) : Theme.rule)
 
         VStack(spacing: 0) {
             // Header strip: number, in/out times, duration, CPS.
@@ -526,12 +529,42 @@ struct CardView: View {
         }
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded {
+            let flags = NSEvent.modifierFlags
+            // Shift-click: every title from the selected one to this one (to join them, say).
+            // ⌘-click: this one in or out of the group.
+            if flags.contains(.shift) || flags.contains(.command), !isSelected,
+               model.video?.focusedTrackID == track.id, model.doc.selectedID != nil {
+                if flags.contains(.shift) { model.selectRange(to: sub.id) } else { model.toggleMulti(sub.id) }
+                return
+            }
             // Clicking a card focuses its language, selects it, takes the playhead to its
             // start, and puts the cursor at the end of its text.
             if model.video?.focusedTrackID != track.id { model.focusTrack(track.id, edit: false) }
+            model.clearMulti()
             model.select(sub.id, seekToStart: true)
             model.focusRequest = sub.id
         })
+        .contextMenu {
+            Button("Play Title") {
+                focusColumn()
+                model.playTitle(sub.id)
+            }
+            if inGroup, model.canJoin {
+                Button("Join \(model.multiSelection.count) Titles  (⌘J)") { model.joinSelected() }
+            }
+            Divider()
+            Button("Delete Title  (⌃⌫)") {
+                focusColumn()
+                model.clearMulti()
+                model.select(sub.id)
+                model.deleteSelected()
+            }
+        }
+    }
+
+    /// This card's language becomes the one being edited (menus act on the focused language).
+    private func focusColumn() {
+        if model.video?.focusedTrackID != track.id { model.focusTrack(track.id, edit: false) }
     }
 }
 

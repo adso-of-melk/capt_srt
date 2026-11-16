@@ -1369,6 +1369,99 @@ extension AppModel {
         bump()
     }
 
+    /// Shift-click on a card: every title from the selected one to this one is picked.
+    func selectRange(to id: UUID) {
+        let subs = doc.subtitles
+        guard let to = subs.firstIndex(where: { $0.id == id }) else { return }
+        let anchor = doc.selectedID.flatMap { a in subs.firstIndex { $0.id == a } } ?? to
+        multiSelection = Set(subs[min(anchor, to)...max(anchor, to)].map(\.id))
+        focusRequest = nil
+        mainWindow?.makeFirstResponder(nil)
+        doc.selectedID = id
+        bump()
+    }
+
+    /// Whether the picked titles can be joined: two or more, next to each other.
+    var canJoin: Bool { joinable() != nil }
+
+    private func joinable() -> [Subtitle]? {
+        let subs = doc.subtitles
+        let picked = subs.filter { multiSelection.contains($0.id) }
+        guard picked.count >= 2, let first = subs.firstIndex(where: { $0.id == picked[0].id }),
+              let last = subs.firstIndex(where: { $0.id == picked[picked.count - 1].id }),
+              last - first + 1 == picked.count else { return nil }
+        return picked
+    }
+
+    /// Title ▸ Join Titles (⌘J): the picked titles (Shift-click on cards or waveform boxes)
+    /// become one, from the first one's start to the last one's end, with all their text,
+    /// broken into lines by the rules. One undo step. Joining master titles joins their
+    /// partners in a locked language too, and other languages' links follow.
+    func joinSelected() {
+        guard let track = focusedTrack, let video, !refuseIfLocked() else { return }
+        guard let picked = joinable() else {
+            let n = multiSelection.count
+            flash(n < 2 ? "To join titles, pick two or more: Shift-click their cards or waveform boxes."
+                        : "Only titles next to each other can be joined.")
+            return
+        }
+        let keep = picked[0]
+        let gone = Set(picked.dropFirst().map(\.id))
+        let text = joinedText(picked.map(\.text), track: track)
+        let end = picked.map(\.end).max() ?? keep.end
+
+        if track.id == video.masterTrackID {
+            // Other languages: a locked one's partners are joined the same way (their text
+            // would go with the master titles otherwise); a free one's links move over.
+            isSyncingLocks = true
+            for other in video.tracks where other.id != track.id {
+                var subs = other.doc.subtitles
+                if other.locked {
+                    let partners = subs.filter { $0.link.map { $0 == keep.id || gone.contains($0) } ?? false }
+                    guard let survivor = partners.first(where: { $0.link == keep.id }) ?? partners.first else { continue }
+                    let merged = joinedText(partners.map(\.text), track: other)
+                    let dropped = Set(partners.map(\.id)).subtracting([survivor.id])
+                    subs.removeAll { dropped.contains($0.id) }
+                    if let i = subs.firstIndex(where: { $0.id == survivor.id }) {
+                        subs[i].text = merged
+                        subs[i].link = keep.id
+                    }
+                } else {
+                    for i in subs.indices where subs[i].link.map({ gone.contains($0) }) ?? false { subs[i].link = keep.id }
+                }
+                other.doc.syncReplace(subs)
+            }
+            isSyncingLocks = false
+        }
+
+        doc.endTextCoalescing()
+        doc.perform { subs in
+            subs.removeAll { gone.contains($0.id) }
+            if let i = subs.firstIndex(where: { $0.id == keep.id }) {
+                subs[i].end = end
+                subs[i].text = text
+            }
+        }
+        doc.endTextCoalescing()
+        multiSelection = []
+        doc.selectedID = keep.id
+        enforceLocks(in: video)
+        bump()
+        flash("Joined \(picked.count) titles (⌘Z to undo)")
+    }
+
+    /// Several titles' text as one: each one's lines kept apart, then (with automatic line
+    /// breaks on) broken again by the language's rules. Empty titles add nothing.
+    func joinedText(_ texts: [String], track: Track) -> String {
+        let parts = texts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !Markup.plain($0).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let joined = parts.joined(separator: "\n")
+        guard autoLineBreaks else { return joined }
+        let rules = preset(for: track)
+        return LineBreaker.breakLines(joined, maxChars: rules.maxCharsPerLine, maxLines: rules.maxLines,
+                                      language: track.language.code)
+    }
+
     /// Title ▸ Shift Titles…: moves titles by `offset` seconds (negative = earlier).
     /// `onlySelected` uses the group picked on the waveform (or the selected title).
     /// Locked languages follow their master automatically.
