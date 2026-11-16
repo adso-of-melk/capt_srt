@@ -175,7 +175,9 @@ final class SpellService {
             if word.rangeOfCharacter(from: .decimalDigits) != nil { continue }
             if !isCorrect(word, language: code, engine: engine) { out.append(r) }
         }
-        if cache.count > 4000 { cache.removeAll() }
+        // Room for every title of a long film in several languages: QC mode checks them all,
+        // and starting over means checking them all again.
+        if cache.count > 30000 { cache.removeAll() }
         cache[key] = out
         return out
     }
@@ -207,17 +209,38 @@ final class SpellService {
         if known(word, language: code) { return true }
         // A word written with a typographic apostrophe is checked as typed and with a plain one.
         let variants = word.contains("’") ? [word, word.replacingOccurrences(of: "’", with: "'")] : [word]
-        for w in variants {
-            switch engine {
-            case let .hunspell(d):
-                if d.isCorrect(w) { return true }
-            case let .system(lang):
-                let r = NSSpellChecker.shared.checkSpelling(of: w, startingAt: 0, language: lang, wrap: false,
-                                                            inSpellDocumentWithTag: 0, wordCount: nil)
-                if r.location == NSNotFound { return true }
-            }
+        for w in variants where Self.inDictionary(w, engine: engine) { return true }
+        // Croatian, Bosnian, Serbian: "pre" (too) and "naj" (most) go in front of any
+        // adjective or adverb, and no dictionary lists them all: preplaha, prebrzo, najplahiji.
+        if let rest = Self.withoutPrefix(word, language: code) {
+            return known(rest, language: code) || Self.inDictionary(rest, engine: engine)
         }
         return false
+    }
+
+    private static func inDictionary(_ word: String, engine: Engine) -> Bool {
+        switch engine {
+        case let .hunspell(d):
+            return d.isCorrect(word)
+        case let .system(lang):
+            let r = NSSpellChecker.shared.checkSpelling(of: word, startingAt: 0, language: lang, wrap: false,
+                                                        inSpellDocumentWithTag: 0, wordCount: nil)
+            return r.location == NSNotFound
+        }
+    }
+
+    /// Croatian, Bosnian and Serbian: a word that starts with "pre" or "naj" (in either
+    /// alphabet), without that beginning and in small letters, to be checked on its own.
+    /// Nil for other languages, and when fewer than three letters would be left.
+    static func withoutPrefix(_ word: String, language code: String) -> String? {
+        guard let base = code.split(separator: "-").first.map({ $0.lowercased() }),
+              ["hr", "bs", "sr"].contains(base) else { return nil }
+        let lower = word.lowercased()
+        for prefix in ["pre", "naj", "пре", "нај"] where lower.hasPrefix(prefix) {
+            let rest = String(lower.dropFirst(prefix.count))
+            if rest.count >= 3 { return rest }
+        }
+        return nil
     }
 
     func suggestions(for word: String, language code: String) -> [String] {

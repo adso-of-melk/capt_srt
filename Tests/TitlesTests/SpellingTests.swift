@@ -82,6 +82,36 @@ final class SpellingTests: XCTestCase {
         spell.reloadDictionaries()
         addTeardownBlock { spell.extraFolders = []; spell.reloadDictionaries() }
         XCTAssertEqual(words("Fali mi. Falio je, falila je. Preplaha je, plahija od nje, najplahiji.", "hr"), [])
+        // Everyday words of film dialogue, in their forms.
+        XCTAssertEqual(words("Šuti! Trpim to, kunem se. Burazu, zavidio si mu. Guglao je bend, pizzu i mejlove.", "hr"), [])
+        // "Pre" and "naj" before a word the dictionary knows.
+        XCTAssertEqual(words("Prebrzo voziš, prelijena je. Najgluplji si.", "hr"), [])
+        XCTAssertEqual(words("Falix, prelijpo.", "hr"), ["Falix", "prelijpo"])
+    }
+
+    func testWordsWithPreOrNajAreCheckedWithoutThatBeginning() throws {
+        let folder = try tempFolder()
+        // Bosnian here: a tiny dictionary of our own, and no extra word list of the app's.
+        _ = try writeFile("bs.aff", "SET UTF-8\nTRY aeiou\n", in: folder)
+        _ = try writeFile("bs.dic", "3\nplaha\nbolji\njak\n", in: folder)
+        let spell = SpellService.shared
+        spell.persists = false
+        spell.extraFolders = [folder]
+        spell.projectWords = [:]
+        spell.reloadDictionaries()
+        addTeardownBlock {
+            spell.extraFolders = []
+            spell.reloadDictionaries()
+            try? FileManager.default.removeItem(at: folder)
+        }
+        XCTAssertEqual(words("Preplaha, najbolji. PREJAK!", "bs"), [])
+        // What's left has to be a word, and at least three letters long.
+        XCTAssertEqual(words("prexyz plahaa najja", "bs"), ["prexyz", "plahaa", "najja"])
+        XCTAssertEqual(SpellService.withoutPrefix("Najbolji", language: "sr-Latn"), "bolji")
+        XCTAssertEqual(SpellService.withoutPrefix("Најбољи", language: "sr"), "бољи")
+        XCTAssertNil(SpellService.withoutPrefix("pred", language: "hr"))
+        // Other languages have no such rule.
+        XCTAssertNil(SpellService.withoutPrefix("preplaha", language: "en"))
     }
 
     func testADictionaryInAnOlderCharacterSetWorks() throws {
