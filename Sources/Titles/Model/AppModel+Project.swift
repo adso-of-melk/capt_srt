@@ -1028,6 +1028,25 @@ extension AppModel {
         saveProject()
     }
 
+    /// Dragging a column's header bar: the column goes to `index` (0 = leftmost).
+    func moveColumn(_ track: Track, to index: Int) {
+        guard let video, let i = video.openTrackIDs.firstIndex(of: track.id) else { return }
+        let j = min(max(0, index), video.openTrackIDs.count - 1)
+        guard j != i else { return }
+        video.openTrackIDs.remove(at: i)
+        video.openTrackIDs.insert(track.id, at: j)
+        bump()
+        saveProject()
+    }
+
+    /// Where a column dragged sideways by `offset` points lands: a column is `step` wide
+    /// (with the gap); it moves one place for each half column passed.
+    static func columnDropIndex(from index: Int, offset: CGFloat, step: CGFloat, count: Int) -> Int {
+        guard step > 0, count > 0 else { return index }
+        let moved = Int((offset / step).rounded())
+        return min(max(0, index + moved), count - 1)
+    }
+
     func deleteLanguage(_ track: Track) {
         guard let video, let project, track.id != video.masterTrackID else { return }
         let alert = NSAlert()

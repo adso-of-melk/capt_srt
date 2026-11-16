@@ -123,6 +123,8 @@ final class AppModel: ObservableObject {
     /// wrong and how often, and Tab / Shift-Tab go from one title with an issue to the next.
     /// Always off when the app starts.
     @Published var qcMode = false
+    /// The language whose column header is being dragged to a new place.
+    @Published var draggingColumn: UUID?
     /// The kinds of issue QC looks for, ticked in the QC bar.
     @Published var qcKinds: Set<QCIssue> = Set(QCIssue.allCases) {
         didSet {

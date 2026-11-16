@@ -37,8 +37,9 @@ struct CardPane: View {
                         VStack(spacing: 0) {
                             HStack(spacing: gap) {
                                 ForEach(tracks) { track in
-                                    LanguageHeader(model: model, track: track, width: width)
+                                    LanguageHeader(model: model, track: track, width: width, gap: gap)
                                         .id(track.id)
+                                        .zIndex(model.draggingColumn == track.id ? 1 : 0)
                                 }
                             }
                             .padding(.horizontal, 12)
@@ -225,6 +226,9 @@ private struct LanguageHeader: View {
     @ObservedObject var model: AppModel
     @ObservedObject var track: Track
     let width: CGFloat
+    var gap: CGFloat = 8
+    /// Dragging the bar sideways reorders the columns.
+    @State private var dragX: CGFloat = 0
 
     var body: some View {
         let isFocused = model.video?.focusedTrackID == track.id
@@ -261,7 +265,29 @@ private struct LanguageHeader: View {
         .background(RoundedRectangle(cornerRadius: 7).fill(isFocused ? Theme.amber.opacity(0.12) : Theme.panelRaised.opacity(0.6)))
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(isFocused ? Theme.amber.opacity(0.8) : Theme.rule, lineWidth: 1))
         .contentShape(Rectangle())
+        .offset(x: dragX)
+        .shadow(color: .black.opacity(dragX == 0 ? 0 : 0.5), radius: 6, y: 2)
         .onTapGesture { model.focusTrack(track.id, edit: false) }
+        // Drag the bar left or right to move the column there (as Move Column Left / Right).
+        .gesture(
+            DragGesture(minimumDistance: 6, coordinateSpace: .global)
+                .onChanged { value in
+                    model.draggingColumn = track.id
+                    dragX = value.translation.width
+                }
+                .onEnded { value in
+                    let ids = model.video?.openTrackIDs ?? []
+                    let from = ids.firstIndex(of: track.id) ?? 0
+                    let to = AppModel.columnDropIndex(from: from, offset: value.translation.width,
+                                                      step: width + gap, count: ids.count)
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        model.moveColumn(track, to: to)
+                        dragX = 0
+                    }
+                    model.draggingColumn = nil
+                }
+        )
+        .help("Drag to move the column; click to work in this language")
         .contextMenu { LanguageMenuItems(model: model, track: track) }
     }
 }

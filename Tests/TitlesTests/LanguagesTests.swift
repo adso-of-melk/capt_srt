@@ -252,6 +252,24 @@ final class LanguagesTests: XCTestCase {
         XCTAssertTrue(f.model.waveBands.isEmpty)
     }
 
+    func testDraggingAColumnHeaderMovesTheColumn() {
+        let f = makeFixture([("en", [sub(1, 2, "Hi")]), ("hr", [sub(1, 2, "Bok")]), ("de", [sub(1, 2, "Hallo")])])
+        let de = f.video.tracks[2]
+        // Columns 200 wide with an 8 gap: a column moves a place for each half column passed.
+        XCTAssertEqual(AppModel.columnDropIndex(from: 0, offset: 90, step: 208, count: 3), 0)
+        XCTAssertEqual(AppModel.columnDropIndex(from: 0, offset: 120, step: 208, count: 3), 1)
+        XCTAssertEqual(AppModel.columnDropIndex(from: 0, offset: 400, step: 208, count: 3), 2)
+        XCTAssertEqual(AppModel.columnDropIndex(from: 2, offset: -999, step: 208, count: 3), 0)
+        XCTAssertEqual(AppModel.columnDropIndex(from: 1, offset: 999, step: 208, count: 3), 2)
+
+        f.model.moveColumn(de, to: 0)
+        XCTAssertEqual(f.video.openTrackIDs, [de.id, f.en.id, f.hr.id])
+        f.model.moveColumn(de, to: 2)
+        XCTAssertEqual(f.video.openTrackIDs, [f.en.id, f.hr.id, de.id])
+        f.model.moveColumn(f.en, to: 1)
+        XCTAssertEqual(f.video.openTrackIDs, [f.hr.id, f.en.id, de.id])
+    }
+
     // MARK: Sharing the window
 
     private let wide = "I never thought I would see you again, ever"
