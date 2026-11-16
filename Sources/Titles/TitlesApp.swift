@@ -207,6 +207,23 @@ struct TitlesCommands: Commands {
             Toggle("Follow Playhead", isOn: $model.followPlayhead)
             Toggle("Trackpad Swipe Over the Selected Title Adjusts Its Edges", isOn: $model.swipeOverTitleAdjusts)
         }
+        CommandMenu("QC") {
+            Group {
+                Toggle("QC Mode", isOn: $model.qcMode)
+                    .keyboardShortcut("k")
+                Button("Next Issue  (Tab in QC mode)") { model.nextIssue(1) }
+                Button("Previous Issue  (Shift-Tab in QC mode)") { model.nextIssue(-1) }
+                Divider()
+                Button("Extend Selected Titles to Fit Reading Speed") { model.extendToFitReadingSpeed(all: false) }
+                    .keyboardShortcut("e", modifiers: [.command, .option])
+                Button("Extend All Titles to Fit Reading Speed") { model.extendToFitReadingSpeed(all: true) }
+                Divider()
+                Button("Widen Selected Gaps to the Minimum") { model.fixGaps(all: false, close: false) }
+                Button("Widen All Gaps to the Minimum") { model.fixGaps(all: true, close: false) }
+                Button("Close Short Gaps (Under ½ s) to the Minimum") { model.fixGaps(all: true, close: true) }
+            }
+            .disabled(noProject)
+        }
     }
 
     private func columnTitle(_ track: Track) -> String {

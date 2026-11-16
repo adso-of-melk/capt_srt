@@ -21,6 +21,12 @@ enum Palette {
     static let red = NSColor(hex: 0xE8665A)
     static let teal = NSColor(hex: 0x5FCFC0)
 
+    /// QC mode ("yellow alert"): its indicator, its frame and the marks on titles with issues.
+    static let alert = NSColor(hex: 0xF4DC4C)
+    /// QC mode's warmer near-black panels and waveform lane.
+    static let alertPanel = NSColor(hex: 0x13110A)
+    static let alertLane = NSColor(hex: 0x0E0C06)
+
     static let text = NSColor(hex: 0xE6EAF4)
     static let textDim = NSColor(hex: 0x7A86A5)
     static let textFaint = NSColor(hex: 0x465170)
@@ -46,6 +52,8 @@ enum Theme {
     static let periwinkle = Color(nsColor: Palette.periwinkle)
     static let red = Color(nsColor: Palette.red)
     static let teal = Color(nsColor: Palette.teal)
+    static let alert = Color(nsColor: Palette.alert)
+    static let alertPanel = Color(nsColor: Palette.alertPanel)
     static let text = Color(nsColor: Palette.text)
     static let textDim = Color(nsColor: Palette.textDim)
     static let textFaint = Color(nsColor: Palette.textFaint)

@@ -294,9 +294,14 @@ final class InputController {
         }
 
         // Tab / Shift+Tab: next / previous title, from anywhere. Keeps editing if you were.
+        // In QC mode: the next / previous title with an issue.
         if e.keyCode == Key.tab, plain {
             let back = flags.contains(.shift)
-            model.selectAdjacent(back ? -1 : 1, keepEditing: isEditingText, restart: back)
+            if model.qcMode {
+                model.nextIssue(back ? -1 : 1, keepEditing: isEditingText)
+            } else {
+                model.selectAdjacent(back ? -1 : 1, keepEditing: isEditingText, restart: back)
+            }
             return nil
         }
 

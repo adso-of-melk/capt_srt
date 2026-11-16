@@ -13,7 +13,8 @@ struct WaveformPane: View {
             subtitles: doc.subtitles, selected: doc.selectedID, time: clock.time,
             revision: model.revision, focused: model.video?.focusedTrackID,
             pps: model.pixelsPerSecond, gain: model.waveGain, db: model.dbScale,
-            hasWave: audio.waveform != nil, loading: audio.isLoading))
+            hasWave: audio.waveform != nil, loading: audio.isLoading,
+            qcMode: model.qcMode, qcKinds: model.qcKinds))
             .background(Theme.background)
     }
 
@@ -29,6 +30,8 @@ struct WaveformPane: View {
         var db: Bool
         var hasWave: Bool
         var loading: Bool
+        var qcMode: Bool
+        var qcKinds: Set<QCIssue>
     }
 }
 
@@ -279,7 +282,7 @@ final class WaveformNSView: NSView {
         let w = bounds.width
         let wave = waveRect
 
-        Palette.lane.setFill()
+        (model.qcMode ? Palette.alertLane : Palette.lane).setFill()
         bounds.fill()
 
         drawRuler(ctx, width: w)
@@ -431,11 +434,14 @@ final class WaveformNSView: NSView {
         let selected = focused ? doc.selectedID : nil
         let preset = model.preset(for: track)
         // Languages that aren't focused are drawn quieter.
-        let dim: CGFloat = focused ? 1 : 0.6
+        let bandDim: CGFloat = focused ? 1 : 0.6
         let langTag = track.language.code.split(separator: "-").first.map { $0.uppercased() } ?? ""
         let tagFont = labelFont(9)
         let tagSize = (langTag as NSString).size(withAttributes: [.font: tagFont])
         let viewEnd = viewStart + visibleDuration
+        // QC mode, focused language: titles with an issue get a yellow-alert bar along the
+        // top; the rest step back.
+        let qc = focused && model.qcMode
         let baseHeight = rect.height * 0.74
         let laneShift = rect.height * 0.11
 
@@ -453,6 +459,9 @@ final class WaveformNSView: NSView {
             rects.append((s.id, r))
 
             let isSel = s.id == selected || (focused && model.multiSelection.contains(s.id))
+            let marked = qc && !model.qcIssues(of: s, in: track, next: index + 1 < subs.count ? subs[index + 1] : nil,
+                                                overlapping: overlaps).isDisjoint(with: model.qcKinds)
+            let dim: CGFloat = qc && !marked && !isSel ? 0.45 : bandDim
             let base: NSColor = (overlaps.contains(s.id) ? Palette.lilac : Palette.status(preset.status(s)))
                 .withAlphaComponent(dim)
             let path = NSBezierPath(roundedRect: r, xRadius: Self.boxCornerRadius, yRadius: Self.boxCornerRadius)
@@ -468,6 +477,11 @@ final class WaveformNSView: NSView {
                 base.withAlphaComponent(0.75 * dim).setStroke()
                 path.lineWidth = 1
                 path.stroke()
+            }
+            if marked {
+                Palette.alert.setFill()
+                NSBezierPath(roundedRect: CGRect(x: r.minX + 4, y: r.minY - 5, width: max(2, r.width - 8), height: 3),
+                             xRadius: 1.5, yRadius: 1.5).fill()
             }
             // Find: a teal bar along the bottom of every title that has a match.
             if model.find.isShown, !model.find.highlights(in: s.id).ranges.isEmpty {
@@ -536,8 +550,9 @@ final class WaveformNSView: NSView {
     private var boxTextCache: [String: NSAttributedString] = [:]
 
     private func cachedBoxText(_ markup: String, focused: Bool, dim: CGFloat) -> NSAttributedString {
-        // The focused language and the others are drawn at different strengths.
-        let key = (focused ? "1" : "0") + markup
+        // The focused language, the others, and (in QC mode) titles with nothing to fix are
+        // drawn at different strengths.
+        let key = (dim >= 0.99 ? "1" : dim >= 0.5 ? "0" : "q") + markup
         if let hit = boxTextCache[key] { return hit }
         if boxTextCache.count > 1500 { boxTextCache.removeAll(keepingCapacity: true) }
         let built = Self.boxText(markup, color: Palette.text.withAlphaComponent(0.9 * dim))

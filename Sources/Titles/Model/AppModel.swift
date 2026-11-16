@@ -119,6 +119,14 @@ final class AppModel: ObservableObject {
     @Published var allowOverlaps = false {
         didSet { UserDefaults.standard.set(allowOverlaps, forKey: "allowOverlaps") }
     }
+    /// QC ▸ QC Mode (⌘K): the window takes on its yellow-alert look, the QC bar shows what's
+    /// wrong and how often, and Tab / Shift-Tab go from one title with an issue to the next.
+    /// Always off when the app starts.
+    @Published var qcMode = false
+    /// The kinds of issue QC looks for, ticked in the QC bar.
+    @Published var qcKinds: Set<QCIssue> = Set(QCIssue.allCases) {
+        didSet { UserDefaults.standard.set(qcKinds.map(\.rawValue).sorted(), forKey: "qcKinds") }
+    }
 
     // Fine-tuning with Control/Option held (Settings ▸ Jogging).
     /// Moving the mouse moves the edge.
@@ -176,6 +184,7 @@ final class AppModel: ObservableObject {
         if defaults.object(forKey: "replayAfterResize") != nil { replayAfterResize = defaults.bool(forKey: "replayAfterResize") }
         if defaults.object(forKey: "replayAfterMove") != nil { replayAfterMove = defaults.bool(forKey: "replayAfterMove") }
         if defaults.object(forKey: "allowOverlaps") != nil { allowOverlaps = defaults.bool(forKey: "allowOverlaps") }
+        if let kinds = defaults.array(forKey: "qcKinds") as? [String] { qcKinds = Set(kinds.compactMap(QCIssue.init(rawValue:))) }
         if defaults.object(forKey: "autoLineBreaks") != nil { autoLineBreaks = defaults.bool(forKey: "autoLineBreaks") }
         if defaults.object(forKey: "spellCheckOn") != nil { spellCheckOn = defaults.bool(forKey: "spellCheckOn") }
         loadRecentProjects()

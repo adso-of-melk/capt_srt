@@ -70,6 +70,7 @@ func makeModel() -> (model: AppModel, engine: FakeEngine) {
     // The default, whatever an earlier test left behind.
     model.allowOverlaps = false
     model.waveBands = []
+    model.qcKinds = Set(QCIssue.allCases)
     return (model, engine)
 }
 

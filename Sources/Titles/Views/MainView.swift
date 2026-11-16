@@ -39,6 +39,9 @@ struct MainView: View {
     private var editor: some View {
         VStack(spacing: 0) {
             TopStrip(model: model)
+            if model.qcMode {
+                QCBar(model: model, doc: doc)
+            }
             if let text = model.banner {
                 BannerView(text: text) { model.banner = nil }
             }
@@ -71,6 +74,15 @@ struct MainView: View {
                     .overlay(alignment: .leading) { DividerGrip(model: model, width: 6) }
                 }
                 .onAppear { sizeCardPane() }
+            }
+        }
+        // QC mode: a thin "yellow alert" frame round the panes (the picture keeps its colours).
+        .overlay {
+            if model.qcMode {
+                Rectangle()
+                    .strokeBorder(Theme.alert.opacity(0.5), lineWidth: 1.5)
+                    .padding(.top, 30)
+                    .allowsHitTesting(false)
             }
         }
         .onChange(of: model.project?.id) { _, _ in sizeCardPane() }

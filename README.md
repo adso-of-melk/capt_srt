@@ -44,6 +44,13 @@ Each video has a **master** language (★) and any number of others, shown side 
 
 ## Coming in the next build
 
+- **Join Titles (⌘J).** Shift-click cards (or waveform boxes) to pick neighbouring titles, then ⌘J, Title ▸ Join Titles, or right-click ▸ Join. They become one title from the first start to the last end, with the text re-broken by the rules; one ⌘Z undoes it. A language locked to the master joins its matching titles too.
+- **QC mode (⌘K, QC menu).** The window goes to "yellow alert": a QC bar under the top strip with a slowly pulsing light, a thin yellow frame round the panes, warmer panels and waveform. Titles with an issue get a yellow outline and the issue named on the card, and a yellow bar over their waveform box; the rest step back. The bar counts each kind of issue in the focused language: spelling, reading speed (CPS), characters per line (CPL), too many lines, duration, overlaps, gaps under the minimum, empty titles. Click a kind to look for it or skip it.
+- **Tab / Shift-Tab in QC mode go from one title with an issue to the next** (wrapping round), with the playhead at its start and the issue named at the bottom of the window. Typing in a card carries over, as with plain Tab.
+- **Automatic fixes** (QC menu, or FIX in the QC bar; one ⌘Z each): **Extend to Fit Reading Speed** (⌥⌘E for the selected titles, or all) lengthens titles that read too fast or are shorter than the minimum duration, into the free room after them first and then before, keeping the minimum gap and never past the maximum duration. **Widen Gaps to the Minimum** (selected or all) moves titles that are too close apart: the earlier title's end comes back, and only when that title is already at the minimum duration does the next one's start move. **Close Short Gaps** closes gaps under half a second down to the minimum by moving the earlier title's end on (not past the maximum duration).
+
+## New in 0.47
+
 - **Overlapping titles are off by default.** A dragged title (whole box, an edge, a group, or a title being drawn) stops at the minimum gap from the next title and never goes over it. Spotting, a new title in an empty slot and Shift Titles keep clear of other titles too. Titles that already overlap (in an imported file) stay as they are, and can be pulled apart. **Title ▸ Enable Overlapping Titles** (also in Settings) lets a title go over its neighbour when pulled on.
 - **Stronger resistance, and it comes back.** With overlaps enabled, a title has to be pulled 40 px past the stopping point (was 16) before it gives. Every time two titles stop overlapping during a drag, the resistance is back at full strength, and after passing through one title the next one holds it in turn. A fast drag can't jump over a title.
 
@@ -144,6 +151,10 @@ Dragging the body of a box moves the whole title, and it plays from half a secon
 | --- | --- |
 | Shift+Space | Play / pause, from anywhere. While typing, press Shift on its own and hold it a moment first, so a capital followed by a space just types |
 | Tab / Shift+Tab | Next / previous title in the focused language (rows where it has no title are skipped). The playhead jumps to it, and editing carries over if you were typing. Shift+Tab works like a player's Back button: with the playhead part way into the title, it first goes back to that title's start. With a group selected, Tab lets go of it and moves past it |
+| Tab / Shift+Tab in QC mode | Next / previous title with an issue (of the kinds ticked in the QC bar) |
+| ⌘K | QC mode on / off |
+| ⌥⌘E | Extend the selected titles to fit the reading speed |
+| ⌘J | Join the picked titles (Shift-click a range, ⌘-click one by one) |
 | ← / → | Step one frame back / forward (Shift: one second) |
 | ↑ / ↓ while paused | Select the previous / next title and jump to it |
 | Return, Space, or just start typing | Edit the selected card's text (cursor at the end; Space types no space), or fill a selected empty slot |
@@ -162,7 +173,7 @@ Dragging the body of a box moves the whole title, and it plays from half a secon
 | Scroll / two-finger swipe | Pan the waveform |
 | ⌘ + scroll, or pinch | Zoom the waveform |
 | Click the ruler | Seek |
-| Right-click a box | Play, edit text, delete |
+| Right-click a box or card | Play, edit text, delete, join the picked titles |
 | Double-click a card's or box's number | Play that title |
 
 During playback, the last title the playhead reached stays highlighted, and the card list scrolls to keep it centred. Starting playback leaves text editing.

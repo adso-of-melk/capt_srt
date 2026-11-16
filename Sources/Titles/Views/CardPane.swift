@@ -12,7 +12,7 @@ struct CardPane: View {
     var body: some View {
         let tracks = model.openTracks
         VStack(spacing: 0) {
-            PaneHeader(title: "Titles", color: Theme.amber) {
+            PaneHeader(title: model.qcMode ? "Titles · QC" : "Titles", color: model.qcMode ? Theme.alert : Theme.amber) {
                 Chip(text: "\(model.rows.count)", color: Theme.peach)
                 Button {
                     model.textOnly.toggle()
@@ -57,7 +57,7 @@ struct CardPane: View {
                 }
             }
         }
-        .background(Theme.panel)
+        .background(model.qcMode ? Theme.alertPanel : Theme.panel)
     }
 
     @ViewBuilder
@@ -113,6 +113,7 @@ struct CardPane: View {
                 inGroup: isFocusedColumn && model.multiSelection.count > 1 && model.multiSelection.contains(sub.id),
                 inSelectedRow: inSelectedRow,
                 isOverlapping: isFocusedColumn && overlaps.contains(sub.id),
+                qcMarks: model.qcMode && isFocusedColumn ? model.qcMarks(of: sub, in: track, overlapping: overlaps) : nil,
                 preset: model.preset(for: track),
                 compact: model.openTracks.count > 1,
                 width: width,
@@ -403,6 +404,8 @@ struct CardView: View {
     var inGroup = false
     let inSelectedRow: Bool
     let isOverlapping: Bool
+    /// QC mode: this title's issues (of the kinds looked for); nil outside QC mode.
+    var qcMarks: Set<QCIssue>? = nil
     let preset: TimingPreset
     let compact: Bool
     /// The card's width, so the text can shrink to keep the on-screen line breaks.
@@ -509,6 +512,21 @@ struct CardView: View {
                 }
                 .padding(.horizontal, 6)
                 .padding(.bottom, 6)
+
+            // QC mode: what's wrong with this title, in words.
+            if let marks = qcMarks, !marks.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 8))
+                    Text(QCIssue.allCases.filter(marks.contains).map { $0.label.uppercased() }.joined(separator: " · "))
+                        .font(Theme.label(9, .bold))
+                        .tracking(1)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Theme.alert)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
+            }
         }
         .background(
             RoundedRectangle(cornerRadius: 10)
@@ -516,7 +534,8 @@ struct CardView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(isOverlapping && !isSelected ? Theme.lilac.opacity(0.7) : accent,
+                .stroke(isOverlapping && !isSelected ? Theme.lilac.opacity(0.7)
+                            : (qcMarks?.isEmpty == false && !isSelected && !inGroup ? Theme.alert.opacity(0.7) : accent),
                         lineWidth: isSelected ? 1.5 : 1)
         )
         .overlay(alignment: .leading) {
@@ -527,6 +546,8 @@ struct CardView: View {
                 .padding(.vertical, 10)
                 .offset(x: -1.5)
         }
+        // QC mode: titles with nothing to fix step back.
+        .opacity(qcMarks?.isEmpty == true && !isSelected && !inGroup ? 0.45 : 1)
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded {
             let flags = NSEvent.modifierFlags
