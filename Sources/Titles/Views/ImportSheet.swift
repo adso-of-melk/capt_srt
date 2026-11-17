@@ -49,7 +49,7 @@ struct DropImportSheet: View {
                                     .font(Theme.label(11, .regular)).foregroundStyle(Theme.textFaint)
                                     .dropDestination(for: String.self) { ids, _ in drop(ids, on: target.id) }
                             }
-                            ForEach(files) { file in row(file, master: masterFileID(of: target)) }
+                            ForEach(files) { file in row(file, master: masterFileID(of: target), length: target.duration) }
                         } header: {
                             header(target, files: files)
                                 .dropDestination(for: String.self) { ids, _ in drop(ids, on: target.id) }
@@ -58,7 +58,7 @@ struct DropImportSheet: View {
                 }
                 if !unmatched.isEmpty {
                     Section {
-                        ForEach(unmatched) { file in row(file, master: nil) }
+                        ForEach(unmatched) { file in row(file, master: nil, length: nil) }
                     } header: {
                         HStack(spacing: 6) {
                             Image(systemName: "questionmark.folder").foregroundStyle(Theme.amber)
@@ -131,8 +131,10 @@ struct DropImportSheet: View {
         }
     }
 
-    private func row(_ file: ImportPlan.File, master: UUID?) -> some View {
-        HStack(spacing: 8) {
+    /// `length`: the video's, to say when the file's titles run past its end.
+    private func row(_ file: ImportPlan.File, master: UUID?, length: Double?) -> some View {
+        let end = file.subtitles.map(\.end).max() ?? 0
+        return HStack(spacing: 8) {
             Text(file.url.lastPathComponent)
                 .lineLimit(1).truncationMode(.middle)
                 .help(file.url.path)
@@ -140,6 +142,10 @@ struct DropImportSheet: View {
             if let reason = file.reason, let chip = reason.chip {
                 Chip(text: chip, color: reason.isGuess ? Theme.amber : Theme.teal)
                     .help(reason.explanation)
+            }
+            if let length, end > length + 5 {
+                Chip(text: "PAST END", color: Theme.amber)
+                    .help("Its titles run \(Self.clock(end - length)) past the end of this video (\(Self.clock(length)) long). Check it's the right video, or the right cut of it.")
             }
             if file.id == master {
                 Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(Theme.peach)

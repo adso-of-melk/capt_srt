@@ -98,6 +98,19 @@ final class ImportTests: XCTestCase {
         XCTAssertNil(m[subs[3].id]?.video)
     }
 
+    func testANameOrEpisodeWinsOverTheVideosLength() {
+        // Short test clips with full-length subtitle files: the names still decide.
+        let long = template(seed: 1, count: 300)   // ends near 970 s
+        let videos = [video("Film 1", duration: 120), video("Film 2", duration: 120), video("Film 3", duration: 2000)]
+        let subs = [file("Film 1.hr", long), file("Film 2.en", long), file("Film_3_DE", long)]
+        let m = FileMatcher.match(videos: videos, subs: subs)
+        XCTAssertEqual(subs.map { m[$0.id]?.video }, videos.map(\.id))
+        XCTAssertEqual(subs.map { m[$0.id]?.reason }, [.episode, .episode, .episode])
+        let named = [video("Alpha", duration: 120), video("Bravo", duration: 2000)]
+        let alpha = [file("Alpha.hr", long)]
+        XCTAssertEqual(FileMatcher.match(videos: named, subs: alpha)[alpha[0].id]?.video, named[0].id)
+    }
+
     func testTheOnlyVideoInAFileFolderTakesIt() {
         let videos = [video("movie", folder: "/a/Film One"), video("movie", folder: "/b/Film Two")]
         let subs = [file("titlovi.hr", short, folder: "/b/Film Two")]

@@ -87,16 +87,20 @@ enum FileMatcher {
         let videoEpisodes = videos.map { episode(in: $0.name) }
         let groups = timingGroups(subs)
         var out: [UUID: Match] = [:]
+        // Per file: the videos it could be by episode (`sameCut`), and of those, the ones
+        // its titles also fit (`allowed`).
+        var sameCut: [[Int]] = []
         var allowed: [[Int]] = []
-        var durationRuledOut: [Bool] = []
 
         for (i, s) in subs.enumerated() {
             out[s.id] = Match(video: nil, reason: nil, group: groups[i])
             let ep = episode(in: s.name)
+            // A different episode number rules a video out, whatever else fits.
             let noConflict = videos.indices.filter { j in
                 guard let ep, let other = videoEpisodes[j] else { return true }
                 return ep.agrees(other)
             }
+            sameCut.append(noConflict)
             let fits = noConflict.filter { j in
                 guard let d = videos[j].duration else { return true }
                 return s.lastEnd <= d + 5
@@ -104,16 +108,18 @@ enum FileMatcher {
             // Runs past the end of every video (a broadcast offset, say): length can't decide.
             let possible = fits.isEmpty ? noConflict : fits
             allowed.append(possible)
-            durationRuledOut.append(!fits.isEmpty && fits.count < noConflict.count)
-            guard !possible.isEmpty else { continue }
+            guard !noConflict.isEmpty else { continue }
             if videos.count == 1 {
-                out[s.id]?.video = videos[possible[0]].id
+                out[s.id]?.video = videos[noConflict[0]].id
                 out[s.id]?.reason = .single
                 continue
             }
-            var candidates = possible
+            // Episode, name and folder come before length: a file named for a video goes to
+            // it even if its titles run past that video's end (the dialog says so). Length
+            // only decides for files nothing else places.
+            var candidates = noConflict
             if let ep {
-                let same = possible.filter { videoEpisodes[$0].map(ep.agrees) ?? false }
+                let same = noConflict.filter { videoEpisodes[$0].map(ep.agrees) ?? false }
                 if same.count == 1 {
                     out[s.id]?.video = videos[same[0]].id
                     out[s.id]?.reason = .episode
@@ -138,9 +144,9 @@ enum FileMatcher {
                     continue
                 }
             }
-            if possible.count == 1 {
-                out[s.id]?.video = videos[possible[0]].id
-                out[s.id]?.reason = durationRuledOut[i] ? .length : .episode
+            if noConflict.count == 1 {
+                out[s.id]?.video = videos[noConflict[0]].id
+                out[s.id]?.reason = .episode
             }
         }
 
@@ -150,7 +156,7 @@ enum FileMatcher {
         for list in members.values {
             let decided = Set(list.compactMap { out[subs[$0].id]?.video })
             guard decided.count == 1, let v = decided.first, let j = videos.firstIndex(where: { $0.id == v }) else { continue }
-            for m in list where out[subs[m].id]?.video == nil && allowed[m].contains(j) {
+            for m in list where out[subs[m].id]?.video == nil && sameCut[m].contains(j) {
                 out[subs[m].id]?.video = v
                 out[subs[m].id]?.reason = .timing
             }
