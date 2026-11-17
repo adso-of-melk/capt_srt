@@ -156,6 +156,9 @@ final class AppModel: ObservableObject {
     /// 0 = four wheel clicks per step, 0.5 = one click per step, 1 = four steps per click.
     @Published var wheelJogSensitivity = 0.5 { didSet { UserDefaults.standard.set(wheelJogSensitivity, forKey: "wheelJogSensitivity") } }
 
+    /// The card pane's width as dragged (0: not set yet, it opens at `autoCardPaneWidth`).
+    /// See `cardPaneWidth(in:divider:)`.
+    @Published var cardPaneWidth: CGFloat = 0
     /// See `updateCardColumnWidth()`.
     @Published var cardColumnMinWidth: CGFloat = 240
     /// The narrowest a card column gets (the widest line at half size). See `updateCardColumnWidth()`.

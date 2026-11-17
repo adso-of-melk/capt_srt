@@ -54,26 +54,32 @@ struct MainView: View {
                     SlimTransport(model: model, clock: model.clock)
                 }
             } else {
-                HSplitView {
-                    CardPane(model: model, doc: doc)
-                        .frame(minWidth: model.cardPaneMinWidth, idealWidth: 360, maxWidth: .infinity)
-                        // Only a sliver on the card side, so the cards' scroll bar stays free to drag;
-                        // the wider grab zone is on the picture side.
-                        .overlay(alignment: .trailing) { DividerGrip(model: model, width: 2) }
-
-                    VSplitView {
-                        VideoPane(model: model, doc: doc, clock: model.clock)
-                            .frame(minHeight: 240)
-                        VStack(spacing: 0) {
-                            TitleBar(model: model, clock: model.clock, audio: model.audio)
-                            WaveformPane(model: model, doc: doc, clock: model.clock, audio: model.audio)
+                // Card pane | divider | picture and waveform. The divider is our own (see
+                // PaneDivider), so it can be grabbed anywhere along its width and always moves.
+                GeometryReader { geo in
+                    let total = geo.size.width
+                    let paneWidth = model.cardPaneWidth(in: total, divider: PaneDivider.thickness)
+                    HStack(spacing: 0) {
+                        CardPane(model: model, doc: doc)
+                            .frame(width: paneWidth)
+                        PaneDivider(
+                            width: paneWidth,
+                            resize: { model.setCardPaneWidth($0, in: total, divider: PaneDivider.thickness) },
+                            reset: { model.cardPaneWidth = 0 })
+                            .frame(width: PaneDivider.thickness)
+                        VSplitView {
+                            VideoPane(model: model, doc: doc, clock: model.clock)
+                                .frame(minHeight: 240)
+                            VStack(spacing: 0) {
+                                TitleBar(model: model, clock: model.clock, audio: model.audio)
+                                WaveformPane(model: model, doc: doc, clock: model.clock, audio: model.audio)
+                            }
+                            .frame(minHeight: 170, idealHeight: 260)
                         }
-                        .frame(minHeight: 170, idealHeight: 260)
+                        .frame(minWidth: AppModel.pictureMinWidth, maxWidth: .infinity)
                     }
-                    .frame(minWidth: 620)
-                    .overlay(alignment: .leading) { DividerGrip(model: model, width: 6) }
+                    .frame(width: total, height: geo.size.height, alignment: .topLeading)
                 }
-                .onAppear { sizeCardPane() }
             }
         }
         // QC mode: a thin "yellow alert" frame round the panes (the picture keeps its colours).
@@ -85,52 +91,11 @@ struct MainView: View {
                     .allowsHitTesting(false)
             }
         }
-        .onChange(of: model.project?.id) { _, _ in sizeCardPane() }
-        .onChange(of: model.video?.id) { _, _ in sizeCardPane() }
-        .onChange(of: model.showProjectView) { _, showing in if !showing { sizeCardPane() } }
+        // A new project opens with the card pane at its usual width.
+        .onChange(of: model.project?.id) { _, _ in model.cardPaneWidth = 0 }
         .onChange(of: model.openTracks.count) { old, new in
-            if new > old { widenCardPaneForColumns(new) }
+            if new > old { model.widenCardPaneForColumns(divider: PaneDivider.thickness) }
         }
-    }
-
-    /// Adding a language: widen the card pane so every column fits (about 240 pt each),
-    /// keeping at least 620 pt for the picture and waveform. Never narrows it.
-    private func widenCardPaneForColumns(_ count: Int) {
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 80_000_000)
-            guard let content = model.mainWindow?.contentView,
-                  let split = Self.firstSideBySideSplit(in: content),
-                  let pane = split.subviews.first else { return }
-            let full = CGFloat(count) * model.cardColumnMinWidth + CGFloat(max(0, count - 1)) * 8 + 24
-            let needed = max(full, model.cardPaneMinWidth)
-            let limit = split.bounds.width - 620 - split.dividerThickness
-            let target = min(needed, limit)
-            guard target > pane.frame.width + 1 else { return }
-            split.setPosition(target, ofDividerAt: 0)
-        }
-    }
-
-    /// Opens the card pane at a quarter of the window (at least its minimum width). Drag the
-    /// divider to widen it for more languages.
-    private func sizeCardPane() {
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 80_000_000)
-            guard let window = model.mainWindow, let content = window.contentView,
-                  let split = Self.firstSideBySideSplit(in: content) else { return }
-            let count = CGFloat(max(1, model.openTracks.count))
-            let columns = max(count * model.cardColumnMinWidth + (count - 1) * 8 + 24, model.cardPaneMinWidth)
-            let limit = split.bounds.width - 620 - split.dividerThickness
-            let width = min(max(model.cardPaneMinWidth, (split.bounds.width * 0.25).rounded(), columns), max(model.cardPaneMinWidth, limit))
-            split.setPosition(width, ofDividerAt: 0)
-        }
-    }
-
-    static func firstSideBySideSplit(in view: NSView) -> NSSplitView? {
-        if let split = view as? NSSplitView, split.isVertical, split.subviews.count >= 2 { return split }
-        for sub in view.subviews {
-            if let found = firstSideBySideSplit(in: sub) { return found }
-        }
-        return nil
     }
 
     /// Opens the window wide enough that no label in the title bar or headers wraps.
@@ -164,35 +129,79 @@ private struct WindowAccessor: NSViewRepresentable {
     }
 }
 
-/// A wider, invisible grab zone on each side of the card pane's divider, so it's easy to
-/// catch. Dragging it moves the divider.
-private struct DividerGrip: View {
-    @ObservedObject var model: AppModel
+/// The line between the card pane and the picture: an 8-point strip, grabbable anywhere along
+/// it, with the resize cursor over all of it. Drag to resize the card pane; double-click to put
+/// it back to its usual width. AppKit, so nothing in the panes beside it can take the mouse.
+struct PaneDivider: NSViewRepresentable {
+    static let thickness: CGFloat = 8
+    /// The card pane's width now.
     let width: CGFloat
-    @State private var startPosition: CGFloat?
-    @State private var hovering = false
+    /// The width asked for while dragging.
+    let resize: (CGFloat) -> Void
+    let reset: () -> Void
 
-    var body: some View {
-        Color.clear
-            .frame(width: width)
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .onHover { inside in
-                if inside && !hovering { NSCursor.resizeLeftRight.push() }
-                if !inside && hovering { NSCursor.pop() }
-                hovering = inside
-            }
-            .gesture(
-                DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                    .onChanged { value in
-                        guard let content = model.mainWindow?.contentView,
-                              let split = MainView.firstSideBySideSplit(in: content),
-                              let pane = split.subviews.first else { return }
-                        if startPosition == nil { startPosition = pane.frame.width }
-                        split.setPosition(max(model.cardPaneMinWidth, (startPosition ?? 0) + value.translation.width),
-                                          ofDividerAt: 0)
-                    }
-                    .onEnded { _ in startPosition = nil }
-            )
+    func makeNSView(context: Context) -> PaneDividerView { PaneDividerView() }
+
+    func updateNSView(_ v: PaneDividerView, context: Context) {
+        v.paneWidth = width
+        v.resize = resize
+        v.reset = reset
+    }
+}
+
+final class PaneDividerView: NSView {
+    var paneWidth: CGFloat = 0
+    var resize: ((CGFloat) -> Void)?
+    var reset: (() -> Void)?
+    private var dragFrom: (x: CGFloat, width: CGFloat)?
+    private var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero,
+                                       options: [.mouseEnteredAndExited, .cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeLeftRight) }
+    override func cursorUpdate(with event: NSEvent) { NSCursor.resizeLeftRight.set() }
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { if dragFrom == nil { hovering = false } }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            dragFrom = nil
+            reset?()
+            return
+        }
+        dragFrom = (event.locationInWindow.x, paneWidth)
+        hovering = true
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let from = dragFrom else { return }
+        NSCursor.resizeLeftRight.set()
+        resize?(from.width + event.locationInWindow.x - from.x)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        dragFrom = nil
+        let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+        hovering = inside
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        Palette.background.setFill()
+        bounds.fill()
+        // A hairline at rest; brighter and wider while hovered or dragged.
+        let active = hovering || dragFrom != nil
+        let w: CGFloat = active ? 2 : 1
+        (active ? Palette.amber.withAlphaComponent(0.8) : Palette.rule).setFill()
+        CGRect(x: (bounds.width - w) / 2, y: 0, width: w, height: bounds.height).fill()
     }
 }

@@ -208,14 +208,57 @@ extension AppModel {
         if abs(floor - cardColumnFloor) > 0.5 { cardColumnFloor = floor }
     }
 
-    /// The card pane can't be dragged narrower than its columns at their narrowest, so the
-    /// columns always fit side by side and the scroll bar stays in view. The picture side
-    /// (control bar and waveform) always keeps at least 620 points.
+    /// The card pane can't be dragged narrower than two columns at their narrowest (one with
+    /// a single language); more languages than fit scroll sideways. It never asks for more
+    /// than half the window, so the divider always has room to move: the picture side
+    /// (control bar and waveform) keeps at least `pictureMinWidth`.
     var cardPaneMinWidth: CGFloat {
-        let count = CGFloat(max(1, openTracks.count))
+        cardPaneMinWidth(in: mainWindow?.contentView?.bounds.width ?? 0)
+    }
+
+    func cardPaneMinWidth(in total: CGFloat) -> CGFloat {
+        let count = CGFloat(min(2, max(1, openTracks.count)))
         let needed = count * cardColumnFloor + (count - 1) * 8 + 24
-        guard let window = mainWindow?.contentView?.bounds.width, window > 0 else { return max(300, needed) }
-        return max(300, min(needed, window - 640))
+        guard total > 0 else { return max(300, needed) }
+        return max(300, min(needed, total * 0.5))
+    }
+
+    /// The narrowest the picture, control bar and waveform get.
+    static let pictureMinWidth: CGFloat = 620
+
+    /// The card pane's width for a window this wide: what was set (dragged, or sized when the
+    /// project opened), kept between its minimum and what leaves the picture its room.
+    func cardPaneWidth(in total: CGFloat, divider: CGFloat) -> CGFloat {
+        let lower = cardPaneMinWidth(in: total)
+        let upper = max(lower, total - Self.pictureMinWidth - divider)
+        let wanted = cardPaneWidth > 0 ? cardPaneWidth : autoCardPaneWidth(in: total, divider: divider)
+        return min(max(wanted, lower), upper)
+    }
+
+    /// Dragging the divider: the card pane takes this width, as far as its limits allow.
+    func setCardPaneWidth(_ width: CGFloat, in total: CGFloat, divider: CGFloat) {
+        let lower = cardPaneMinWidth(in: total)
+        let upper = max(lower, total - Self.pictureMinWidth - divider)
+        let w = min(max(width, lower), upper).rounded()
+        if abs(w - cardPaneWidth) > 0.25 { cardPaneWidth = w }
+    }
+
+    /// A language was added: a card pane set narrower than its columns need at full size (up
+    /// to three of them) widens to fit them, as far as the picture's room allows. Never narrows.
+    func widenCardPaneForColumns(divider: CGFloat) {
+        guard cardPaneWidth > 0, let total = mainWindow?.contentView?.bounds.width, total > 0 else { return }
+        let count = CGFloat(min(3, max(1, openTracks.count)))
+        let columns = count * cardColumnMinWidth + (count - 1) * 8 + 24
+        if columns > cardPaneWidth { setCardPaneWidth(columns, in: total, divider: divider) }
+    }
+
+    /// The width the card pane opens at: a quarter of the window, or more so the open
+    /// languages' columns fit at full size (up to three of them; more scroll sideways).
+    func autoCardPaneWidth(in total: CGFloat, divider: CGFloat) -> CGFloat {
+        let count = CGFloat(min(3, max(1, openTracks.count)))
+        let columns = count * cardColumnMinWidth + (count - 1) * 8 + 24
+        let upper = max(cardPaneMinWidth(in: total), total - Self.pictureMinWidth - divider)
+        return min(max(cardPaneMinWidth(in: total), (total * 0.25).rounded(), columns), upper)
     }
 
     /// Locked languages always have exactly the master's titles and timings; text is kept by link.

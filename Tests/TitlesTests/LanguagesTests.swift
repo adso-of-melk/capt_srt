@@ -301,10 +301,35 @@ final class LanguagesTests: XCTestCase {
         let fitted = (wide as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: size, weight: .medium)]).width
         XCTAssertLessThanOrEqual(fitted, room + 0.5)
 
-        // Three languages side by side need three such columns and the gaps between them.
+        // With more languages the pane can still go as narrow as two such columns and the gap
+        // between them (the others scroll sideways), so the divider always has room to move.
         f.model.addLanguage(Language.named("hr"), locked: false, copyText: true)
         f.model.addLanguage(Language.named("de"), locked: false, copyText: true)
-        XCTAssertEqual(f.model.cardPaneMinWidth, 3 * f.model.cardColumnFloor + 2 * 8 + 24, accuracy: 0.5)
+        XCTAssertEqual(f.model.cardPaneMinWidth, 2 * f.model.cardColumnFloor + 8 + 24, accuracy: 0.5)
+    }
+
+    func testTheDividerAlwaysHasRoomToMoveWithManyLanguages() {
+        let f = makeFixture([("en", [sub(1, 2, "Short")])])
+        for code in ["hr", "de", "fr", "it", "sl", "pl"] {
+            f.model.addLanguage(Language.named(code), locked: false, copyText: true)
+        }
+        XCTAssertEqual(f.model.openTracks.count, 7)
+        let total: CGFloat = 1480, divider: CGFloat = 8
+        let lower = f.model.cardPaneMinWidth(in: total)
+        let upper = total - AppModel.pictureMinWidth - divider
+        XCTAssertLessThan(lower, upper - 200)
+        // It opens at a width that fits three columns at most, not all seven.
+        let opened = f.model.cardPaneWidth(in: total, divider: divider)
+        XCTAssertLessThanOrEqual(opened, 3 * f.model.cardColumnMinWidth + 2 * 8 + 24 + 0.5)
+        // Dragged, it goes anywhere between its limits, and no further.
+        f.model.setCardPaneWidth(lower + 50, in: total, divider: divider)
+        XCTAssertEqual(f.model.cardPaneWidth(in: total, divider: divider), (lower + 50).rounded(), accuracy: 0.5)
+        f.model.setCardPaneWidth(10, in: total, divider: divider)
+        XCTAssertEqual(f.model.cardPaneWidth(in: total, divider: divider), lower.rounded(), accuracy: 0.5)
+        f.model.setCardPaneWidth(5000, in: total, divider: divider)
+        XCTAssertEqual(f.model.cardPaneWidth(in: total, divider: divider), upper, accuracy: 0.5)
+        // A smaller window keeps the picture's room.
+        XCTAssertEqual(f.model.cardPaneWidth(in: 1100, divider: divider), 1100 - AppModel.pictureMinWidth - divider, accuracy: 0.5)
     }
 
     func testCardTextShrinksToKeepItsLinesButNotBelowHalfSize() {
