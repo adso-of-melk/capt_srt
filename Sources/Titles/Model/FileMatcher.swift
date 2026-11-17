@@ -7,11 +7,16 @@ import Foundation
 ///  2. Name: the subtitle file's name without its language tag and without the usual extras
 ///     (final, v2, SDH, 1080p, x264, a year) compared word by word with the video's.
 ///  3. Folder: the only video in the subtitle file's folder.
-///  4. Timing: translations of one film share most of their start times, so a file timed like
-///     a file already matched goes with it.
-///  5. Length: what's still open goes to the video whose length its titles fit. A subtitle
+///  4. Timing: translations of one film share most of their start times (within half a second,
+///     allowing for a constant offset or a 25/23.976 speed change), so a file timed like a file
+///     already matched goes with it.
+///  5. Speech: when the videos' audio has been listened to (`Speech`), a set of files timed
+///     alike goes to the video whose speech its titles line up with, clearly better than any
+///     other's.
+///  6. Length: what's still open goes to the video whose length its titles fit. A subtitle
 ///     file whose titles run past a video's end never belongs to that video.
-/// Pure and quick: the dialog shows each match's reason and everything can be moved.
+/// Pure and quick (the audio is read beforehand): the dialog shows each match's reason and
+/// everything can be moved.
 enum FileMatcher {
     struct Video: Sendable {
         let id: UUID
@@ -30,6 +35,8 @@ enum FileMatcher {
         let folder: String?
         /// Start times of its titles, in order.
         let starts: [Double]
+        /// Their end times, in the same order.
+        let ends: [Double]
         /// When its last title ends.
         let lastEnd: Double
 
@@ -37,13 +44,15 @@ enum FileMatcher {
             self.id = id
             self.name = name
             self.folder = folder
-            starts = subtitles.map(\.start).sorted()
+            let sorted = subtitles.sorted { $0.start < $1.start }
+            starts = sorted.map(\.start)
+            ends = sorted.map(\.end)
             lastEnd = subtitles.map(\.end).max() ?? 0
         }
     }
 
     enum Reason: String, Sendable, Equatable, CaseIterable {
-        case episode, name, folder, timing, length, single, moved, dropped
+        case episode, name, folder, timing, speech, length, single, moved, dropped
 
         /// The word on the chip in the dialog (nil: no chip).
         var chip: String? {
@@ -52,6 +61,7 @@ enum FileMatcher {
             case .name: return "NAME"
             case .folder: return "FOLDER"
             case .timing: return "TIMING"
+            case .speech: return "SPEECH"
             case .length: return "LENGTH"
             case .single, .moved, .dropped: return nil
             }
@@ -63,6 +73,7 @@ enum FileMatcher {
             case .name: return "Its name matches the video's"
             case .folder: return "The only video in its folder"
             case .timing: return "Timed like the other files matched to this video"
+            case .speech: return "Its titles line up with the speech in this video, far better than in any other"
             case .length: return "A guess: its titles fit this video's length. Check it."
             case .single: return "The only video"
             case .moved: return "Moved here by you"
@@ -72,6 +83,9 @@ enum FileMatcher {
 
         /// Less certain: shown in a warning colour.
         var isGuess: Bool { self == .length }
+
+        /// Placed with the files timed like it: they move together.
+        var placesGroup: Bool { self == .timing || self == .speech || self == .length }
     }
 
     struct Match: Sendable, Equatable {
@@ -79,14 +93,22 @@ enum FileMatcher {
         var reason: Reason?
         /// Files timed alike share a group (translations of the same cut).
         var group: Int
+        /// How well it fits: the share of titles timed alike (TIMING), or how closely its
+        /// titles follow the speech (SPEECH).
+        var score: Double? = nil
+        /// More about the match, for the dialog (an offset, a speed change).
+        var detail: String? = nil
+        /// Worth a look: its titles are offset or run at another speed.
+        var caution = false
     }
 
     // MARK: Matching
 
-    static func match(videos: [Video], subs: [SubFile]) -> [UUID: Match] {
+    /// `speech`: when people speak in each video (by video id), for the videos that were listened to.
+    static func match(videos: [Video], subs: [SubFile], speech: [UUID: Speech] = [:]) -> [UUID: Match] {
         let (videoStems, common) = distinctive(videos.map { Set(videoStem($0.name)) })
         let videoEpisodes = videos.map { episode(in: $0.name) }
-        let groups = timingGroups(subs)
+        let (groups, fits) = timingLinks(subs)
         var out: [UUID: Match] = [:]
         // Per file: the videos it could be by episode (`sameCut`), and of those, the ones
         // its titles also fit (`allowed`).
@@ -158,9 +180,62 @@ enum FileMatcher {
         for list in members.values {
             let decided = Set(list.compactMap { out[subs[$0].id]?.video })
             guard decided.count == 1, let v = decided.first, let j = videos.firstIndex(where: { $0.id == v }) else { continue }
+            let placed = list.filter { out[subs[$0].id]?.video != nil }
             for m in list where out[subs[m].id]?.video == nil && sameCut[m].contains(j) {
                 out[subs[m].id]?.video = v
                 out[subs[m].id]?.reason = .timing
+                // The closest of the files already placed, for the dialog.
+                let closest = placed.compactMap { k in fits[m][k].map { (k: k, fit: $0) } }.max { $0.fit.share < $1.fit.share }
+                if let closest {
+                    let fit = closest.fit
+                    let (note, caution) = fit.describe()
+                    out[subs[m].id]?.score = fit.share
+                    out[subs[m].id]?.detail = "\(Int((fit.share * 100).rounded()))% of its titles start within half a second of one in \(subs[closest.k].name)" + note
+                    out[subs[m].id]?.caution = caution
+                }
+            }
+        }
+
+        // Speech: sets of files nothing placed go to the video whose speech their titles
+        // follow, when it's clearly that video and no other. One set per video.
+        if !speech.isEmpty {
+            var found: [(members: [Int], video: Int, fit: SpeechFit, next: Double)] = []
+            for list in members.values.sorted(by: { $0[0] < $1[0] })
+            where list.allSatisfy({ out[subs[$0].id]?.video == nil }) {
+                // The fullest file speaks for the set.
+                guard let rep = list.max(by: { subs[$0].starts.count < subs[$1].starts.count }) else { continue }
+                let options = list.dropFirst().reduce(Set(allowed[list[0]])) { $0.intersection(allowed[$1]) }
+                let scored = options.compactMap { j -> (j: Int, fit: SpeechFit)? in
+                    guard let sp = speech[videos[j].id], let fit = speechFit(subs[rep], sp) else { return nil }
+                    return (j, fit)
+                }.sorted { $0.fit.score > $1.fit.score }
+                guard let best = scored.first, best.fit.score >= speechMinimum else { continue }
+                let next = scored.dropFirst().first?.fit.score ?? 0
+                guard best.fit.score - next >= speechMargin else { continue }
+                found.append((list, best.j, best.fit, next))
+            }
+            var heard: Set<Int> = []
+            for f in found.sorted(by: { $0.fit.score > $1.fit.score }) where !heard.contains(f.video) {
+                heard.insert(f.video)
+                var detail = "Score " + String(format: "%.2f", f.fit.score)
+                    + "; the next best video " + String(format: "%.2f", max(0, f.next))
+                var caution = false
+                if abs(f.fit.offset) >= 0.5 {
+                    detail += "; its times are " + span(abs(f.fit.offset)) + (f.fit.offset > 0 ? " earlier" : " later")
+                        + " than the speech"
+                    caution = true
+                }
+                if f.fit.speed != 1 {
+                    detail += "; \(rateNote(f.fit.speed)): its titles will drift"
+                    caution = true
+                }
+                for m in f.members {
+                    out[subs[m].id]?.video = videos[f.video].id
+                    out[subs[m].id]?.reason = .speech
+                    out[subs[m].id]?.score = f.fit.score
+                    out[subs[m].id]?.detail = detail + "."
+                    out[subs[m].id]?.caution = caution
+                }
             }
         }
 
@@ -245,42 +320,272 @@ enum FileMatcher {
 
     /// Groups files that share most of their start times (translations made from one
     /// template). Returns a group number for each file.
-    static func timingGroups(_ subs: [SubFile]) -> [Int] {
+    static func timingGroups(_ subs: [SubFile]) -> [Int] { timingLinks(subs).groups }
+
+    /// The groups, and how each pair of files in them lines up (`fits[i][j]`: file i against
+    /// file j; nil when they aren't timed alike).
+    static func timingLinks(_ subs: [SubFile]) -> (groups: [Int], fits: [[TimingFit?]]) {
         var parent = Array(subs.indices)
         func root(_ i: Int) -> Int {
             var i = i
             while parent[i] != i { parent[i] = parent[parent[i]]; i = parent[i] }
             return i
         }
+        var fits = Array(repeating: [TimingFit?](repeating: nil, count: subs.count), count: subs.count)
         for i in subs.indices {
-            for j in subs.indices where j > i && root(i) != root(j) {
-                if sameTiming(subs[i].starts, subs[j].starts) { parent[root(j)] = root(i) }
+            for j in subs.indices where j > i {
+                guard let fit = timingFit(subs[i].starts, subs[j].starts) else { continue }
+                fits[i][j] = fit
+                fits[j][i] = fit.inverse
+                if root(i) != root(j) { parent[root(j)] = root(i) }
             }
         }
         var numbers: [Int: Int] = [:]
-        return subs.indices.map { i in
+        let groups = subs.indices.map { i -> Int in
             let r = root(i)
             if let n = numbers[r] { return n }
             numbers[r] = numbers.count
             return numbers.count - 1
         }
+        return (groups, fits)
     }
 
-    /// True when at least half the titles of the smaller file start within a quarter second
-    /// of a title in the other, well above what chance gives for files this busy.
-    static func sameTiming(_ a: [Double], _ b: [Double]) -> Bool {
-        let (small, large) = a.count <= b.count ? (a, b) : (b, a)
-        guard small.count >= 5, small.count * 3 >= large.count,
-              let first = large.first, let last = large.last else { return false }
-        let window = 0.25
-        var j = 0, hits = 0
-        for t in small {
-            while j < large.count && large[j] < t - window { j += 1 }
-            if j < large.count && abs(large[j] - t) <= window { hits += 1 }
+    /// How two files' timing lines up: `a` at `speed`, then moved by `offset` seconds, starts
+    /// where `b` does, for `share` of the smaller file's titles.
+    struct TimingFit: Sendable, Equatable {
+        var share: Double
+        var offset: Double
+        var speed: Double
+
+        var inverse: TimingFit { TimingFit(share: share, offset: -offset / speed, speed: 1 / speed) }
+
+        /// Said in the dialog: an offset or another speed, and whether that's worth a look.
+        func describe() -> (note: String, caution: Bool) {
+            var note = "", caution = false
+            if abs(offset) >= 0.5 {
+                note += ", " + FileMatcher.span(abs(offset)) + (offset > 0 ? " earlier" : " later")
+                caution = true
+            }
+            if speed != 1 {
+                note += ", \(FileMatcher.rateNote(speed)): its titles will drift against this video"
+                caution = true
+            }
+            return (note + ".", caution)
         }
-        let share = Double(hits) / Double(small.count)
-        let chance = min(1, Double(large.count) * 2 * window / max(1, last - first))
-        return share >= max(0.5, chance + 0.3)
+    }
+
+    /// "3.2 s", "10 h", "1 h 2.5 s".
+    static func span(_ seconds: Double) -> String {
+        let hours = (seconds / 3600 + 0.001).rounded(.down)
+        let rest = seconds - hours * 3600
+        let s = String(format: "%.1f s", rest)
+        guard hours >= 1 else { return s }
+        return "\(Int(hours)) h" + (rest >= 0.05 ? " " + s : "")
+    }
+
+    /// The speed changes tried: the same film at 25 and at 23.976 or 24 frames a second.
+    static let speeds: [Double] = [1, 25 / 23.976, 23.976 / 25, 25 / 24, 24 / 25]
+
+    /// "timed for 25 fps, not 23.976" for a speed from `speeds` (times at `speed` line up).
+    static func rateNote(_ speed: Double) -> String {
+        let pairs: [(Double, String)] = [(25 / 23.976, "timed for 25 fps, not 23.976"), (23.976 / 25, "timed for 23.976 fps, not 25"),
+                                         (25 / 24, "timed for 25 fps, not 24"), (24 / 25, "timed for 24 fps, not 25")]
+        return pairs.min(by: { abs($0.0 - speed) < abs($1.0 - speed) })?.1 ?? "timed for another frame rate"
+    }
+
+    /// True when the files are timed alike (see `timingFit`).
+    static func sameTiming(_ a: [Double], _ b: [Double]) -> Bool { timingFit(a, b) != nil }
+
+    /// Whether two files share their timing: at least half the titles of the smaller one
+    /// start within half a second of a title in the other, well above what chance gives for
+    /// files this busy. One may be moved against the other (up to 10 s either way, or by
+    /// whole hours, as broadcast files start at 10:00:00) or run at another frame rate
+    /// (`speeds`). Nil when they don't.
+    static func timingFit(_ a: [Double], _ b: [Double]) -> TimingFit? {
+        let swapped = a.count > b.count
+        let (small, large) = swapped ? (b, a) : (a, b)
+        guard small.count >= 5, small.count * 3 >= large.count,
+              let first = large.first, let last = large.last, last > first else { return nil }
+        let window = 0.5
+        var best: TimingFit?
+        for speed in speeds {
+            let moved = small.map { $0 * speed }
+            var bases: [Double] = [0]
+            // Whole hours apart (a broadcast file starting at 10:00:00, say).
+            let hours = ((first - moved[0]) / 3600).rounded()
+            if hours != 0 { bases.append(hours * 3600) }
+            for base in bases {
+                let offset = bestOffset(moved, large, around: base, reach: 10)
+                let share = Double(hits(moved, large, offset: offset, window: window)) / Double(small.count)
+                if share > (best?.share ?? 0) { best = TimingFit(share: share, offset: offset, speed: speed) }
+            }
+        }
+        let chance = min(1, Double(large.count) * 2 * window / (last - first))
+        guard let best, best.share >= max(0.5, chance + 0.3) else { return nil }
+        return swapped ? best.inverse : best
+    }
+
+    /// The shift (within `reach` of `around`, to a tenth of a second) that lines most of `a`
+    /// up with `b`. Both sorted.
+    static func bestOffset(_ a: [Double], _ b: [Double], around: Double, reach: Double) -> Double {
+        let step = 0.1
+        let bins = Int(2 * reach / step) + 1
+        var counts = [Int](repeating: 0, count: bins)
+        var lo = 0
+        for t in a {
+            let from = t + around - reach, to = t + around + reach
+            while lo < b.count && b[lo] < from { lo += 1 }
+            var j = lo
+            while j < b.count && b[j] <= to {
+                let bin = Int(((b[j] - t - around + reach) / step).rounded())
+                if bin >= 0 && bin < bins { counts[bin] += 1 }
+                j += 1
+            }
+        }
+        // Counted over half a second either way, as `hits` will; then the middle of what
+        // was counted there.
+        var best = bins / 2, bestSum = -1
+        for i in 0..<bins {
+            let sum = counts[max(0, i - 5)...min(bins - 1, i + 5)].reduce(0, +)
+            if sum > bestSum || (sum == bestSum && abs(i - bins / 2) < abs(best - bins / 2)) { best = i; bestSum = sum }
+        }
+        var center = Double(best)
+        for _ in 0..<2 {
+            let mid = Int(center.rounded())
+            var weighted = 0.0, total = 0
+            for k in max(0, mid - 5)...min(bins - 1, mid + 5) {
+                weighted += Double(counts[k] * k)
+                total += counts[k]
+            }
+            if total > 0 { center = weighted / Double(total) }
+        }
+        return around - reach + center * step
+    }
+
+    /// How many of `a`, moved by `offset`, start within `window` of one of `b`. Both sorted.
+    static func hits(_ a: [Double], _ b: [Double], offset: Double, window: Double) -> Int {
+        var j = 0, count = 0
+        for t0 in a {
+            let t = t0 + offset
+            while j < b.count && b[j] < t - window { j += 1 }
+            if j < b.count && abs(b[j] - t) <= window { count += 1 }
+        }
+        return count
+    }
+
+    // MARK: Speech
+
+    /// When people speak in a video: one flag a tenth of a second, kept as running counts.
+    struct Speech: Sendable {
+        static let frame = 0.1
+        /// `prefix[i]`: how many of the first i frames have speech.
+        let prefix: [Int32]
+        var frames: Int { prefix.count - 1 }
+
+        init(active: [Bool]) {
+            var p = [Int32](repeating: 0, count: active.count + 1)
+            for (i, a) in active.enumerated() { p[i + 1] = p[i] + (a ? 1 : 0) }
+            prefix = p
+        }
+
+        /// From the loudness of each frame in decibels (`SpeechListener`).
+        init(levels: [Float]) { self.init(active: Self.detect(levels)) }
+
+        /// Speech is where the sound rises well above the quiet moments around it (the
+        /// quietest tenth of the 10 s around it: the pauses between words, or steady music)
+        /// and above the quietest tenth of the film; pauses under 0.3 s are bridged and
+        /// blips under 0.2 s dropped.
+        static func detect(_ levels: [Float]) -> [Bool] {
+            let n = levels.count
+            guard n > 0 else { return [] }
+            let quiet = levels.sorted()[Int(Double(n - 1) * 0.1)]
+            let reach = 50
+            var floor = [Float](repeating: 0, count: n)
+            for i in 0..<n {
+                let around = levels[max(0, i - reach)...min(n - 1, i + reach)].sorted()
+                floor[i] = around[Int(Double(around.count - 1) * 0.1)]
+            }
+            var active = (0..<n).map { levels[$0] > max(floor[$0] + 6, quiet + 9) }
+            // Bridge short pauses, then drop short blips.
+            var i = 0
+            while i < n {
+                guard !active[i] else { i += 1; continue }
+                var j = i
+                while j < n && !active[j] { j += 1 }
+                if i > 0 && j < n && j - i <= 3 { for k in i..<j { active[k] = true } }
+                i = j
+            }
+            i = 0
+            while i < n {
+                guard active[i] else { i += 1; continue }
+                var j = i
+                while j < n && active[j] { j += 1 }
+                if j - i < 2 { for k in i..<j { active[k] = false } }
+                i = j
+            }
+            return active
+        }
+    }
+
+    /// How a file's titles line up with a video's speech: `score` is the correlation of
+    /// "a title is up" with "someone speaks", tenth of a second by tenth (0: no relation),
+    /// at the best `offset` and `speed`.
+    struct SpeechFit: Sendable, Equatable {
+        var score: Double
+        var offset: Double
+        var speed: Double
+    }
+
+    /// Below this, titles and speech have too little to do with each other to decide.
+    static let speechMinimum = 0.15
+    /// And the best video must beat the next one by this much.
+    static let speechMargin = 0.07
+
+    /// The best fit of a file's titles with a video's speech: shifted up to 2 s either way
+    /// (or by whole hours), at the speeds a film is converted between.
+    static func speechFit(_ file: SubFile, _ speech: Speech) -> SpeechFit? {
+        let n = speech.frames
+        guard n > 50, file.starts.count >= 5, let first = file.starts.first else { return nil }
+        let length = Double(n) * Speech.frame
+        var best: SpeechFit?
+        for speed in [1, 25 / 23.976, 23.976 / 25] {
+            var bases: [Double] = [0]
+            if file.lastEnd * speed > length + 5 {
+                let hours = (first * speed / 3600).rounded(.down)
+                if hours >= 1 { bases.append(-hours * 3600) }
+            }
+            for base in bases {
+                for k in -20...20 {
+                    let offset = base + Double(k) * Speech.frame
+                    guard let score = correlation(file, speech, speed: speed, offset: offset) else { continue }
+                    if score > (best?.score ?? -2) { best = SpeechFit(score: score, offset: offset, speed: speed) }
+                }
+            }
+        }
+        return best
+    }
+
+    /// The correlation (phi) between the file's titles, moved, and the video's speech, over
+    /// the stretch the titles cover (and 10 s either side): the credits and the silence
+    /// after the last line, alike in every video, don't count.
+    static func correlation(_ file: SubFile, _ speech: Speech, speed: Double, offset: Double) -> Double? {
+        let n = speech.frames
+        func frame(_ t: Double) -> Int { min(n, max(0, Int(((t * speed + offset) / Speech.frame).rounded()))) }
+        guard let first = file.starts.first else { return nil }
+        let lo = min(n, max(0, Int(((first * speed + offset - 10) / Speech.frame).rounded())))
+        let hi = min(n, max(0, Int(((file.lastEnd * speed + offset + 10) / Speech.frame).rounded())))
+        let all = Double(hi - lo)
+        let total = Double(speech.prefix[hi] - speech.prefix[lo])
+        var titled = 0.0, both = 0.0
+        for i in file.starts.indices {
+            let a = min(hi, max(lo, frame(file.starts[i]))), b = min(hi, max(lo, frame(file.ends[i])))
+            guard b > a else { continue }
+            titled += Double(b - a)
+            both += Double(speech.prefix[b] - speech.prefix[a])
+        }
+        let spread = (titled * (all - titled) * total * (all - total)).squareRoot()
+        guard titled > 0, spread > 0 else { return nil }
+        return (all * both - titled * total) / spread
     }
 
     // MARK: Names

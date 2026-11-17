@@ -146,6 +146,19 @@ extension AppModel {
             }
             var plan = ImportPlan.make(videos: videos.map { ($0, lengths[$0]) }, existing: targets, subtitles: read,
                                        skipped: skipped, defaultMaster: master, intoProject: intoProject)
+            // Files that neither names nor timing placed (or only their length): listen to the
+            // videos and match the files by where people speak.
+            if onto == nil, plan.hasUnsureFiles, plan.targets.count > 1 {
+                let heard = await self.listen(to: plan.targets.compactMap(\.url))
+                guard self.project?.id == projectID || !intoProject else {
+                    self.statusMessage = nil
+                    return
+                }
+                if !heard.isEmpty {
+                    plan = ImportPlan.make(videos: videos.map { ($0, lengths[$0]) }, existing: targets, subtitles: read,
+                                           skipped: skipped, defaultMaster: master, intoProject: intoProject, speech: heard)
+                }
+            }
             guard !plan.files.isEmpty || !videos.isEmpty else {
                 self.flash("None of the subtitle files could be read.")
                 return
@@ -166,6 +179,29 @@ extension AppModel {
             self.importPlan = plan
             self.sheet = .dropImport
         }
+    }
+
+    /// When people speak in each video file (the ones whose sound can be read). Each video
+    /// is listened to once; a long one takes a few seconds.
+    func listen(to urls: [URL]) async -> [URL: FileMatcher.Speech] {
+        var unique: [URL] = []
+        for url in urls where url.isFileURL && !unique.contains(url) { unique.append(url) }
+        var heard: [URL: FileMatcher.Speech] = [:]
+        let toListen = unique.filter { speechHeard[$0] == nil }
+        for (n, url) in unique.enumerated() {
+            if let known = speechHeard[url] {
+                heard[url] = known
+                continue
+            }
+            let position = (toListen.firstIndex(of: url) ?? n) + 1
+            showStatus("Listening to video \(position) of \(toListen.count) to match the subtitle files by speech…")
+            let job = Task.detached { await SpeechListener.speech(url: url) }
+            if case let speech?? = await Self.value(of: job, timeout: 240) {
+                heard[url] = speech
+                speechHeard[url] = speech
+            }
+        }
+        return heard
     }
 
     /// A video's length in seconds, if it can be read.

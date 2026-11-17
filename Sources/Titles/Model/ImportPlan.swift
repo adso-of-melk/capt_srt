@@ -24,6 +24,10 @@ struct ImportPlan: Sendable {
         /// Files timed alike (the same cut, in other languages) share a group.
         let group: Int
         let subtitles: [Subtitle]
+        /// See `FileMatcher.Match`.
+        var score: Double? = nil
+        var detail: String? = nil
+        var caution = false
     }
 
     var targets: [Target]
@@ -37,6 +41,9 @@ struct ImportPlan: Sendable {
 
     func files(of target: UUID?) -> [File] { files.filter { $0.target == target } }
 
+    /// Files nothing placed, or placed by their length alone: worth listening to the videos for.
+    var hasUnsureFiles: Bool { files.contains { $0.target == nil || $0.reason == .length } }
+
     /// Moves a file to another video (nil: leave it out). Files timed like it that were only
     /// placed by timing or length go with it: they belong to the same cut.
     mutating func move(_ fileID: UUID, to target: UUID?, withGroup: Bool) {
@@ -44,10 +51,13 @@ struct ImportPlan: Sendable {
         let from = files[i].target, group = files[i].group
         for k in files.indices {
             let same = k == i || (withGroup && files[k].group == group && files[k].target == from
-                                  && (files[k].reason.map { [.timing, .length].contains($0) } ?? (from == nil)))
+                                  && (files[k].reason.map(\.placesGroup) ?? (from == nil)))
             guard same else { continue }
             files[k].target = target
             files[k].reason = target == nil ? nil : .moved
+            files[k].score = nil
+            files[k].detail = nil
+            files[k].caution = false
         }
     }
 
@@ -56,7 +66,7 @@ struct ImportPlan: Sendable {
         guard let f = files.first(where: { $0.id == fileID }) else { return [] }
         return files.filter {
             $0.id != fileID && $0.group == f.group && $0.target == f.target
-                && ($0.reason.map { [.timing, .length].contains($0) } ?? (f.target == nil))
+                && ($0.reason.map(\.placesGroup) ?? (f.target == nil))
         }
     }
 
@@ -70,9 +80,11 @@ struct ImportPlan: Sendable {
     }
 
     /// Matches the files and suggests a name and a master language.
-    /// `existing`: the open project's videos, when adding to it.
+    /// `existing`: the open project's videos, when adding to it. `speech`: what was heard in
+    /// the videos listened to (by file), for matching by speech.
     static func make(videos: [(url: URL, duration: Double?)], existing: [Target] = [], subtitles: [ReadFile],
-                     skipped: [String] = [], defaultMaster: Language, intoProject: Bool) -> ImportPlan {
+                     skipped: [String] = [], defaultMaster: Language, intoProject: Bool,
+                     speech: [URL: FileMatcher.Speech] = [:]) -> ImportPlan {
         var targets = existing
         for v in videos {
             targets.append(Target(id: UUID(), name: v.url.deletingPathExtension().lastPathComponent,
@@ -87,13 +99,16 @@ struct ImportPlan: Sendable {
                               folder: t.url.flatMap { $0.isFileURL ? $0.deletingLastPathComponent().path : nil },
                               duration: t.duration)
         }
-        let matches = FileMatcher.match(videos: matchVideos, subs: subFiles)
+        var heard: [UUID: FileMatcher.Speech] = [:]
+        for t in targets { if let url = t.url, let sp = speech[url] { heard[t.id] = sp } }
+        let matches = FileMatcher.match(videos: matchVideos, subs: subFiles, speech: heard)
         var files: [File] = []
         for (i, read) in subtitles.enumerated() {
             let m = matches[subFiles[i].id]
             files.append(File(id: subFiles[i].id, url: read.url, language: read.language ?? defaultMaster,
                               languageGuessed: read.language == nil, target: m?.video, reason: m?.reason,
-                              group: m?.group ?? i, subtitles: read.subtitles))
+                              group: m?.group ?? i, subtitles: read.subtitles,
+                              score: m?.score, detail: m?.detail, caution: m?.caution ?? false))
         }
 
         // No videos at all: each set of files timed alike becomes a video of its own, its

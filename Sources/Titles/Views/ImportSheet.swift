@@ -140,8 +140,11 @@ struct DropImportSheet: View {
                 .help(file.url.path)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let reason = file.reason, let chip = reason.chip {
-                Chip(text: chip, color: reason.isGuess ? Theme.amber : Theme.teal)
-                    .help(reason.explanation)
+                // TIMING says how alike: "TIMING 92%". Amber: a guess, or worth a look (offset,
+                // another frame rate); hover for why.
+                let text = reason == .timing ? file.score.map { "\(chip) \(Int(($0 * 100).rounded()))%" } ?? chip : chip
+                Chip(text: text, color: reason.isGuess || file.caution ? Theme.amber : Theme.teal)
+                    .help(file.detail.map { reason.explanation + ". " + $0 } ?? reason.explanation)
             }
             if let length, end > length + 5 {
                 Chip(text: "PAST END", color: Theme.amber)

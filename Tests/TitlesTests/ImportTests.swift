@@ -222,6 +222,96 @@ final class ImportTests: XCTestCase {
         XCTAssertNil(m[subs[0].id]?.video)
     }
 
+    func testTimingIsFoundThroughAnOffsetOrAnotherFrameRate() {
+        let a = template(seed: 3, count: 300)
+        let starts = a.map(\.start)
+        // 3.2 s later (a different head on the video).
+        let late = translation(of: a).map { $0.start + 3.2 }
+        let fit = FileMatcher.timingFit(starts, late)
+        XCTAssertEqual(fit?.offset ?? 0, 3.28, accuracy: 0.15)
+        XCTAssertEqual(fit?.speed, 1)
+        XCTAssertGreaterThan(fit?.share ?? 0, 0.8)
+        // Timed for 25 fps where the other is 23.976: 4% faster all the way through.
+        let pal = translation(of: a).map { $0.start * 23.976 / 25 }
+        XCTAssertEqual(FileMatcher.timingFit(starts, pal)?.speed ?? 0, 23.976 / 25, accuracy: 0.0001)
+        // A broadcast file starting at 10:00:00.
+        let broadcast = translation(of: a).map { $0.start + 36000 }
+        XCTAssertEqual(FileMatcher.timingFit(starts, broadcast)?.offset ?? 0, 36000.08, accuracy: 0.15)
+        XCTAssertEqual(FileMatcher.span(36000.1), "10 h 0.1 s")
+        XCTAssertEqual(FileMatcher.span(3.24), "3.2 s")
+        // Unrelated files still aren't timed alike, however they're moved.
+        XCTAssertNil(FileMatcher.timingFit(starts, template(seed: 4, count: 300).map(\.start)))
+
+        // Placed by timing, the dialog says how alike and that it's offset.
+        let videos = [video("Alpha", duration: 1200), video("Bravo", duration: 1200)]
+        let late2 = translation(of: a).map { Subtitle(start: $0.start + 3.2, end: $0.end + 3.2, text: $0.text) }
+        let subs = [file("Alpha.en", a), file("export", late2)]
+        let m = FileMatcher.match(videos: videos, subs: subs)
+        XCTAssertEqual(m[subs[1].id]?.video, videos[0].id)
+        XCTAssertEqual(m[subs[1].id]?.reason, .timing)
+        XCTAssertGreaterThan(m[subs[1].id]?.score ?? 0, 0.8)
+        XCTAssertTrue(m[subs[1].id]?.caution ?? false)
+        XCTAssertTrue(m[subs[1].id]?.detail?.contains("3.3 s later") ?? false, m[subs[1].id]?.detail ?? "")
+    }
+
+    /// Speech heard under a file's titles: starting a little before each, ending a little
+    /// before it goes, with a few stray noises.
+    private func speech(under subs: [Subtitle], length: Double, seed: UInt64) -> FileMatcher.Speech {
+        let n = Int(length / FileMatcher.Speech.frame)
+        var active = [Bool](repeating: false, count: n)
+        for s in subs {
+            let a = max(0, Int((s.start - 0.3) * 10)), b = min(n, Int((s.end - 0.4) * 10))
+            if b > a { for f in a..<b { active[f] = true } }
+        }
+        var state = seed
+        for _ in 0..<(n / 40) {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            active[Int(state >> 33) % n] = true
+        }
+        return FileMatcher.Speech(active: active)
+    }
+
+    func testFilesNothingElsePlacesGoWhereTheirTitlesFollowTheSpeech() {
+        let a = template(seed: 5, count: 300), b = template(seed: 6, count: 300)
+        let videos = [video("reel_a", duration: 1300), video("reel_b", duration: 1300)]
+        // Names say nothing, and both sets fit both videos' length.
+        let subs = [file("titles.hr", a), file("titles.en", translation(of: a)),
+                    file("prijevod.hr", b), file("prijevod.en", translation(of: b))]
+        // The first video speaks B's lines, the second A's.
+        let heard = [videos[0].id: speech(under: b, length: 1300, seed: 1),
+                     videos[1].id: speech(under: a, length: 1300, seed: 2)]
+        let m = FileMatcher.match(videos: videos, subs: subs, speech: heard)
+        XCTAssertEqual(subs.map { m[$0.id]?.video }, [videos[1].id, videos[1].id, videos[0].id, videos[0].id])
+        XCTAssertEqual(subs.map { m[$0.id]?.reason }, [.speech, .speech, .speech, .speech])
+        XCTAssertGreaterThan(m[subs[0].id]?.score ?? 0, 0.5)
+        XCTAssertFalse(m[subs[0].id]?.caution ?? true)
+
+        // Both videos sound alike to A's titles: speech can't tell, and length guesses.
+        let same = [videos[0].id: speech(under: a, length: 1300, seed: 1),
+                    videos[1].id: speech(under: a, length: 1300, seed: 2)]
+        let unsure = FileMatcher.match(videos: videos, subs: Array(subs.prefix(2)), speech: same)
+        XCTAssertNotEqual(unsure[subs[0].id]?.reason, .speech)
+
+        // Titles timed for 25 fps against a 23.976 video still find it, with a warning.
+        let pal = a.map { Subtitle(start: $0.start * 23.976 / 25, end: $0.end * 23.976 / 25, text: $0.text) }
+        let fit = FileMatcher.speechFit(file("x", pal), speech(under: a, length: 1300, seed: 3))
+        XCTAssertEqual(fit?.speed ?? 0, 25 / 23.976, accuracy: 0.0001)
+        XCTAssertGreaterThan(fit?.score ?? 0, 0.5)
+    }
+
+    func testSpeechIsWhereTheSoundRisesAboveTheQuietAroundIt() {
+        var levels = [Float](repeating: -60, count: 600)
+        for i in 100..<130 { levels[i] = -25 }
+        for i in 200..<210 { levels[i] = -28 }
+        for i in 212..<220 { levels[i] = -28 }   // a pause of 0.2 s: bridged
+        levels[500] = -20                        // a click: dropped
+        let active = FileMatcher.Speech.detect(levels)
+        XCTAssertEqual(active.indices.filter { active[$0] }, Array(100..<130) + Array(200..<220))
+        let speech = FileMatcher.Speech(levels: levels)
+        XCTAssertEqual(speech.frames, 600)
+        XCTAssertEqual(speech.prefix[600], 50)
+    }
+
     // MARK: The plan
 
     func testAProjectNameAndAMasterLanguageAreSuggested() {

@@ -172,6 +172,9 @@ final class AppModel: ObservableObject {
     /// How many languages fit open on the waveform, each tall enough for two lines; set by
     /// the waveform as it lays out. Nil: no limit.
     var waveRoom: Int?
+    /// What was heard in videos listened to for matching subtitle files (by file), so a
+    /// second drop doesn't listen again.
+    var speechHeard: [URL: FileMatcher.Speech] = [:]
     var undoOrder: [UUID] = []
     var redoOrder: [UUID] = []
     var isSyncingLocks = false
@@ -427,6 +430,12 @@ final class AppModel: ObservableObject {
                 }
             }
         }
+    }
+
+    /// A status line that stays until replaced or cleared (for work that takes a while).
+    func showStatus(_ message: String) {
+        statusClear?.cancel()
+        statusMessage = message
     }
 
     func flash(_ message: String) {
