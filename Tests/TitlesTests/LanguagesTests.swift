@@ -215,41 +215,82 @@ final class LanguagesTests: XCTestCase {
 
     // MARK: Languages on the waveform
 
-    func testALanguageOpenedOnTheWaveformStaysOpenWhenYouClickIntoIt() {
+    func testAClickOnALanguageOnlyMovesToItAndADoubleClickOpensOrClosesIt() {
         let f = makeFixture([("en", [sub(1, 2, "A")]), ("hr", [sub(1, 2, "a")])])
+        f.model.focusTrack(f.en.id, edit: false)
         XCTAssertFalse(f.model.allWaveBands)
+        // Nothing opened yet: the language you're in is the one drawn open.
+        XCTAssertEqual(f.model.waveBandTracks.map(\.id), [f.en.id])
 
-        f.model.setWaveBand(f.hr.id, shown: true)
-        // The language you were on is kept open too…
-        XCTAssertEqual(f.model.waveBands, [f.en.id, f.hr.id])
-        // …so it doesn't fold away when focus moves to the one just opened.
+        // Moving to Croatian (its code clicked, ⌘L, its column) doesn't open it, and English
+        // stays open: nothing jumps.
         f.model.focusTrack(f.hr.id, edit: false)
-        XCTAssertTrue(f.model.waveBands.contains(f.en.id))
-        XCTAssertTrue(f.model.allWaveBands)
+        XCTAssertEqual(f.model.waveBandTracks.map(\.id), [f.en.id])
+        XCTAssertFalse(f.model.isWaveBand(f.hr.id))
 
-        f.model.setWaveBand(f.en.id, shown: false)
-        XCTAssertEqual(f.model.waveBands, [f.hr.id])
+        // Double-click opens it…
+        f.model.toggleWaveBand(f.hr.id)
+        XCTAssertEqual(f.model.waveBandTracks.map(\.id), [f.en.id, f.hr.id])
+        XCTAssertTrue(f.model.allWaveBands)
+        // …and closes one, the language you're in or not.
+        f.model.toggleWaveBand(f.en.id)
+        XCTAssertEqual(f.model.waveBandTracks.map(\.id), [f.hr.id])
+        f.model.focusTrack(f.en.id, edit: false)
+        XCTAssertEqual(f.model.waveBandTracks.map(\.id), [f.hr.id])
+        f.model.toggleWaveBand(f.hr.id)
+        XCTAssertEqual(f.model.waveBandTracks.map(\.id), [f.hr.id], "the last open language stays open")
+        XCTAssertNotNil(f.model.statusMessage)
+
         f.model.allWaveBands = true
-        XCTAssertEqual(f.model.waveBands, [f.en.id, f.hr.id])
+        XCTAssertEqual(f.model.waveBandTracks.map(\.id), [f.en.id, f.hr.id])
         f.model.allWaveBands = false
-        XCTAssertTrue(f.model.waveBands.isEmpty)
+        XCTAssertEqual(f.model.waveBandTracks.map(\.id), [f.en.id], "only the language you're in")
     }
 
-    func testTwoLanguagesOpenAsBandsStayOpenWhenFocusMovesBetweenThem() {
-        let f = makeFixture([("en", [sub(1, 2, "Hello")]), ("hr", [sub(1, 2, "Bok")])])
+    func testOpeningALanguageWithNoRoomClosesTheLowestOpenOneButNotTheOneYoureIn() {
+        let f = makeFixture([("en", [sub(1, 2, "Hi")]), ("hr", [sub(1, 2, "Bok")]), ("de", [sub(1, 2, "Hallo")])])
+        let de = f.video.tracks[2]
         f.model.focusTrack(f.en.id, edit: false)
-        // Croatian was opened as a band; English shows as one only because it's focused.
-        f.model.waveBands = [f.hr.id]
-        // A click in the Croatian band focuses it: English stays open.
-        f.model.focusTrack(f.hr.id, edit: false)
-        XCTAssertEqual(f.model.waveBands, [f.en.id, f.hr.id])
-        XCTAssertTrue(f.model.allWaveBands)
+        f.model.waveRoom = 2
+        f.model.toggleWaveBand(f.hr.id)
+        XCTAssertEqual(f.model.waveBandTracks.map(\.id), [f.en.id, f.hr.id])
+        f.model.toggleWaveBand(de.id)
+        XCTAssertEqual(f.model.waveBandTracks.map(\.id), [f.en.id, de.id])
+        // In German, opening Croatian closes English, the lowest open one that isn't German.
+        f.model.focusTrack(de.id, edit: false)
+        f.model.toggleWaveBand(f.hr.id)
+        XCTAssertEqual(f.model.waveBandTracks.map(\.id), [f.hr.id, de.id])
+        // Room for all three: nothing closes.
+        f.model.waveRoom = 3
+        f.model.toggleWaveBand(f.en.id)
+        XCTAssertEqual(f.model.waveBandTracks.map(\.id), [f.en.id, f.hr.id, de.id])
+    }
+
+    func testDraggingALanguageCodeMovesItsColumnAndOpensOrClosesIt() {
+        let f = makeFixture([("en", [sub(1, 2, "Hi")]), ("hr", [sub(1, 2, "Bok")]), ("de", [sub(1, 2, "Hallo")])])
+        let de = f.video.tracks[2]
+        let order = [f.en.id, f.hr.id, de.id]
         f.model.focusTrack(f.en.id, edit: false)
-        XCTAssertTrue(f.model.allWaveBands)
-        // A language shown as a slim lane doesn't open the one you leave.
-        f.model.waveBands = []
-        f.model.focusTrack(f.hr.id, edit: false)
-        XCTAssertTrue(f.model.waveBands.isEmpty)
+        // Where it lands among the columns: before the language it was dropped above…
+        XCTAssertEqual(AppModel.waveDropColumn(order: order, moving: de.id, group: [f.en.id], slot: 0), 0)
+        // …or after the last of the group it was dropped under.
+        XCTAssertEqual(AppModel.waveDropColumn(order: order, moving: de.id, group: [f.en.id], slot: 1), 1)
+        XCTAssertEqual(AppModel.waveDropColumn(order: order, moving: f.en.id, group: [f.hr.id, de.id], slot: 2), 2)
+        // Its own group, nothing else in it: it stays where it is.
+        XCTAssertEqual(AppModel.waveDropColumn(order: order, moving: de.id, group: [de.id], slot: 0), 2)
+
+        // German, a slim lane, dragged up under English: it opens there, its column too.
+        f.model.dropOnWaveform(de.id, column: 1, open: true)
+        XCTAssertEqual(f.video.openTrackIDs, [f.en.id, de.id, f.hr.id])
+        XCTAssertEqual(f.model.waveBandTracks.map(\.id), [f.en.id, de.id])
+        // English dragged down under Croatian's slim lane: it closes, and goes last.
+        f.model.dropOnWaveform(f.en.id, column: 2, open: false)
+        XCTAssertEqual(f.video.openTrackIDs, [de.id, f.hr.id, f.en.id])
+        XCTAssertEqual(f.model.waveBandTracks.map(\.id), [de.id])
+        // The last open language can't be dragged closed.
+        f.model.dropOnWaveform(de.id, column: 2, open: false)
+        XCTAssertEqual(f.video.openTrackIDs, [de.id, f.hr.id, f.en.id])
+        XCTAssertEqual(f.model.waveBandTracks.map(\.id), [de.id])
     }
 
     func testDraggingAColumnHeaderMovesTheColumn() {

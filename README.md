@@ -64,6 +64,7 @@ Each video has a **master** language (★) and any number of others, shown side 
 - **Issue tags in every language**, not just the focused one: the other languages' tags and waveform bars are in the quiet blue of their cards. QC mode's outline and dimming stay with the focused language.
 - **Drop subtitle files on a video's card in the project view** and they go straight into that video, one language each (the card lights up while you hold them over it). Videos can be added on their own first and filled one by one this way.
 - **CPS and CPL in the other languages' columns** are in the same quiet blue as their cards, with only a red or gold rim when they're over, so they nudge without shouting. The focused language keeps the full colours.
+- **Languages on the waveform, one rule each:** a click on a language's code moves you to that language and nothing else (it doesn't open, close or jump). A double-click opens or closes it. Drag a code up or down to move the language, its column in the title pane moving with it; drag a slim lane's code up among the open languages to open it there, or an open language's code down among the slim lanes to close it. Each open language gets room for two lines; opening one more than fits closes the lowest open one (never the one you're in). The language you're in can be closed: its code in the slim lanes is amber and its selected title is outlined. One language always stays open.
 
 ## New in 0.47
 

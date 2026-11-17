@@ -165,10 +165,13 @@ final class AppModel: ObservableObject {
     @Published var cardColumnMinWidth: CGFloat = 240
     /// The narrowest a card column gets (the widest line at half size). See `updateCardColumnWidth()`.
     @Published var cardColumnFloor: CGFloat = 150
-    /// Languages shown as full bands on the waveform, besides the focused one.
+    /// Languages open as full bands on the waveform (see `waveBandTracks`).
     @Published var waveBands: Set<UUID> = [] {
         didSet { UserDefaults.standard.set(waveBands.map(\.uuidString), forKey: "waveBands") }
     }
+    /// How many languages fit open on the waveform, each tall enough for two lines; set by
+    /// the waveform as it lays out. Nil: no limit.
+    var waveRoom: Int?
     var undoOrder: [UUID] = []
     var redoOrder: [UUID] = []
     var isSyncingLocks = false
@@ -1089,23 +1092,95 @@ enum JogStep: String, CaseIterable, Identifiable {
 }
 
 extension AppModel {
-    func setWaveBand(_ id: UUID, shown: Bool) {
+    // Languages on the waveform. Being open there (a full band) and being the language you
+    // work in are separate: a click on a language's code only moves you to it, a double-click
+    // opens or closes it, and dragging the code moves it (and its column) up or down.
+
+    /// The languages open on the waveform, top to bottom in column order. Never none: with
+    /// none opened yet, the language you're working in.
+    var waveBandTracks: [Track] {
+        let open = openTracks.filter { waveBands.contains($0.id) }
+        if !open.isEmpty { return open }
+        return focusedTrack.map { [$0] } ?? Array(openTracks.prefix(1))
+    }
+
+    func isWaveBand(_ id: UUID) -> Bool { waveBandTracks.contains { $0.id == id } }
+
+    /// The language shown open only because nothing else is becomes open for real, so it
+    /// stays where it is when you move to another language.
+    func pinWaveBands() {
+        guard !openTracks.contains(where: { waveBands.contains($0.id) }), let shown = waveBandTracks.first else { return }
+        waveBands.insert(shown.id)
+    }
+
+    /// Opens or closes a language on the waveform. Opening one when there's no room for
+    /// another (`waveRoom`) closes the lowest open language, never the one you're working
+    /// in. The last open language stays open. False: nothing changed.
+    @discardableResult
+    func setWaveBand(_ id: UUID, shown: Bool) -> Bool {
+        pinWaveBands()
+        let open = waveBandTracks
         if shown {
+            guard !open.contains(where: { $0.id == id }) else { return false }
+            if let room = waveRoom, open.count + 1 > room,
+               let lowest = open.last(where: { $0.id != video?.focusedTrackID }) {
+                waveBands.remove(lowest.id)
+            }
             waveBands.insert(id)
-            // The language you're on stays a band too. Otherwise it would fold back to a
-            // slim lane the moment you click into the one you just opened.
-            if let focused = video?.focusedTrackID { waveBands.insert(focused) }
         } else {
+            guard open.contains(where: { $0.id == id }) else { return false }
+            guard open.count > 1 else {
+                flash("One language always stays open on the waveform.")
+                return false
+            }
             waveBands.remove(id)
         }
         bump()
+        return true
     }
 
-    /// Every open language as a full band on the waveform, or only the focused one.
+    /// Double-click on a language's code on the waveform.
+    func toggleWaveBand(_ id: UUID) {
+        setWaveBand(id, shown: !isWaveBand(id))
+    }
+
+    /// A language dragged by its code on the waveform: its column goes to `column` (as
+    /// `moveColumn(_:to:)`), and it opens (dropped among the open languages) or closes
+    /// (dropped among the slim lanes).
+    func dropOnWaveform(_ id: UUID, column: Int, open: Bool) {
+        guard let track = video?.track(id) else { return }
+        pinWaveBands()
+        let wasOpen = isWaveBand(id)
+        if wasOpen, !open, waveBandTracks.count == 1 {
+            flash("One language always stays open on the waveform.")
+            return
+        }
+        moveColumn(track, to: column)
+        if open != wasOpen { setWaveBand(id, shown: open) }
+    }
+
+    /// Where a language dragged on the waveform lands among the columns. `group`: the
+    /// languages drawn where it was dropped (the open ones, or the slim lanes), top to
+    /// bottom; `slot`: the gap it was dropped in, 0 above the first. The result is for
+    /// `moveColumn(_:to:)`.
+    static func waveDropColumn(order: [UUID], moving: UUID, group: [UUID], slot: Int) -> Int {
+        let others = order.filter { $0 != moving }
+        let g = group.filter { $0 != moving }
+        guard let last = g.last else { return order.firstIndex(of: moving) ?? 0 }
+        if slot < g.count, let i = others.firstIndex(of: g[max(0, slot)]) { return i }
+        return (others.firstIndex(of: last) ?? others.count - 1) + 1
+    }
+
+    /// Every open language as a full band on the waveform, or only the one you're in.
     var allWaveBands: Bool {
-        get { openTracks.count > 1 && openTracks.allSatisfy { $0.id == video?.focusedTrackID || waveBands.contains($0.id) } }
+        get { openTracks.count > 1 && openTracks.allSatisfy { waveBands.contains($0.id) } }
         set {
-            if newValue { waveBands.formUnion(openTracks.map(\.id)) } else { waveBands.subtract(openTracks.map(\.id)) }
+            if newValue {
+                waveBands.formUnion(openTracks.map(\.id))
+            } else {
+                waveBands.subtract(openTracks.map(\.id))
+                if let focused = video?.focusedTrackID { waveBands.insert(focused) }
+            }
             bump()
         }
     }

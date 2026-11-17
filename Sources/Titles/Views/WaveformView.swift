@@ -96,8 +96,14 @@ final class WaveformNSView: NSView {
         case resizing(id: UUID, edge: Edge)
         case scrolling(grab: CGFloat)
         case bandResize(upper: UUID, lower: UUID, startY: CGFloat, hu: CGFloat, hl: CGFloat, wu: CGFloat, wl: CGFloat)
+        /// A language dragged by its code, up or down (see `languageDrop`).
+        case language(id: UUID)
     }
     private var drag: Drag = .none
+    /// Where a language dragged by its code would land: among the open languages or the slim
+    /// lanes, in which gap (0: above the first), the line drawn there, and the pointer.
+    private struct LanguageDrop { let open: Bool; let slot: Int; let y: CGFloat; let point: CGPoint }
+    private var languageDrop: LanguageDrop?
 
     // Resistance: while dragging, a title stops at the minimum gap from the next title in
     // its way. With overlapping titles on (Title menu), pulling on `breakPixels` further lets
@@ -139,12 +145,14 @@ final class WaveformNSView: NSView {
     private func x(_ t: Double) -> CGFloat { CGFloat((t - viewStart) * pps) }
     private func t(_ x: CGFloat) -> Double { max(0, viewStart + Double(x) / pps) }
     private var visibleDuration: Double { Double(bounds.width) / pps }
-    /// Open languages drawn as full bands: the focused one, plus any opened as a band.
-    private var bandTracks: [Track] {
-        guard let model else { return [] }
-        let focused = model.video?.focusedTrackID
-        return model.openTracks.filter { $0.id == focused || model.waveBands.contains($0.id) }
-    }
+    /// Languages open as full bands (double-click a code to open or close one). The language
+    /// you work in isn't always one of them: closed, it's the slim lane with the amber code.
+    private var bandTracks: [Track] { model?.waveBandTracks ?? [] }
+
+    /// Codes are shown (to click, double-click and drag) once there's more than one language.
+    private var showsCodes: Bool { (model?.openTracks.count ?? 0) > 1 }
+
+    private func codeText(_ track: Track) -> String { track.language.code.uppercased() + (track.locked ? " 🔒" : "") }
 
     /// The other open languages, each drawn as a slim lane at the bottom.
     private var laneTracks: [Track] {
@@ -165,13 +173,49 @@ final class WaveformNSView: NSView {
         for (i, track) in tracks.enumerated() {
             let h = i == tracks.count - 1 ? area.maxY - y : (area.height * weights[i] / total).rounded()
             let r = CGRect(x: 0, y: y, width: area.width, height: max(0, h))
-            let code = track.language.code.uppercased() + (track.locked ? " 🔒" : "")
-            let tw = (code as NSString).size(withAttributes: [.font: labelFont(9)]).width + 10
-            let label = tracks.count > 1 ? CGRect(x: 10, y: r.minY + 3, width: tw, height: 13) : .zero
+            let tw = (codeText(track) as NSString).size(withAttributes: [.font: labelFont(9)]).width + 10
+            let label = showsCodes ? CGRect(x: 10, y: r.minY + 3, width: tw, height: 13) : .zero
             result.append(Band(track: track, rect: r, focused: track.id == focused, label: label))
             y += h
         }
         bands = result
+        model?.waveRoom = roomForBands
+    }
+
+    /// The least height of an open language: room for two lines of text in its boxes.
+    static let minBandHeight: CGFloat = 56
+
+    /// How many languages fit open at once, each at least `minBandHeight` tall (the slim
+    /// lanes of the rest take their share). Opening one more closes the lowest open one.
+    private var roomForBands: Int {
+        let n = model?.openTracks.count ?? 1
+        let h = max(0, bounds.height - rulerHeight - scrollbarHeight)
+        var k = max(1, n)
+        while k > 1, (h - lanesHeight(count: n - k)) / CGFloat(k) < Self.minBandHeight { k -= 1 }
+        return k
+    }
+
+    /// The language whose code is at `p`, on an open band or a slim lane.
+    private func languageCode(at p: CGPoint) -> UUID? {
+        if let b = bands.first(where: { $0.label != .zero && $0.label.insetBy(dx: -3, dy: -2).contains(p) }) { return b.track.id }
+        return laneTags.first(where: { $0.rect.contains(p) })?.track
+    }
+
+    /// Where a language dragged by its code lands: above the slim lanes, among the open
+    /// languages (it opens); among the slim lanes, there (it closes).
+    private func languageDropTarget(for id: UUID, at p: CGPoint) -> LanguageDrop {
+        let open = bands.filter { $0.track.id != id }
+        let lanes = laneRects.filter { $0.track != id }
+        let movingIsLane = laneRects.contains { $0.track == id }
+        if p.y < waveRect.maxY || (lanes.isEmpty && !movingIsLane) {
+            let slot = open.filter { $0.rect.midY < p.y }.count
+            let y = slot < open.count ? open[slot].rect.minY : (open.last?.rect.maxY ?? waveRect.maxY)
+            return LanguageDrop(open: true, slot: slot, y: y, point: p)
+        }
+        let slot = lanes.filter { $0.rect.midY < p.y }.count
+        let y = slot < lanes.count ? lanes[slot].rect.minY
+            : (lanes.last?.rect.maxY ?? laneRects.first?.rect.minY ?? waveRect.maxY)
+        return LanguageDrop(open: false, slot: slot, y: y, point: p)
     }
 
     private func band(at p: CGPoint) -> Band? { bands.first { $0.rect.contains(p) } }
@@ -187,10 +231,11 @@ final class WaveformNSView: NSView {
         return nil
     }
 
-    private var lanesHeight: CGFloat {
-        let n = CGFloat(laneTracks.count)
+    private var lanesHeight: CGFloat { lanesHeight(count: laneTracks.count) }
+
+    private func lanesHeight(count n: Int) -> CGFloat {
         guard n > 0 else { return 0 }
-        return min(n * 20, max(0, bounds.height - rulerHeight - scrollbarHeight) * 0.45)
+        return min(CGFloat(n) * 20, max(0, bounds.height - rulerHeight - scrollbarHeight) * 0.45)
     }
 
     private var waveRect: CGRect {
@@ -290,23 +335,27 @@ final class WaveformNSView: NSView {
         boxRectsByTrack.removeAll(keepingCapacity: true)
         numberPills.removeAll(keepingCapacity: true)
         for band in bands {
-            if bands.count > 1 && !band.focused {
+            if showsCodes && !band.focused {
                 Palette.background.withAlphaComponent(0.35).setFill()
                 band.rect.fill()
             }
             drawWaveform(ctx, in: band.rect, model: model)
             drawBoxes(ctx, in: band.rect, track: band.track, focused: band.focused, model: model)
-            if bands.count > 1 {
+            if showsCodes {
                 Palette.rule.setFill()
                 CGRect(x: 0, y: band.rect.minY, width: w, height: 1).fill()
-                let tag = band.track.language.code.uppercased() + (band.track.locked ? " 🔒" : "")
-                (band.focused ? Palette.amber : Palette.panelRaised).setFill()
-                NSBezierPath(roundedRect: band.label, xRadius: 6, yRadius: 6).fill()
-                drawText(tag, at: CGPoint(x: band.label.minX + 5, y: band.label.minY + 1), font: labelFont(9),
-                         color: band.focused ? Palette.background : Palette.periwinkle)
+                drawCode(band.track, in: band.label, focused: band.focused)
             }
         }
         drawLanes(model: model, top: wave.maxY)
+        // A language dragged by its code: an amber line where it would land, and its code
+        // at the pointer.
+        if case let .language(id) = drag, didDrag, let drop = languageDrop, let track = model.video?.track(id) {
+            Palette.amber.setFill()
+            CGRect(x: 0, y: drop.y - 1, width: w, height: 2).fill()
+            let tw = (codeText(track) as NSString).size(withAttributes: [.font: labelFont(9)]).width + 10
+            drawCode(track, in: CGRect(x: drop.point.x - tw / 2, y: drop.point.y - 7, width: tw, height: 13), focused: true)
+        }
         drawScrollbar(model: model)
         if case let .marquee(a, b) = drag {
             let r = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
@@ -318,7 +367,7 @@ final class WaveformNSView: NSView {
             path.stroke()
         }
         let focusRect = focusedBandRect
-        if model.focusedIsLocked {
+        if model.focusedIsLocked, bands.contains(where: \.focused) {
             drawText("LOCKED TO MASTER: TEXT ONLY", at: CGPoint(x: bounds.width - 190, y: focusRect.minY + 6),
                      font: labelFont(9), color: Palette.lilac)
         }
@@ -681,7 +730,10 @@ final class WaveformNSView: NSView {
         guard !tracks.isEmpty else { return }
         let laneH = lanesHeight / CGFloat(tracks.count)
         let viewEnd = viewStart + visibleDuration
+        let focusedID = model.video?.focusedTrackID
         for (i, track) in tracks.enumerated() {
+            // The language you work in, closed: its code is amber and its selected title shows.
+            let focused = track.id == focusedID
             let lane = CGRect(x: 0, y: top + CGFloat(i) * laneH, width: bounds.width, height: laneH)
             laneRects.append((track.id, lane))
             Palette.background.withAlphaComponent(0.6).setFill()
@@ -696,9 +748,10 @@ final class WaveformNSView: NSView {
                 let path = NSBezierPath(roundedRect: r, xRadius: 3, yRadius: 3)
                 color.withAlphaComponent(0.16).setFill()
                 path.fill()
-                // Never highlighted: only the language in focus shows a selection.
-                color.withAlphaComponent(0.6).setStroke()
-                path.lineWidth = 1
+                // Only the language you work in shows a selection.
+                let selected = focused && s.id == track.doc.selectedID
+                (selected ? Palette.amber : color.withAlphaComponent(0.6)).setStroke()
+                path.lineWidth = selected ? 2 : 1
                 path.stroke()
                 if r.width > 22, laneH >= 12, let n = model.rowNumber(of: s.id) {
                     drawText("\(n)", at: CGPoint(x: r.minX + 4, y: r.minY + (r.height - 11) / 2),
@@ -706,15 +759,19 @@ final class WaveformNSView: NSView {
                 }
             }
             // Language code tag at the left edge.
-            let tag = track.language.code.uppercased() + (track.locked ? " 🔒" : "")
-            let font = labelFont(9)
-            let tw = (tag as NSString).size(withAttributes: [.font: font]).width + 10
+            let tw = (codeText(track) as NSString).size(withAttributes: [.font: labelFont(9)]).width + 10
             let tagRect = CGRect(x: 10, y: lane.minY + (laneH - 13) / 2, width: tw, height: 13)
             laneTags.append((track.id, tagRect.insetBy(dx: -3, dy: -3)))
-            Palette.panelRaised.setFill()
-            NSBezierPath(roundedRect: tagRect, xRadius: 6, yRadius: 6).fill()
-            drawText(tag, at: CGPoint(x: tagRect.minX + 5, y: tagRect.minY + 1), font: font, color: Palette.periwinkle)
+            drawCode(track, in: tagRect, focused: focused)
         }
+    }
+
+    /// A language's code: amber for the language you work in, quiet blue for the others.
+    private func drawCode(_ track: Track, in r: CGRect, focused: Bool) {
+        (focused ? Palette.amber : Palette.panelRaised).setFill()
+        NSBezierPath(roundedRect: r, xRadius: 6, yRadius: 6).fill()
+        drawText(codeText(track), at: CGPoint(x: r.minX + 5, y: r.minY + 1), font: labelFont(9),
+                 color: focused ? Palette.background : Palette.periwinkle)
     }
 
     /// Overlapping titles alternate one lane up and one lane down; others sit in the middle.
@@ -793,7 +850,8 @@ final class WaveformNSView: NSView {
     private func updateCursor(at p: CGPoint, flags: NSEvent.ModifierFlags) {
         if scrollbarRect.contains(p) { NSCursor.arrow.set(); return }
         if bandDivider(at: p) != nil { NSCursor.resizeUpDown.set(); return }
-        if bands.contains(where: { $0.label.contains(p) }) { NSCursor.pointingHand.set(); return }
+        if case .language = drag, didDrag { NSCursor.closedHand.set(); return }
+        if languageCode(at: p) != nil { NSCursor.openHand.set(); return }
         if p.y < rulerHeight || laneRects.contains(where: { $0.rect.contains(p) }) { NSCursor.pointingHand.set(); return }
         if model?.focusedIsLocked == true { NSCursor.arrow.set(); return }
         let split = Self.isSplitClick(flags)
@@ -840,26 +898,18 @@ final class WaveformNSView: NSView {
             return
         }
 
-        // A band's language tag: click to focus it; double-click to fold it back to a slim lane.
-        if let b = bands.first(where: { $0.label.contains(p) }) {
-            drag = .none
+        // A language's code, on an open band or a slim lane: a click moves you to that
+        // language (nothing opens or closes), a double-click opens or closes it, and a drag
+        // moves it up or down, into the open languages or the slim lanes.
+        if let id = languageCode(at: p) {
+            languageDrop = nil
             if event.clickCount == 2 {
-                // Focus moves to another band first, so the folded one isn't kept open.
-                if b.focused, let other = bands.first(where: { !$0.focused }) {
-                    model.focusTrack(other.track.id, edit: false)
-                }
-                model.setWaveBand(b.track.id, shown: false)
-            } else if !b.focused {
-                model.focusTrack(b.track.id, edit: false)
+                drag = .none
+                model.toggleWaveBand(id)
+            } else {
+                if id != model.video?.focusedTrackID { model.focusTrack(id, edit: false) }
+                drag = .language(id: id)
             }
-            needsDisplay = true
-            return
-        }
-
-        // A slim lane's language tag, double-clicked: open that language as a full band.
-        if event.clickCount == 2, let tag = laneTags.first(where: { $0.rect.contains(p) }) {
-            drag = .none
-            model.setWaveBand(tag.track, shown: true)
             needsDisplay = true
             return
         }
@@ -869,7 +919,7 @@ final class WaveformNSView: NSView {
             model.focusTrack(b.track.id, edit: false)
         }
 
-        // Another language's lane: focus that language (and the title clicked).
+        // A slim lane: move to that language (and the title clicked).
         if let lane = laneRects.first(where: { $0.rect.contains(p) }) {
             drag = .none
             model.focusTrack(lane.track, edit: false)
@@ -1004,13 +1054,21 @@ final class WaveformNSView: NSView {
             needsDisplay = true
             return
         }
+        if case let .language(id) = drag {
+            if didDrag {
+                languageDrop = languageDropTarget(for: id, at: p)
+                NSCursor.closedHand.set()
+            }
+            needsDisplay = true
+            return
+        }
         guard didDrag else { return }
         autoscroll(for: p)
 
         switch drag {
         case .none:
             break
-        case .scrolling, .bandResize:
+        case .scrolling, .bandResize, .language:
             break
         case let .marquee(from, _):
             drag = .marquee(from: from, to: p)
@@ -1062,6 +1120,14 @@ final class WaveformNSView: NSView {
         switch drag {
         case .none, .ruler, .scrolling, .bandResize:
             break
+        case let .language(id):
+            if didDrag, let drop = languageDrop {
+                let group = drop.open ? bands.map { $0.track.id } : laneRects.map { $0.track }
+                let column = AppModel.waveDropColumn(order: model.video?.openTrackIDs ?? [], moving: id,
+                                                     group: group, slot: drop.slot)
+                model.dropOnWaveform(id, column: column, open: drop.open)
+            }
+            languageDrop = nil
         case let .marquee(a, b):
             let r = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
             let hits = boxRects.filter { $0.rect.intersects(r) }.map(\.id)
