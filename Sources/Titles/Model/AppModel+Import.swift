@@ -89,9 +89,26 @@ extension AppModel {
         }
     }
 
+    /// Files dropped on one video's card in the project view: subtitle files (or folders of
+    /// them) go into that video; anything else is handled as a drop on the window.
+    func dropFiles(_ urls: [URL], onto video: VideoItem) {
+        let files = Self.expandFolders(urls)
+        let subtitles = files.filter { Self.subtitleExtensions.contains($0.pathExtension.lowercased()) }
+        let droppedFolder = urls.contains { $0.isFileURL && $0.hasDirectoryPath }
+        // A folder may hold notes or pictures too; loose files must all be subtitle files.
+        guard !subtitles.isEmpty, droppedFolder || subtitles.count == files.count,
+              project?.videos.contains(where: { $0 === video }) == true else {
+            handleDrop(urls)
+            return
+        }
+        prepareImport(videos: [], subtitles: subtitles, skipped: [], intoProject: true, onto: video.id)
+    }
+
     /// Reads the subtitle files and the videos' lengths (off the main thread), matches them,
     /// and shows the result to be checked.
-    func prepareImport(videos: [URL], subtitles: [URL], skipped: [String], intoProject: Bool) {
+    /// `onto`: a video in the project that every file goes into (dropped on its card). Then
+    /// the files go straight in, and the dialog only opens if a language couldn't be told.
+    func prepareImport(videos: [URL], subtitles: [URL], skipped: [String], intoProject: Bool, onto: UUID? = nil) {
         let existing: [ImportPlan.Target] = intoProject ? (project?.videos ?? []).map {
             ImportPlan.Target(id: UUID(), name: $0.name, url: $0.url, existingID: $0.id, duration: nil)
         } : []
@@ -127,11 +144,23 @@ extension AppModel {
                 t.duration = t.url.flatMap { lengths[$0] }
                 return t
             }
-            let plan = ImportPlan.make(videos: videos.map { ($0, lengths[$0]) }, existing: targets, subtitles: read,
+            var plan = ImportPlan.make(videos: videos.map { ($0, lengths[$0]) }, existing: targets, subtitles: read,
                                        skipped: skipped, defaultMaster: master, intoProject: intoProject)
             guard !plan.files.isEmpty || !videos.isEmpty else {
                 self.flash("None of the subtitle files could be read.")
                 return
+            }
+            if let onto, let target = plan.targets.first(where: { $0.existingID == onto }) {
+                for i in plan.files.indices {
+                    plan.files[i].target = target.id
+                    plan.files[i].reason = .dropped
+                }
+                if !plan.files.contains(where: \.languageGuessed) {
+                    self.statusMessage = nil
+                    self.addToProject(plan)
+                    if !plan.skipped.isEmpty { self.banner = "Couldn't read " + plan.skipped.joined(separator: ", ") + "." }
+                    return
+                }
             }
             self.statusMessage = nil
             self.importPlan = plan
@@ -196,16 +225,24 @@ extension AppModel {
     func addToProject(_ plan: ImportPlan) {
         guard let project else { return }
         var addedVideos = 0, addedFiles = 0
+        var filledVideos: [String] = []
         for t in plan.targets {
             let files = plan.files(of: t.id)
             if let id = t.existingID {
                 guard let v = project.video(id) else { continue }
-                // An empty master is filled first, so the others can be matched to it.
+                // An empty master is filled first, so the others can be matched to it. With no
+                // file in its language, it takes the first file's language (a video added on
+                // its own has an empty master in the project's usual language).
+                if let m = v.master, m.doc.subtitles.isEmpty, !files.isEmpty,
+                   !files.contains(where: { $0.language == m.language }), let first = files.first {
+                    m.language = first.language
+                }
                 let masterLanguage = v.master?.language
                 for f in files.sorted(by: { ($0.language == masterLanguage) && ($1.language != masterLanguage) }) {
                     addFile(f, to: v)
                     addedFiles += 1
                 }
+                if !files.isEmpty { filledVideos.append(v.name) }
             } else {
                 guard !files.isEmpty || t.url != nil else { continue }
                 let item = videoItem(for: t, files: files, master: project.settings.masterLanguage)
@@ -221,7 +258,11 @@ extension AppModel {
         var parts: [String] = []
         if addedVideos > 0 { parts.append("\(addedVideos) video\(addedVideos == 1 ? "" : "s")") }
         if addedFiles > 0 { parts.append("\(addedFiles) subtitle file\(addedFiles == 1 ? "" : "s")") }
-        flash(parts.isEmpty ? "Nothing was added." : "Added " + parts.joined(separator: " and "))
+        if addedVideos == 0, filledVideos.count == 1 {
+            flash("Added \(addedFiles) subtitle file\(addedFiles == 1 ? "" : "s") to \(filledVideos[0])")
+        } else {
+            flash(parts.isEmpty ? "Nothing was added." : "Added " + parts.joined(separator: " and "))
+        }
     }
 
     /// One subtitle file into a video already in the project.

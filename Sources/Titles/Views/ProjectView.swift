@@ -26,6 +26,8 @@ struct ProjectView: View {
                     Text(project.fileURL?.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") ?? "Not saved to a file")
                         .font(Theme.label(11, .regular)).foregroundStyle(Theme.textFaint)
                         .lineLimit(1).truncationMode(.middle)
+                    Text("Drop subtitle files on a video to add their languages to it, or videos and subtitle files anywhere here to have them matched up.")
+                        .font(Theme.label(11, .regular)).foregroundStyle(Theme.textDim)
                 }
                 Spacer()
                 Button("Add Video…") { model.addVideoPanel() }
@@ -56,6 +58,8 @@ private struct VideoCard: View {
     @ObservedObject var video: VideoItem
     let isCurrent: Bool
     @State private var hover = false
+    /// Files are being dragged over the card.
+    @State private var dropTarget = false
 
     var body: some View {
         let missing = model.videoFileMissing(video) && model.findMissingVideo(video) == nil
@@ -78,7 +82,8 @@ private struct VideoCard: View {
                     Chip(text: "NO VIDEO", color: Theme.textDim)
                 }
             }
-            HStack(spacing: 6) {
+            // Wraps onto more lines when there are many languages.
+            FlowLayout(spacing: 6) {
                 ForEach(video.tracks) { track in
                     Chip(text: "\(track.language.code.uppercased()) \(track.doc.subtitles.count)",
                          color: track.id == video.masterTrackID ? Theme.peach : Theme.periwinkle)
@@ -104,7 +109,22 @@ private struct VideoCard: View {
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 10).fill(hover ? Theme.panelRaised : Theme.panel))
         .overlay(RoundedRectangle(cornerRadius: 10)
-            .stroke(isCurrent ? Theme.amber.opacity(0.7) : Theme.rule, lineWidth: 1))
+            .stroke(dropTarget ? Theme.teal : (isCurrent ? Theme.amber.opacity(0.7) : Theme.rule),
+                    lineWidth: dropTarget ? 2 : 1))
+        .overlay(alignment: .bottomTrailing) {
+            if dropTarget {
+                Text("Drop to add these languages to \(video.name)")
+                    .font(Theme.label(10, .semibold)).foregroundStyle(Theme.background)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Capsule().fill(Theme.teal))
+                    .padding(8)
+            }
+        }
+        // Subtitle files dropped here go into this video (anything else, as on the window).
+        .dropDestination(for: URL.self) { urls, _ in
+            model.dropFiles(urls, onto: video)
+            return !urls.isEmpty
+        } isTargeted: { dropTarget = $0 }
         .onHover { hover = $0 }
         .onTapGesture(count: 2) { model.openVideoFromOverview(video) }
     }
@@ -127,5 +147,42 @@ struct MissingVideoBanner: View {
         .padding(.vertical, 6)
         .background(Theme.red.opacity(0.12))
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.red.opacity(0.3)).frame(height: 1) }
+    }
+}
+
+/// Lays its views out in rows, starting a new row when the next one doesn't fit.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+            widest = max(widest, x - spacing)
+        }
+        return CGSize(width: proposal.width ?? widest, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
     }
 }

@@ -43,7 +43,7 @@ enum FileMatcher {
     }
 
     enum Reason: String, Sendable, Equatable, CaseIterable {
-        case episode, name, folder, timing, length, single, moved
+        case episode, name, folder, timing, length, single, moved, dropped
 
         /// The word on the chip in the dialog (nil: no chip).
         var chip: String? {
@@ -53,7 +53,7 @@ enum FileMatcher {
             case .folder: return "FOLDER"
             case .timing: return "TIMING"
             case .length: return "LENGTH"
-            case .single, .moved: return nil
+            case .single, .moved, .dropped: return nil
             }
         }
 
@@ -66,6 +66,7 @@ enum FileMatcher {
             case .length: return "A guess: its titles fit this video's length. Check it."
             case .single: return "The only video"
             case .moved: return "Moved here by you"
+            case .dropped: return "Dropped on this video"
             }
         }
 

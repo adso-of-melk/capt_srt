@@ -355,6 +355,27 @@ final class ImportTests: XCTestCase {
 
     // MARK: Dropping
 
+    func testSubtitleFilesDroppedOnAVideoGoStraightIntoIt() throws {
+        // A video added on its own: an empty master in the project's usual language.
+        let f = makeFixture([("en", [])])
+        let folder = try tempFolder()
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+        let a = template(seed: 4, count: 40)
+        let hr = try writeFile("Brothers.hr.srt", SubtitleFormats.srt(a), in: folder)
+        let fa = try writeFile("Brothers.fa.srt", SubtitleFormats.srt(translation(of: a)), in: folder)
+        f.model.dropFiles([hr, fa], onto: f.video)
+        XCTAssertTrue(waitUntil { f.video.tracks.count == 2 })
+        // No file in English: the first file's language becomes the master, filled from it.
+        XCTAssertEqual(f.video.tracks.map(\.language.code), ["hr", "fa"])
+        XCTAssertEqual(f.video.master?.language.code, "hr")
+        XCTAssertEqual(f.video.master?.doc.subtitles.count, 40)
+        XCTAssertGreaterThan(f.video.tracks[1].doc.subtitles.compactMap(\.link).count, 30)
+        // Straight in: no dialog.
+        XCTAssertNil(f.model.importPlan)
+        XCTAssertNil(f.model.sheet)
+    }
+
+
     func testDroppedFoldersAreOpenedAndHiddenFilesSkipped() throws {
         let folder = try tempFolder()
         addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
