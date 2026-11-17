@@ -67,6 +67,15 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle("Keep the minimum gap between titles", isOn: $model.keepMinGap)
+                Text(model.keepMinGap
+                     ? "No gap goes under the project's minimum. A title that sits too close to its neighbour (in an imported file, or after the minimum was raised) gets the gap fixed as soon as you move it: the earlier title's end comes back."
+                     : "Titles still stop at the minimum gap, but pull a little further (or nudge once more) and they go closer, down to touching.")
+                    .font(Theme.label(11, .regular))
+                    .foregroundStyle(Theme.textDim)
+            }
+
+            Section {
                 Toggle("Trackpad swipe over the selected title adjusts its edges", isOn: $model.swipeOverTitleAdjusts)
                 Toggle("Replay title after jog or nudge", isOn: $model.replayAfterJog)
                 Toggle("Replay title after drag-resize", isOn: $model.replayAfterResize)

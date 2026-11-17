@@ -12,6 +12,11 @@ import Foundation
 /// now, so a fast drag can't jump over one, and after passing a title (pulled through it)
 /// the next one holds it in turn. Titles that already overlapped when the drag began can
 /// go on overlapping until they come apart; from then on they hold like any other.
+///
+/// With Keep Minimum Gap off (Title menu), the hold at the minimum gap gives too: pulled on
+/// by `breakDistance`, the title goes closer, down to touching its neighbour, where it holds
+/// again (and goes over it only as above). Once it's the minimum gap away again, the hold
+/// there is back.
 struct DragResistance {
     /// What the pointer moves.
     enum Mode: Equatable {
@@ -37,6 +42,8 @@ struct DragResistance {
     let mode: Mode
     let gap: Double
     let allowOverlap: Bool
+    /// Keep Minimum Gap: the hold at the minimum gap never gives.
+    let keepGap: Bool
     /// How far (in seconds) the pointer has to pull on past the stopping point before the
     /// title gives. The view sets it from the zoom, so it's always the same distance on screen.
     var breakDistance: Double
@@ -53,6 +60,8 @@ struct DragResistance {
     private(set) var bumped = false
     /// With overlapping titles off: the pointer pulled on as far as would have broken through.
     private(set) var refused = false
+    /// The refusal was at the minimum gap (Keep Minimum Gap on), not at the neighbour's edge.
+    private(set) var refusedAtGap = false
 
     /// Pairs allowed to overlap: they overlapped when the drag began, or the title was pulled
     /// through. A pair leaves this set (the resistance is back) as soon as they don't overlap.
@@ -60,16 +69,20 @@ struct DragResistance {
     /// Where the pointer was when a hold against a neighbour began (or the furthest back
     /// it has been since): pulling on past it by `breakDistance` goes through.
     private var heldAt: [Contact: Double] = [:]
+    /// Keep Minimum Gap off: pairs pulled closer than the minimum gap. They hold at touching
+    /// instead, until they're the minimum gap apart again.
+    private var closeIn: Set<Contact> = []
 
     private static let eps = 0.0005
 
     init(mode: Mode, original: [Span], others: [Subtitle], gap: Double, allowOverlap: Bool,
-         breakDistance: Double) {
+         keepGap: Bool = true, breakDistance: Double) {
         self.mode = mode
         self.original = original
         self.others = others
         self.gap = gap
         self.allowOverlap = allowOverlap
+        self.keepGap = keepGap
         self.breakDistance = breakDistance
         self.spans = original
         switch mode {
@@ -110,6 +123,15 @@ struct DragResistance {
         }
         value = v
         spans = spans(for: v)
+        // Pairs back at the minimum gap (or further) hold there again.
+        if !closeIn.isEmpty {
+            closeIn = closeIn.filter { c in
+                guard let o = neighbour(c.neighbour), spans.indices.contains(c.title) else { return false }
+                let s = spans[c.title]
+                let apart = o.start >= s.end - Self.eps ? o.start - s.end : s.start - o.end
+                return apart < gap - Self.eps
+            }
+        }
         return v
     }
 
@@ -144,13 +166,13 @@ struct DragResistance {
     /// How far a title's end may go towards a title after it: the minimum gap before that
     /// title. A title that was already closer than that when the drag began (but not over
     /// it) may come back to where it was, and no closer; it's never pushed away.
-    private func endLimit(_ i: Int, _ o: Subtitle) -> Double {
+    private func endLimit(_ i: Int, _ o: Subtitle, gap: Double) -> Double {
         let limit = o.start - gap
         let was = original[i].end
         return was > limit && was <= o.start + Self.eps ? was : limit
     }
 
-    private func startLimit(_ i: Int, _ o: Subtitle) -> Double {
+    private func startLimit(_ i: Int, _ o: Subtitle, gap: Double) -> Double {
         let limit = o.end + gap
         let was = original[i].start
         return was < limit && was >= o.end - Self.eps ? was : limit
@@ -170,18 +192,20 @@ struct DragResistance {
                 case .later:
                     // A title after this one, and the end moves.
                     guard o.start >= span.end - Self.eps, movesEnd else { continue }
+                    let g = closeIn.contains(c) ? 0 : gap
                     let u: Double
                     switch mode {
-                    case .move: u = endLimit(i, o) - original[i].end
-                    default: u = endLimit(i, o)
+                    case .move: u = endLimit(i, o, gap: g) - original[i].end
+                    default: u = endLimit(i, o, gap: g)
                     }
                     if best == nil || u < best!.value, !through.contains(c) { best = (u, c) }
                 case .earlier:
                     guard o.end <= span.start + Self.eps, movesStart else { continue }
+                    let g = closeIn.contains(c) ? 0 : gap
                     let l: Double
                     switch mode {
-                    case .move: l = startLimit(i, o) - original[i].start
-                    default: l = startLimit(i, o)
+                    case .move: l = startLimit(i, o, gap: g) - original[i].start
+                    default: l = startLimit(i, o, gap: g)
                     }
                     if best == nil || l > best!.value, !through.contains(c) { best = (l, c) }
                 }
@@ -205,7 +229,19 @@ struct DragResistance {
     /// Pulled on `distance` past where a hold began: with overlaps on, far enough goes through.
     private mutating func pulledThrough(_ c: Contact, by distance: Double) -> Bool {
         guard heldAt[c] != nil, distance > breakDistance else { return false }
-        guard allowOverlap else { refused = true; return false }
+        let atGap = !closeIn.contains(c) && gap > Self.eps
+        if atGap, !keepGap {
+            // Keep Minimum Gap off: closer, down to touching (where it holds again).
+            heldAt = [:]
+            closeIn.insert(c)
+            bumped = true
+            return true
+        }
+        guard allowOverlap else {
+            refused = true
+            refusedAtGap = atGap
+            return false
+        }
         heldAt = [:]
         through.insert(c)
         bumped = true

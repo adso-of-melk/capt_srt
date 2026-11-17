@@ -156,7 +156,8 @@ struct BannerView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "icloud.slash").font(.system(size: 11)).foregroundStyle(Theme.amber)
+            Image(systemName: text.contains("iCloud") ? "icloud.slash" : "exclamationmark.triangle")
+                .font(.system(size: 11)).foregroundStyle(Theme.amber)
             Text(text).font(Theme.label(11, .medium)).foregroundStyle(Theme.text).lineLimit(2)
             Spacer()
             Button { dismiss() } label: {

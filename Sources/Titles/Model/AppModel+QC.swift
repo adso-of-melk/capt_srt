@@ -392,6 +392,47 @@ extension AppModel {
         }
     }
 
+    /// Keep Minimum Gap, after an edit: every gap next to a title that moved (or is new) and
+    /// is under the minimum is fixed by `fixedGap`, the earlier title's end coming back first.
+    /// Gaps between titles that didn't move stay as they are, and so do overlaps.
+    static func keepGaps(before: [Subtitle], after subs: inout [Subtitle], rules: TimingPreset,
+                         gap: Double, frame: Double) {
+        guard subs.count > 1, gap > 0.0005 else { return }
+        var old: [UUID: Subtitle] = [:]
+        for s in before { old[s.id] = s }
+        let moved = Set(subs.filter { s in
+            guard let o = old[s.id] else { return true }
+            return abs(o.start - s.start) > 0.0005 || abs(o.end - s.end) > 0.0005
+        }.map(\.id))
+        guard !moved.isEmpty else { return }
+        for i in 0..<(subs.count - 1) where moved.contains(subs[i].id) || moved.contains(subs[i + 1].id) {
+            let (a, b) = fixedGap(subs[i], subs[i + 1], rules: rules, gap: gap, frame: frame, closeUnder: nil)
+            subs[i] = a
+            subs[i + 1] = b
+        }
+    }
+
+    /// How many gaps in a language are under its minimum (overlaps don't count).
+    func shortGapCount(in track: Track) -> Int {
+        let subs = track.doc.subtitles
+        let gap = Double(preset(for: track).minGapFrames) * frameDuration
+        guard subs.count > 1 else { return 0 }
+        return (0..<(subs.count - 1)).filter { i in
+            let g = subs[i + 1].start - subs[i].end
+            return g >= -0.0005 && g < gap - 0.0005
+        }.count
+    }
+
+    /// With Keep Minimum Gap on, after an import or a larger minimum: say how many gaps are
+    /// short and what fixes them (they're left as they are until then, or until edited).
+    func noteShortGaps(in track: Track) {
+        guard keepMinGap else { return }
+        let n = shortGapCount(in: track)
+        guard n > 0 else { return }
+        banner = "\(n) gap\(n == 1 ? " is" : "s are") under the minimum in \(track.language.name). "
+            + "QC ▸ Widen All Gaps to the Minimum fixes them in one go (⌘Z to undo); each one is also fixed when you move one of its titles."
+    }
+
     /// Two neighbouring titles with the gap between them fixed.
     ///
     /// Under the minimum gap: the first title's end comes back to the minimum gap before the

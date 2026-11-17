@@ -126,6 +126,12 @@ extension AppModel {
             self.undoOrder.append(track.id)
             self.redoOrder.removeAll()
         }
+        track.doc.tidy = { [weak self, weak track] before, after in
+            guard let self, let track, self.keepMinGap else { return }
+            let rules = self.preset(for: track)
+            Self.keepGaps(before: before, after: &after, rules: rules,
+                          gap: Double(rules.minGapFrames) * self.frameDuration, frame: self.frameDuration)
+        }
         let watcher = track.doc.$selectedID.sink { [weak self] id in
             if id != nil { self?.emptySlotRow = nil }
         }
@@ -955,6 +961,7 @@ extension AppModel {
             let matched = linked.filter { $0.link != nil }.count
             self.flash(isMaster ? "Loaded \(subs.count) titles into \(language.name)"
                                 : "Imported \(subs.count) \(language.name) titles; \(matched) matched to the master")
+            self.noteShortGaps(in: track)
         }
     }
 
@@ -1142,7 +1149,10 @@ extension AppModel {
 
     func applySettings(_ settings: ProjectSettings, name: String) {
         guard let project else { return }
+        let shortBefore = focusedTrack.map { shortGapCount(in: $0) } ?? 0
         project.settings = settings
+        // A larger minimum gap (or another frame rate) can leave gaps under it.
+        if let track = focusedTrack, shortGapCount(in: track) > shortBefore { noteShortGaps(in: track) }
         syncSpellingWords()
         if !name.isEmpty { project.name = name }
         rememberProject()

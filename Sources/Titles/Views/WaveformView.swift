@@ -980,7 +980,7 @@ final class WaveformNSView: NSView {
             resistance = inside && !model.allowOverlaps ? nil : DragResistance(
                 mode: .draw(from: b.start), original: [.init(start: b.start, end: b.start)],
                 others: model.doc.subtitles, gap: model.minGap, allowOverlap: model.allowOverlaps,
-                breakDistance: Self.breakPixels / pps)
+                keepGap: model.keepMinGap, breakDistance: Self.breakPixels / pps)
             drag = .creating(t0: b.start, t1: b.start)
         }
         needsDisplay = true
@@ -1031,7 +1031,7 @@ final class WaveformNSView: NSView {
             model.placePlayhead(t(p.x))
         case let .creating(t0, _):
             guard resistance != nil else {
-                showRefusal()
+                showRefusal(atGap: false)
                 break
             }
             drag = .creating(t0: t0, t1: resist(max(0, t(p.x))))
@@ -1093,7 +1093,7 @@ final class WaveformNSView: NSView {
         resistance = DragResistance(
             mode: mode, original: dragged.map { .init(start: $0.start, end: $0.end) },
             others: model.doc.subtitles.filter { !ids.contains($0.id) }, gap: model.minGap,
-            allowOverlap: model.allowOverlaps, breakDistance: Self.breakPixels / pps)
+            allowOverlap: model.allowOverlaps, keepGap: model.keepMinGap, breakDistance: Self.breakPixels / pps)
     }
 
     /// Where the drag goes for what the pointer asks: held at the next title in the way.
@@ -1103,15 +1103,17 @@ final class WaveformNSView: NSView {
         let v = r.drag(to: wanted)
         resistance = r
         if r.bumped { tick() }
-        if r.refused { showRefusal() }
+        if r.refused { showRefusal(atGap: r.refusedAtGap) }
         return v
     }
 
-    /// Pulled hard against a title with overlapping titles off: say where to turn them on (once a drag).
-    private func showRefusal() {
+    /// Pulled hard against a title that can't come closer: say which setting holds it (once a drag).
+    private func showRefusal(atGap: Bool) {
         guard !refusalShown else { return }
         refusalShown = true
-        model?.flash("Titles can't overlap. To allow it: Title ▸ Enable Overlapping Titles.")
+        model?.flash(atGap
+            ? "Titles keep the minimum gap between them. To let them closer: Title ▸ Keep Minimum Gap."
+            : "Titles can't overlap. To allow it: Title ▸ Enable Overlapping Titles.")
     }
 
     /// Where a title drawn from `t0` stops: the minimum gap after the title before it and

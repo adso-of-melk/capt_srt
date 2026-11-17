@@ -119,6 +119,14 @@ final class AppModel: ObservableObject {
     @Published var allowOverlaps = false {
         didSet { UserDefaults.standard.set(allowOverlaps, forKey: "allowOverlaps") }
     }
+    /// Title ▸ Keep Minimum Gap. On: no gap between titles goes under the project's minimum.
+    /// Every edit already stops a title there; on top of that, a title that moves while it
+    /// sits too close to a neighbour (an imported file, a minimum raised later) gets that gap
+    /// fixed in the same undo step, the earlier title's end coming back (see `fixedGap`).
+    /// Off: the hold at the minimum gap gives when pulled on, down to touching.
+    @Published var keepMinGap = true {
+        didSet { UserDefaults.standard.set(keepMinGap, forKey: "keepMinGap") }
+    }
     /// QC ▸ QC Mode (⌘K): the window takes on its yellow-alert look, the QC bar shows what's
     /// wrong and how often, and Tab / Shift-Tab go from one title with an issue to the next.
     /// Always off when the app starts.
@@ -192,6 +200,7 @@ final class AppModel: ObservableObject {
         if defaults.object(forKey: "replayAfterResize") != nil { replayAfterResize = defaults.bool(forKey: "replayAfterResize") }
         if defaults.object(forKey: "replayAfterMove") != nil { replayAfterMove = defaults.bool(forKey: "replayAfterMove") }
         if defaults.object(forKey: "allowOverlaps") != nil { allowOverlaps = defaults.bool(forKey: "allowOverlaps") }
+        if defaults.object(forKey: "keepMinGap") != nil { keepMinGap = defaults.bool(forKey: "keepMinGap") }
         if let off = defaults.array(forKey: "qcKindsOff") as? [String] {
             qcKinds = Set(QCIssue.allCases).subtracting(off.compactMap(QCIssue.init(rawValue:)))
         } else if let kinds = defaults.array(forKey: "qcKinds") as? [String] {
@@ -728,19 +737,27 @@ final class AppModel: ObservableObject {
         case .start:
             var lower = 0.0
             if clamp, let prev = doc.previous(of: id), prev.end <= s.start + 0.0005 {
-                lower = prev.end + minGap
+                lower = min(s.start, prev.end + nudgeGap(s.start - prev.end))
             }
             value = min(max(value, lower), s.end - minLength)
             doc.liveUpdate(id) { $0.start = value }
         case .end:
             var upper = engine.duration > 0 ? engine.duration : Double.greatestFiniteMagnitude
             if clamp, let next = doc.next(of: id), next.start >= s.end - 0.0005 {
-                upper = min(upper, next.start - minGap)
+                upper = min(upper, max(s.end, next.start - nudgeGap(next.start - s.end)))
             }
             value = max(min(value, upper), s.start + minLength)
             doc.liveUpdate(id) { $0.end = value }
         }
         return value
+    }
+
+    /// How close a nudged or jogged edge may come to its neighbour, from how close it is now.
+    /// It stops at the minimum gap; with Keep Minimum Gap off, one more step from there goes
+    /// on closer, down to touching. An edge that's already closer than the minimum never jumps
+    /// away; it just can't come closer (unless Keep Minimum Gap is off).
+    private func nudgeGap(_ now: Double) -> Double {
+        keepMinGap || now > minGap + 0.0005 ? minGap : 0
     }
 
     /// Shows the frame at the edge and plays a short audio grain there.

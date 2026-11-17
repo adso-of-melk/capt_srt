@@ -69,6 +69,7 @@ func makeModel() -> (model: AppModel, engine: FakeEngine) {
     model.autoLineBreaks = true
     // The default, whatever an earlier test left behind.
     model.allowOverlaps = false
+    model.keepMinGap = true
     model.waveBands = []
     model.qcKinds = Set(QCIssue.allCases)
     return (model, engine)

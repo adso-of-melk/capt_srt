@@ -21,6 +21,10 @@ final class SubtitleDocument: ObservableObject {
     /// The playhead time, so a lost selection (after undo or delete) can fall back to the
     /// title just before the playhead rather than the first title.
     var playheadTime: (() -> Double)?
+    /// Last word on every change that becomes an undo step (`perform`, `commitLive`), given
+    /// the titles before it: Keep Minimum Gap fixes the gaps round the titles that moved, in
+    /// the same step. Not for undo, redo, loading, or a locked language following its master.
+    var tidy: ((_ before: [Subtitle], _ after: inout [Subtitle]) -> Void)?
     @Published private(set) var isDirty = false
 
     private var undoStack: [[Subtitle]] = []
@@ -110,6 +114,10 @@ final class SubtitleDocument: ObservableObject {
         var working = subtitles
         change(&working)
         working.sort { $0.start < $1.start }
+        if let tidy {
+            tidy(before, &working)
+            working.sort { $0.start < $1.start }
+        }
         guard working != before else { return }
         if key == nil || key != lastCoalesceKey {
             pushUndo(before)
@@ -184,6 +192,12 @@ final class SubtitleDocument: ObservableObject {
     func commitLive() {
         guard let snapshot = liveSnapshot else { return }
         liveSnapshot = nil
+        if snapshot != subtitles, let tidy {
+            var working = subtitles
+            tidy(snapshot, &working)
+            working.sort { $0.start < $1.start }
+            if working != subtitles { subtitles = working }
+        }
         if snapshot != subtitles {
             pushUndo(snapshot)
             redoStack.removeAll()
