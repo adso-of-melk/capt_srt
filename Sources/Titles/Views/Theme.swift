@@ -126,6 +126,8 @@ struct Chip: View {
     let text: String
     var color: Color = Theme.textDim
     var filled = false
+    /// A rim in its own colour (e.g. red round a quiet blue chip).
+    var outline: Color? = nil
 
     var body: some View {
         Text(text)
@@ -137,7 +139,7 @@ struct Chip: View {
             .background(
                 Capsule().fill(filled ? color : color.opacity(0.12))
             )
-            .overlay(Capsule().stroke(color.opacity(filled ? 0 : 0.35), lineWidth: 1))
+            .overlay(Capsule().stroke(outline ?? color.opacity(filled ? 0 : 0.35), lineWidth: 1))
     }
 }
 

@@ -483,9 +483,22 @@ struct CardView: View {
                 if track.locked { Image(systemName: "lock.fill").font(.system(size: 8)).foregroundStyle(Theme.lilac) }
                 Spacer(minLength: 4)
                 if isOverlapping { Chip(text: "OVERLAP", color: Theme.lilac) }
-                if line == .bad { Chip(text: "\(preset.longestLine(sub)) CPL", color: Theme.status(line), filled: true) }
-                if !compact { Chip(text: String(format: "%.2fs", sub.duration), color: Theme.status(dur)) }
-                Chip(text: String(format: "%.1f CPS", sub.cps), color: Theme.status(cps), filled: cps == .bad)
+                // Another language's column: CPL and CPS stay in the quiet blue of its cards,
+                // with only a rim in the warning colour, so they nudge without shouting.
+                if line == .bad {
+                    if qcMuted {
+                        Chip(text: "\(preset.longestLine(sub)) CPL", color: Theme.periwinkle, outline: Theme.status(line))
+                    } else {
+                        Chip(text: "\(preset.longestLine(sub)) CPL", color: Theme.status(line), filled: true)
+                    }
+                }
+                if !compact { Chip(text: String(format: "%.2fs", sub.duration), color: qcMuted ? Theme.periwinkle : Theme.status(dur)) }
+                if qcMuted {
+                    Chip(text: String(format: "%.1f CPS", sub.cps), color: Theme.periwinkle,
+                         outline: cps == .ok ? nil : Theme.status(cps))
+                } else {
+                    Chip(text: String(format: "%.1f CPS", sub.cps), color: Theme.status(cps), filled: cps == .bad)
+                }
             }
             .padding(.horizontal, 8)
             .padding(.top, 7)
