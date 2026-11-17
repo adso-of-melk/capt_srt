@@ -114,13 +114,17 @@ struct CardPane: View {
                 inGroup: isFocusedColumn && model.multiSelection.count > 1 && model.multiSelection.contains(sub.id),
                 inSelectedRow: inSelectedRow,
                 isOverlapping: isFocusedColumn && overlaps.contains(sub.id),
-                qcMarks: model.qcMode && isFocusedColumn ? model.qcMarks(of: sub, in: track, overlapping: overlaps) : nil,
+                qcMarks: model.visibleQCMarks(of: sub, in: track, overlapping: overlaps),
+                qcLook: model.qcMode,
                 preset: model.preset(for: track),
                 compact: model.openTracks.count > 1,
                 width: width,
                 text: Binding(
                     get: { track.doc.subtitle(sub.id)?.text ?? "" },
-                    set: { track.doc.setText(sub.id, $0) }
+                    set: {
+                        track.doc.setText(sub.id, $0)
+                        model.typed(in: sub.id)
+                    }
                 )
             )
         } else {
@@ -430,8 +434,11 @@ struct CardView: View {
     var inGroup = false
     let inSelectedRow: Bool
     let isOverlapping: Bool
-    /// QC mode: this title's issues (of the kinds looked for); nil outside QC mode.
+    /// This title's issues (of the kinds looked for), shown on a tag on the card's edge; nil
+    /// when it shows none (another language's column, or the title being typed in).
     var qcMarks: Set<QCIssue>? = nil
+    /// QC mode: titles with an issue get a yellow outline and the rest step back.
+    var qcLook = false
     let preset: TimingPreset
     let compact: Bool
     /// The card's width, so the text can shrink to keep the on-screen line breaks.
@@ -546,7 +553,7 @@ struct CardView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(isOverlapping && !isSelected ? Theme.lilac.opacity(0.7)
-                            : (qcMarks?.isEmpty == false && !isSelected && !inGroup ? Theme.alert.opacity(0.7) : accent),
+                            : (qcLook && qcMarks?.isEmpty == false && !isSelected && !inGroup ? Theme.alert.opacity(0.7) : accent),
                         lineWidth: isSelected ? 1.5 : 1)
         )
         .overlay(alignment: .leading) {
@@ -557,13 +564,12 @@ struct CardView: View {
                 .padding(.vertical, 10)
                 .offset(x: -1.5)
         }
-        // QC mode: what's wrong with this title, on a tag that hangs on the card's lower edge.
-        // It takes no room of its own: a card is exactly as tall in QC mode as outside it, so
-        // the list keeps its place and scrolls evenly when QC mode or a kind is switched.
+        // What's wrong with this title (in QC mode or not), on a tag that hangs on the card's
+        // lower edge. It takes no room of its own: a card is exactly as tall with a tag as
+        // without, so the list keeps its place and scrolls evenly. Click it for the fixes.
         .overlay(alignment: .bottomLeading) {
             if let marks = qcMarks, !marks.isEmpty {
-                QCTag(marks: marks)
-                    .help(model.describe(marks, of: sub, in: track))
+                QCTagMenu(model: model, track: track, sub: sub, marks: marks)
                     // Room on the right for the "esc" key on the text box's edge.
                     .frame(maxWidth: max(60, width - 76), alignment: .leading)
                     .padding(.leading, 12)
@@ -571,7 +577,7 @@ struct CardView: View {
             }
         }
         // QC mode: titles with nothing to fix step back.
-        .opacity(qcMarks?.isEmpty == true && !isSelected && !inGroup ? 0.45 : 1)
+        .opacity(qcLook && qcMarks?.isEmpty == true && !isSelected && !inGroup ? 0.45 : 1)
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded {
             let flags = NSEvent.modifierFlags
@@ -636,6 +642,37 @@ struct QCTag: View {
         .padding(.horizontal, 6)
         .frame(height: Self.height)
         .background(Capsule().fill(Theme.alert))
+    }
+}
+
+/// A title's issue tag as a button: click it for what's wrong, in words, and the fixes
+/// that apply (each for this title alone, one undo step).
+private struct QCTagMenu: View {
+    @ObservedObject var model: AppModel
+    let track: Track
+    let sub: Subtitle
+    let marks: Set<QCIssue>
+
+    var body: some View {
+        let fixes = QCFix.fixes(for: marks)
+        Menu {
+            Text(model.describe(marks, of: sub, in: track))
+            if !fixes.isEmpty { Divider() }
+            ForEach(fixes) { fix in
+                Button(fix.label) {
+                    if model.video?.focusedTrackID != track.id { model.focusTrack(track.id, edit: false) }
+                    model.applyQCFix(fix, to: sub.id)
+                }
+                // A language locked to the master keeps the master's timing.
+                .disabled(track.locked && fix != .rebreak)
+            }
+        } label: {
+            QCTag(marks: marks)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .help(model.describe(marks, of: sub, in: track) + ". Click for fixes.")
     }
 }
 

@@ -21,6 +21,21 @@ enum QCIssue: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 
+    /// For QC ▸ Check For.
+    var menuLabel: String {
+        switch self {
+        case .spelling: return "Spelling"
+        case .readingSpeed: return "Reading Speed Over the Limit"
+        case .nearReadingSpeed: return "Reading Speed Near the Limit"
+        case .lineLength: return "Lines Too Long"
+        case .lineCount: return "Too Many Lines"
+        case .duration: return "Too Short or Too Long"
+        case .overlap: return "Overlaps"
+        case .gap: return "Gaps Under the Minimum"
+        case .empty: return "Empty Titles"
+        }
+    }
+
     /// What it means, for the bar's tooltips.
     var help: String {
         switch self {
@@ -162,6 +177,20 @@ extension AppModel {
         return qcIssues(of: s, in: track, next: next, overlapping: overlapping).intersection(qcKinds)
     }
 
+    /// The issue marks a title shows (yellow tag on its card, yellow bar over its waveform
+    /// box), in QC mode or not, so titles can be checked while they're made. Only the focused
+    /// language's titles, and never the one being typed in or spotted (it would flash on and
+    /// off as the words go in): nil for those. QC mode adds the colours and Tab.
+    func visibleQCMarks(of s: Subtitle, in track: Track, overlapping: Set<UUID>) -> Set<QCIssue>? {
+        guard track.id == video?.focusedTrackID, s.id != typingIn, s.id != spottingID else { return nil }
+        return qcMarks(of: s, in: track, overlapping: overlapping)
+    }
+
+    /// A card's text changed in its editor (typing, pasting, deleting).
+    func typed(in id: UUID) {
+        if typingIn != id { typingIn = id }
+    }
+
     /// The issues of one title, in words.
     func describe(_ issues: Set<QCIssue>, of s: Subtitle, in track: Track) -> String {
         let rules = preset(for: track)
@@ -184,6 +213,51 @@ extension AppModel {
             case .empty: return "no text"
             }
         }.joined(separator: " · ")
+    }
+}
+
+// MARK: QC: fixing one title
+
+/// What clicking a title's issue tag offers to do about it.
+enum QCFix: String, CaseIterable, Identifiable {
+    case extend, widenGaps, rebreak
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .extend: return "Extend to Fit Reading Speed"
+        case .widenGaps: return "Widen Gaps to the Minimum"
+        case .rebreak: return "Re-break Lines"
+        }
+    }
+
+    /// The fixes for a title's issues, in this order. Spelling, overlaps and empty titles
+    /// have none: they need a person.
+    static func fixes(for issues: Set<QCIssue>) -> [QCFix] {
+        var out: [QCFix] = []
+        if !issues.isDisjoint(with: [.readingSpeed, .duration]) { out.append(.extend) }
+        if issues.contains(.gap) { out.append(.widenGaps) }
+        if !issues.isDisjoint(with: [.lineLength, .lineCount]) { out.append(.rebreak) }
+        return out
+    }
+}
+
+extension AppModel {
+    /// One fix for one title (from its issue tag): the title is selected first, alone, so the
+    /// fix works on it as the QC menu's "Selected" commands would. One undo step.
+    func applyQCFix(_ fix: QCFix, to id: UUID) {
+        guard doc.subtitle(id) != nil else { return }
+        clearMulti()
+        emptySlotRow = nil
+        select(id)
+        switch fix {
+        case .extend: extendToFitReadingSpeed(all: false)
+        case .widenGaps: fixGaps(all: false, close: false)
+        case .rebreak:
+            rebreakSelected()
+            doc.endTextCoalescing()
+        }
     }
 }
 

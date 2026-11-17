@@ -550,7 +550,12 @@ final class AppModel: ObservableObject {
 
     /// The title whose card has the text cursor in it (its card shows a small "esc" hint:
     /// Esc leaves the text, so ⌘I, ⌘V and Tab work on whole titles again).
-    @Published var cursorIn: UUID?
+    @Published var cursorIn: UUID? {
+        didSet { if cursorIn != typingIn, typingIn != nil { typingIn = nil } }
+    }
+    /// The title whose text has been typed into since its card took the cursor. Its issue tag
+    /// stays off until the cursor leaves it, so tags don't flash on and off mid-sentence.
+    @Published var typingIn: UUID?
 
     /// The language whose Language Options dialog is open.
     @Published var languageOptionsID: UUID?

@@ -165,6 +165,86 @@ final class QCTests: XCTestCase {
         XCTAssertEqual(f.model.qcCounts(), [:])
     }
 
+    // MARK: Marks outside QC mode
+
+    func testTitlesShowTheirIssuesInQCModeOrNot() throws {
+        let fast = sub(1, 2, sentence), fine = sub(4, 8, "Fine.")
+        let f = makeFixture([("en", [fast, fine]), ("hr", [sub(1, 2, sentence)])])
+        f.en.spellCheck = false
+        f.hr.spellCheck = false
+        f.model.focusTrack(f.en.id, edit: false)
+        XCTAssertFalse(f.model.qcMode)
+        let overlaps = f.en.doc.overlappingIDs
+        XCTAssertEqual(f.model.visibleQCMarks(of: fast, in: f.en, overlapping: overlaps), [.readingSpeed])
+        XCTAssertEqual(f.model.visibleQCMarks(of: fine, in: f.en, overlapping: overlaps), [])
+        // Only the language being worked in.
+        let other = try XCTUnwrap(f.hr.doc.subtitles.first)
+        XCTAssertNil(f.model.visibleQCMarks(of: other, in: f.hr, overlapping: []))
+        // Kinds that aren't checked for aren't shown.
+        f.model.qcKinds.remove(.readingSpeed)
+        XCTAssertEqual(f.model.visibleQCMarks(of: fast, in: f.en, overlapping: overlaps), [])
+        f.model.qcKinds = Set(QCIssue.allCases)
+    }
+
+    func testTheTitleBeingTypedInShowsNoTagUntilTheCursorLeavesIt() {
+        let a = sub(1, 2, sentence), b = sub(4, 5, sentence)
+        let f = makeFixture([("en", [a, b])])
+        f.en.spellCheck = false
+        f.model.focusTrack(f.en.id, edit: false)
+        let overlaps = f.en.doc.overlappingIDs
+        // Clicking into a card keeps its tag: nothing has been typed yet.
+        f.model.textCursor(true, in: a.id)
+        XCTAssertEqual(f.model.visibleQCMarks(of: a, in: f.en, overlapping: overlaps), [.readingSpeed])
+        f.model.typed(in: a.id)
+        XCTAssertNil(f.model.visibleQCMarks(of: a, in: f.en, overlapping: overlaps))
+        XCTAssertEqual(f.model.visibleQCMarks(of: b, in: f.en, overlapping: overlaps), [.readingSpeed])
+        // Tab on to the next card: the first one's tag is back.
+        f.model.textCursor(true, in: b.id)
+        f.model.textCursor(false, in: a.id)
+        XCTAssertNil(f.model.typingIn)
+        XCTAssertEqual(f.model.visibleQCMarks(of: a, in: f.en, overlapping: overlaps), [.readingSpeed])
+        // Esc (the cursor leaves) after typing in the second one.
+        f.model.typed(in: b.id)
+        f.model.textCursor(false, in: b.id)
+        XCTAssertEqual(f.model.visibleQCMarks(of: b, in: f.en, overlapping: overlaps), [.readingSpeed])
+    }
+
+    func testEachIssueGetsTheFixesThatApply() {
+        XCTAssertEqual(QCFix.fixes(for: [.readingSpeed]), [.extend])
+        XCTAssertEqual(QCFix.fixes(for: [.duration, .gap]), [.extend, .widenGaps])
+        XCTAssertEqual(QCFix.fixes(for: [.lineLength, .lineCount]), [.rebreak])
+        XCTAssertEqual(QCFix.fixes(for: [.spelling, .overlap, .empty, .nearReadingSpeed]), [])
+    }
+
+    func testATagsFixWorksOnItsTitleAloneInOneUndoStep() throws {
+        let fast1 = sub(10, 11, sentence), long = sub(20, 24, "A line that is much too long for one subtitle line"),
+            fast2 = sub(30, 31, sentence), close = sub(31.04, 34, "Next.")
+        let f = makeFixture([("en", [fast1, long, fast2, close])])
+        f.en.spellCheck = false
+        f.model.focusTrack(f.en.id, edit: false)
+        // Something else selected (and picked with Shift): the fix still goes to the tag's title.
+        f.model.select(fast2.id)
+        f.model.toggleMulti(long.id)
+        f.model.applyQCFix(.extend, to: fast1.id)
+        XCTAssertEqual(try XCTUnwrap(f.en.doc.subtitle(fast1.id)).end, 12.08, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(f.en.doc.subtitle(fast2.id)).end, 31, accuracy: 0.0001)
+        XCTAssertEqual(f.en.doc.selectedID, fast1.id)
+        XCTAssertTrue(f.model.multiSelection.isEmpty)
+        f.model.undo()
+        XCTAssertEqual(try XCTUnwrap(f.en.doc.subtitle(fast1.id)).end, 11, accuracy: 0.0001)
+
+        f.model.applyQCFix(.rebreak, to: long.id)
+        let broken = try XCTUnwrap(f.en.doc.subtitle(long.id)).text
+        XCTAssertTrue(broken.contains("\n"))
+        XCTAssertFalse(broken.split(separator: "\n").contains { $0.count > 42 })
+        f.model.undo()
+        XCTAssertEqual(try XCTUnwrap(f.en.doc.subtitle(long.id)).text, long.text)
+
+        f.model.applyQCFix(.widenGaps, to: fast2.id)
+        XCTAssertEqual(try XCTUnwrap(f.en.doc.subtitle(fast2.id)).end, 30.96, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(f.en.doc.subtitle(close.id)).start, 31.04, accuracy: 0.0001)
+    }
+
     // MARK: Cards in QC mode
 
     func testACardsTagNamesItsIssuesInTheBarsOrder() {

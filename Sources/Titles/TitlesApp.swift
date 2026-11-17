@@ -213,6 +213,17 @@ struct TitlesCommands: Commands {
                     .keyboardShortcut("k")
                 Button("Next Issue  (Tab in QC mode)") { model.nextIssue(1) }
                 Button("Previous Issue  (Shift-Tab in QC mode)") { model.nextIssue(-1) }
+                // Which kinds of issue are marked on the titles (in QC mode or not) and counted.
+                Menu("Check For") {
+                    ForEach(QCIssue.allCases) { issue in
+                        Toggle(issue.menuLabel, isOn: Binding(
+                            get: { model.qcKinds.contains(issue) },
+                            set: { on in if on { model.qcKinds.insert(issue) } else { model.qcKinds.remove(issue) } }))
+                    }
+                    Divider()
+                    Button("Check for Everything") { model.qcKinds = Set(QCIssue.allCases) }
+                        .disabled(model.qcKinds.count == QCIssue.allCases.count)
+                }
                 Divider()
                 Button("Extend Selected Titles to Fit Reading Speed") { model.extendToFitReadingSpeed(all: false) }
                     .keyboardShortcut("e", modifiers: [.command, .option])

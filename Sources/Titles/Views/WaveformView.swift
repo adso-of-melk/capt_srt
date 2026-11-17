@@ -439,8 +439,8 @@ final class WaveformNSView: NSView {
         let tagFont = labelFont(9)
         let tagSize = (langTag as NSString).size(withAttributes: [.font: tagFont])
         let viewEnd = viewStart + visibleDuration
-        // QC mode, focused language: titles with an issue get a yellow-alert bar along the
-        // top; the rest step back.
+        // Focused language: titles with an issue get a yellow-alert bar along the top, in QC
+        // mode or not (not the title being typed in or spotted). QC mode: the rest step back.
         let qc = focused && model.qcMode
         let baseHeight = rect.height * 0.74
         let laneShift = rect.height * 0.11
@@ -459,8 +459,9 @@ final class WaveformNSView: NSView {
             rects.append((s.id, r))
 
             let isSel = s.id == selected || (focused && model.multiSelection.contains(s.id))
-            let marked = qc && !model.qcIssues(of: s, in: track, next: index + 1 < subs.count ? subs[index + 1] : nil,
-                                                overlapping: overlaps).isDisjoint(with: model.qcKinds)
+            let marked = focused && s.id != model.typingIn && s.id != model.spottingID
+                && !model.qcIssues(of: s, in: track, next: index + 1 < subs.count ? subs[index + 1] : nil,
+                                   overlapping: overlaps).isDisjoint(with: model.qcKinds)
             let dim: CGFloat = qc && !marked && !isSel ? 0.45 : bandDim
             let base: NSColor = (overlaps.contains(s.id) ? Palette.lilac : Palette.status(preset.status(s)))
                 .withAlphaComponent(dim)
