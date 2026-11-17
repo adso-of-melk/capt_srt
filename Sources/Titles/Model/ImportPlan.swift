@@ -134,7 +134,7 @@ struct ImportPlan: Sendable {
         }
 
         let videoNames = targets.map(\.name)
-        let name = FileMatcher.commonName(videoNames) ?? videoNames.first
+        let name = FileMatcher.commonName(videoNames).map(FileMatcher.readable) ?? videoNames.first
             ?? subtitles.first.map { FileMatcher.displayStem($0.url.deletingPathExtension().lastPathComponent) } ?? "Untitled"
 
         var plan = ImportPlan(targets: targets, files: files, intoProject: intoProject, skipped: skipped,

@@ -98,6 +98,37 @@ final class ImportTests: XCTestCase {
         XCTAssertNil(m[subs[3].id]?.video)
     }
 
+    /// Jeremy's test set, renamed: a series' season 4, four videos, subtitle files in seven
+    /// languages named after the episodes' titles (one set with the language in front).
+    func testASeasonNumberIsNeverTakenForTheEpisode() {
+        typealias Ep = FileMatcher.Episode
+        XCTAssertEqual(FileMatcher.episode(in: "space-show-the-next-voyage-season-4-brothers.fa"), Ep(season: 4, number: nil))
+        XCTAssertEqual(FileMatcher.episode(in: "Space.show.the.next.voyage.season.4.episode.2.family_720"), Ep(season: 4, number: 2))
+        XCTAssertEqual(FileMatcher.episode(in: "Show Sezona 2 Epizoda 5"), Ep(season: 2, number: 5))
+        XCTAssertEqual(FileMatcher.episode(in: "Show S02"), Ep(season: 2, number: nil))
+        XCTAssertNil(FileMatcher.episode(in: "Film_720"))
+        XCTAssertTrue(Ep(season: 4, number: nil).agrees(Ep(season: 4, number: 2)))
+        XCTAssertFalse(Ep(season: 4, number: nil).sameEpisode(Ep(season: 4, number: 2)))
+
+        let titles = ["the.long.way.home.part.ii", "family", "brothers", "strangers"]
+        let videos = titles.enumerated().map { video("Space.show.the.next.voyage.season.4.episode.\($0.offset + 1).\($0.element)_720") }
+        var subs: [(file: FileMatcher.SubFile, video: Int)] = []
+        for (i, t) in titles.enumerated() {
+            let dashed = t.replacingOccurrences(of: ".", with: "-")
+            subs.append((file("english-space-show-the-next-voyage-season-4-\(dashed)", short), i))
+            for code in ["fa", "ja", "pl", "sr-Cyrl", "th", "zh-Hans"] {
+                subs.append((file("space-show-the-next-voyage-season-4-\(dashed).\(code)", short), i))
+            }
+        }
+        let m = FileMatcher.match(videos: videos, subs: subs.map(\.file))
+        for s in subs {
+            XCTAssertEqual(m[s.file.id]?.video, videos[s.video].id, s.file.name)
+            XCTAssertEqual(m[s.file.id]?.reason, .name, s.file.name)
+        }
+        XCTAssertEqual(FileMatcher.commonName(videos.map(\.name)).map(FileMatcher.readable),
+                       "Space show the next voyage season 4")
+    }
+
     func testANameOrEpisodeWinsOverTheVideosLength() {
         // Short test clips with full-length subtitle files: the names still decide.
         let long = template(seed: 1, count: 300)   // ends near 970 s

@@ -83,7 +83,7 @@ enum FileMatcher {
     // MARK: Matching
 
     static func match(videos: [Video], subs: [SubFile]) -> [UUID: Match] {
-        let videoStems = videos.map { Set(videoStem($0.name)) }
+        let (videoStems, common) = distinctive(videos.map { Set(videoStem($0.name)) })
         let videoEpisodes = videos.map { episode(in: $0.name) }
         let groups = timingGroups(subs)
         var out: [UUID: Match] = [:]
@@ -119,7 +119,7 @@ enum FileMatcher {
             // only decides for files nothing else places.
             var candidates = noConflict
             if let ep {
-                let same = noConflict.filter { videoEpisodes[$0].map(ep.agrees) ?? false }
+                let same = noConflict.filter { videoEpisodes[$0].map(ep.sameEpisode) ?? false }
                 if same.count == 1 {
                     out[s.id]?.video = videos[same[0]].id
                     out[s.id]?.reason = .episode
@@ -127,7 +127,8 @@ enum FileMatcher {
                 }
                 if same.count > 1 { candidates = same }
             }
-            let stem = Set(subtitleStem(s.name))
+            let full = Set(subtitleStem(s.name))
+            let stem = full.subtracting(common).isEmpty ? full : full.subtracting(common)
             let scored = candidates.map { (j: $0, score: similarity(stem, videoStems[$0])) }
                 .sorted { $0.score > $1.score }
             if let best = scored.first, best.score >= 0.5,
@@ -326,7 +327,9 @@ enum FileMatcher {
 
     private static let episodeWords: Set<String> = [
         "ep", "episode", "epizoda", "epizode", "folge", "odcinek", "episodio", "aflevering", "jakso",
-        "afsnit", "avsnitt", "part", "pt", "dio", "del", "teil", "chapter", "season", "sezona", "staffel"
+        "afsnit", "avsnitt", "part", "pt", "dio", "del", "teil", "chapter",
+        "season", "seasons", "sezona", "staffel", "saison", "temporada", "stagione", "seizoen", "sesong",
+        "sasong", "kausi", "sezon", "series"
     ]
 
     /// A video's name, in the words that say which film it is.
@@ -342,8 +345,9 @@ enum FileMatcher {
         return w
     }
 
-    /// The words of a subtitle file's name without the language tag at its end.
-    static func withoutLanguageTag(_ words: [String]) -> [String] {
+    /// The words of a subtitle file's name without the language tag at its end, and (with
+    /// `leading`) a language's name at its start ("english-star-trek-…").
+    static func withoutLanguageTag(_ words: [String], leading: Bool = true) -> [String] {
         var w = words
         while let last = w.last, isNoise(last) { w.removeLast() }
         let codes = Set(Language.common.map { $0.code.lowercased() })
@@ -354,55 +358,94 @@ enum FileMatcher {
             w.removeLast()
         }
         while let last = w.last, isNoise(last) { w.removeLast() }
+        // Only a full name ("english", "hrvatski"), and only with two words left after it
+        // ("English Patient" keeps its first word).
+        if leading, w.count >= 3, LanguageGuess.names[w[0]] != nil { w.removeFirst() }
         return w
     }
 
-    /// How alike two names are: shared words over all words (1 = the same words).
-    static func similarity(_ a: Set<String>, _ b: Set<String>) -> Double {
-        guard !a.isEmpty, !b.isEmpty else { return 0 }
-        return Double(a.intersection(b).count) / Double(a.union(b).count)
+    /// How alike a subtitle file's name is to a video's: the share of the video's words in
+    /// the file's name and of the file's words in the video's, averaged (1 = the same words).
+    static func similarity(_ sub: Set<String>, _ video: Set<String>) -> Double {
+        guard !sub.isEmpty, !video.isEmpty else { return 0 }
+        let shared = Double(sub.intersection(video).count)
+        return (shared / Double(video.count) + shared / Double(sub.count)) / 2
+    }
+
+    /// Each video's words without the ones every video has (a series' title, "the"): only
+    /// what tells them apart counts. A video left with nothing keeps all its words.
+    static func distinctive(_ stems: [Set<String>]) -> (stems: [Set<String>], common: Set<String>) {
+        guard stems.count > 1, let first = stems.first else { return (stems, []) }
+        let common = stems.dropFirst().reduce(first) { $0.intersection($1) }
+        return (stems.map { $0.subtracting(common).isEmpty ? $0 : $0.subtracting(common) }, common)
     }
 
     // MARK: Episodes
 
     struct Episode: Equatable, Sendable {
         var season: Int?
-        var number: Int
+        /// Nil when only the season is named ("Show - Season 4 - Brothers").
+        var number: Int?
+
+        /// Nothing contradicts: no different episode number, no different season.
         func agrees(_ other: Episode) -> Bool {
-            number == other.number && (season == nil || other.season == nil || season == other.season)
+            if let a = number, let b = other.number, a != b { return false }
+            if let a = season, let b = other.season, a != b { return false }
+            return true
+        }
+
+        /// The same episode number on both, in no different season.
+        func sameEpisode(_ other: Episode) -> Bool {
+            number != nil && number == other.number && agrees(other)
         }
     }
 
-    /// The episode a name gives: S01E03, 1x03, "Ep 3", "Epizoda 03", "3. epizoda", E03, or a
-    /// lone one-to-three-digit number ("Show 03").
+    private static let episodeWordPattern =
+        "(?:ep|episode|epizoda|epizode|folge|odcinek|episodio|aflevering|jakso|afsnit|avsnitt|part|pt|dio|del|teil|chapter)"
+    private static let seasonWordPattern =
+        "(?:season|seasons|sezona|staffel|saison|temporada|stagione|seizoen|sesong|sasong|kausi|sezon|series)"
+
+    /// The episode a name gives: S01E03, 1x03, "Ep 3", "Episode.3", "Epizoda 03",
+    /// "3. epizoda", E03, or a lone one-to-three-digit number ("Show 03"). "Season 4" (or
+    /// Sezona, Staffel…) is the season, never the episode.
     static func episode(in name: String) -> Episode? {
-        let n = name.lowercased().folding(options: .diacriticInsensitive, locale: nil)
-        func groups(_ pattern: String) -> [Int?]? {
+        var n = name.lowercased().folding(options: .diacriticInsensitive, locale: nil)
+        func groups(_ pattern: String, removing: Bool = false) -> [Int?]? {
             guard let re = try? NSRegularExpression(pattern: pattern),
                   let m = re.firstMatch(in: n, range: NSRange(n.startIndex..., in: n)) else { return nil }
-            return (1..<m.numberOfRanges).map { i in
+            let found: [Int?] = (1..<m.numberOfRanges).map { i in
                 Range(m.range(at: i), in: n).flatMap { Int(n[$0]) }
             }
+            if removing, let r = Range(m.range, in: n) { n.replaceSubrange(r, with: " ") }
+            return found
         }
-        let word = "(?:ep|episode|epizoda|epizode|folge|odcinek|episodio|aflevering|jakso|afsnit|avsnitt|part|pt|dio|del|teil|chapter)"
         if let g = groups("(?<![a-z0-9])s(\\d{1,2})[ ._-]*e(\\d{1,3})(?![0-9])"), let e = g[1] {
             return Episode(season: g[0], number: e)
         }
         if let g = groups("(?<![a-z0-9])(\\d{1,2})x(\\d{1,3})(?![0-9])"), let e = g[1] {
             return Episode(season: g[0], number: e)
         }
+        // The season, taken out so its number isn't read as the episode's.
+        var season: Int?
+        if let g = groups("(?<![a-z])\(seasonWordPattern)[ ._-]*(\\d{1,2})(?![0-9])", removing: true) {
+            season = g[0]
+        } else if let g = groups("(?<![a-z0-9])s(\\d{1,2})(?![0-9a-z])", removing: true) {
+            season = g[0]
+        }
+        let word = episodeWordPattern
         if let g = groups("(?<![a-z])\(word)[ ._-]*(\\d{1,3})(?![0-9])"), let e = g[0] {
-            return Episode(season: nil, number: e)
+            return Episode(season: season, number: e)
         }
         if let g = groups("(?<![0-9])(\\d{1,3})[ ._-]*\(word)(?![a-z])"), let e = g[0] {
-            return Episode(season: nil, number: e)
+            return Episode(season: season, number: e)
         }
         if let g = groups("(?<![a-z0-9])e(\\d{1,3})(?![0-9])"), let e = g[0] {
-            return Episode(season: nil, number: e)
+            return Episode(season: season, number: e)
         }
-        let numbers = words(name).filter { $0.allSatisfy(\.isNumber) && $0.count <= 3 }
-        if numbers.count == 1, let e = Int(numbers[0]) { return Episode(season: nil, number: e) }
-        return nil
+        // A lone number, not a picture size (480, 576, 720).
+        let numbers = words(n).filter { $0.allSatisfy(\.isNumber) && $0.count <= 3 && !["480", "576", "720"].contains($0) }
+        if numbers.count == 1, let e = Int(numbers[0]) { return Episode(season: season, number: e) }
+        return season.map { Episode(season: $0, number: nil) }
     }
 
     // MARK: Project names
@@ -422,14 +465,33 @@ enum FileMatcher {
                 while let c = prefix.last, c.isLetter || c.isNumber { prefix.removeLast() }
             }
         }
-        let trimmed = prefix.trimmingCharacters(in: CharacterSet(charactersIn: " ._-–—([,"))
+        let separators = CharacterSet(charactersIn: " ._-–—([,")
+        var trimmed = prefix.trimmingCharacters(in: separators)
+        // "Show.Season.4.Episode" → "Show.Season.4": the word before the differing numbers goes.
+        while let range = trimmed.range(of: "[A-Za-z]+$", options: .regularExpression),
+              episodeOnlyWords.contains(trimmed[range].lowercased()) {
+            trimmed = String(trimmed[..<range.lowerBound]).trimmingCharacters(in: separators)
+        }
         return trimmed.filter(\.isLetter).count >= 3 ? trimmed : nil
+    }
+
+    /// Words that only name an episode (not a season): dropped from the end of a common name.
+    private static let episodeOnlyWords: Set<String> = [
+        "ep", "episode", "epizoda", "epizode", "folge", "odcinek", "episodio", "aflevering", "jakso",
+        "afsnit", "avsnitt", "part", "pt", "dio", "del", "teil", "chapter", "e"
+    ]
+
+    /// A name with dots or underscores for spaces, written with spaces ("Star.trek.season.4"
+    /// → "Star trek season 4"). A name that already has spaces is kept as it is.
+    static func readable(_ name: String) -> String {
+        guard !name.contains(" "), name.contains(".") || name.contains("_") else { return name }
+        return name.replacingOccurrences(of: ".", with: " ").replacingOccurrences(of: "_", with: " ")
     }
 
     /// A subtitle file's name without its language tag, keeping its own spelling
     /// ("Show.S01E02.en" → "Show.S01E02"): a name for a video that has no file yet.
     static func displayStem(_ name: String) -> String {
-        let keep = withoutLanguageTag(words(name)).count
+        let keep = withoutLanguageTag(words(name), leading: false).count
         guard keep > 0 else { return name }
         // Walk the original name to the end of its `keep`-th word.
         var count = 0, inWord = false
