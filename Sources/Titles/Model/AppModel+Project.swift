@@ -33,7 +33,7 @@ struct LanguageOptions: Equatable {
 
 /// The dialogs the editor can show.
 enum SheetKind: Identifiable, Equatable {
-    case newProject, projectSettings, newLanguage, importLanguage, export, openLink, shiftTitles, languageOptions
+    case newProject, projectSettings, newLanguage, importLanguage, export, openLink, shiftTitles, languageOptions, dropImport
     var id: Self { self }
 }
 
@@ -398,19 +398,8 @@ extension AppModel {
 
     func createProject(name: String, folder: URL, video videoURL: URL?, settings: ProjectSettings,
                        subtitleFiles: [(url: URL, language: Language)] = [], extraLanguages: [Language] = []) {
-        let clean = ProjectStore.sanitize(name).isEmpty ? "Untitled" : ProjectStore.sanitize(name)
-        do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        } catch {
-            showError("Couldn't create the folder \(folder.lastPathComponent)", error.localizedDescription)
-            return
-        }
-        var fileURL = folder.appendingPathComponent("\(clean).\(ProjectStore.fileExtension)")
-        var n = 2
-        while FileManager.default.fileExists(atPath: fileURL.path) {
-            fileURL = folder.appendingPathComponent("\(clean) \(n).\(ProjectStore.fileExtension)")
-            n += 1
-        }
+        guard let file = newProjectFile(name: name, folder: folder) else { return }
+        let clean = file.name, fileURL = file.url
         let master = Track(language: settings.masterLanguage)
         let item = VideoItem(name: videoURL.map { $0.deletingPathExtension().lastPathComponent } ?? "Video 1",
                              url: videoURL, master: master)
@@ -449,6 +438,25 @@ extension AppModel {
         } else {
             finish()
         }
+    }
+
+    /// A name and a free file for a new project in `folder` ("Film", then "Film 2"…), creating
+    /// the folder if needed. Nil (after saying why) if the folder can't be made.
+    func newProjectFile(name: String, folder: URL) -> (name: String, url: URL)? {
+        let clean = ProjectStore.sanitize(name).isEmpty ? "Untitled" : ProjectStore.sanitize(name)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        } catch {
+            showError("Couldn't create the folder \(folder.lastPathComponent)", error.localizedDescription)
+            return nil
+        }
+        var fileURL = folder.appendingPathComponent("\(clean).\(ProjectStore.fileExtension)")
+        var n = 2
+        while FileManager.default.fileExists(atPath: fileURL.path) {
+            fileURL = folder.appendingPathComponent("\(clean) \(n).\(ProjectStore.fileExtension)")
+            n += 1
+        }
+        return (clean, fileURL)
     }
 
     /// Imports subtitle files one after another (each matched to the master by time).
@@ -1300,39 +1308,6 @@ extension AppModel {
         } catch {
             showError("Couldn't save \(url.lastPathComponent)", error.localizedDescription)
             return false
-        }
-    }
-
-    // MARK: Drag and drop
-
-    func handleDrop(_ urls: [URL]) {
-        for url in urls {
-            let ext = url.pathExtension.lowercased()
-            if ext == ProjectStore.fileExtension {
-                openProject(at: url, knownID: nil)
-            } else if ["srt", "vtt"].contains(ext) {
-                guard project != nil else {
-                    flash("Create or open a project first, then drop the subtitle file to import it.")
-                    continue
-                }
-                pendingImport = url
-                sheet = .importLanguage
-            } else if url.isFileURL, ["mkv", "webm", "avi", "wmv", "flv", "ogv"].contains(ext) {
-                flash("\(url.lastPathComponent) can't be played by this build yet. MP4, MOV and M4V can.")
-            } else if url.isFileURL, !(UTType(filenameExtension: ext)?.conforms(to: .audiovisualContent) ?? false) {
-                flash("\(url.lastPathComponent) isn't a video, a subtitle file or a project.")
-            } else if project == nil || showProjectView {
-                addVideo(url)
-            } else if let v = video {
-                // In the editor a dropped video replaces this one's file (new videos are
-                // added from the project view).
-                let alert = NSAlert()
-                alert.messageText = "Use \(url.lastPathComponent) for \(v.name)?"
-                alert.informativeText = "The video file is replaced and every title is kept. To add another video to the project, use the project view (PROJECT in the top strip)."
-                alert.addButton(withTitle: "Replace Video")
-                alert.addButton(withTitle: "Cancel")
-                if alert.runModal() == .alertFirstButtonReturn { replaceVideo(v, with: url) }
-            }
         }
     }
 

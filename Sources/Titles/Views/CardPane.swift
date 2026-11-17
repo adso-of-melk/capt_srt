@@ -115,7 +115,9 @@ struct CardPane: View {
                 inSelectedRow: inSelectedRow,
                 isOverlapping: isFocusedColumn && overlaps.contains(sub.id),
                 qcMarks: model.visibleQCMarks(of: sub, in: track, overlapping: overlaps),
-                qcLook: model.qcMode,
+                qcMuted: !isFocusedColumn,
+                // QC mode's outline and dimming are for the language being checked.
+                qcLook: model.qcMode && isFocusedColumn,
                 preset: model.preset(for: track),
                 compact: model.openTracks.count > 1,
                 width: width,
@@ -435,8 +437,10 @@ struct CardView: View {
     let inSelectedRow: Bool
     let isOverlapping: Bool
     /// This title's issues (of the kinds looked for), shown on a tag on the card's edge; nil
-    /// when it shows none (another language's column, or the title being typed in).
+    /// when it shows none (the title being typed in).
     var qcMarks: Set<QCIssue>? = nil
+    /// Another language's column: the tag in the quiet blue of an unfocused card.
+    var qcMuted = false
     /// QC mode: titles with an issue get a yellow outline and the rest step back.
     var qcLook = false
     let preset: TimingPreset
@@ -569,7 +573,7 @@ struct CardView: View {
         // without, so the list keeps its place and scrolls evenly. Click it for the fixes.
         .overlay(alignment: .bottomLeading) {
             if let marks = qcMarks, !marks.isEmpty {
-                QCTagMenu(model: model, track: track, sub: sub, marks: marks)
+                QCTagMenu(model: model, track: track, sub: sub, marks: marks, muted: qcMuted)
                     // Room on the right for the "esc" key on the text box's edge.
                     .frame(maxWidth: max(60, width - 76), alignment: .leading)
                     .padding(.leading, 12)
@@ -624,6 +628,8 @@ struct QCTag: View {
     /// Shorter than the space between two cards, half of it hangs below the card.
     static let height: CGFloat = 13
     let marks: Set<QCIssue>
+    /// A language that isn't focused: blue, like its cards' number pills, not yellow.
+    var muted = false
 
     /// The kinds in the QC bar's order: "CPS · GAP".
     static func text(_ marks: Set<QCIssue>) -> String {
@@ -641,7 +647,7 @@ struct QCTag: View {
         .foregroundStyle(Theme.background)
         .padding(.horizontal, 6)
         .frame(height: Self.height)
-        .background(Capsule().fill(Theme.alert))
+        .background(Capsule().fill(muted ? Theme.periwinkle.opacity(0.75) : Theme.alert))
     }
 }
 
@@ -652,6 +658,7 @@ private struct QCTagMenu: View {
     let track: Track
     let sub: Subtitle
     let marks: Set<QCIssue>
+    var muted = false
 
     var body: some View {
         let fixes = QCFix.fixes(for: marks)
@@ -667,7 +674,7 @@ private struct QCTagMenu: View {
                 .disabled(track.locked && fix != .rebreak)
             }
         } label: {
-            QCTag(marks: marks)
+            QCTag(marks: marks, muted: muted)
         }
         .menuStyle(.button)
         .buttonStyle(.plain)

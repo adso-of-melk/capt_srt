@@ -177,9 +177,12 @@ final class QCTests: XCTestCase {
         let overlaps = f.en.doc.overlappingIDs
         XCTAssertEqual(f.model.visibleQCMarks(of: fast, in: f.en, overlapping: overlaps), [.readingSpeed])
         XCTAssertEqual(f.model.visibleQCMarks(of: fine, in: f.en, overlapping: overlaps), [])
-        // Only the language being worked in.
+        // Every language shows its own (the card shows them muted when it isn't focused).
         let other = try XCTUnwrap(f.hr.doc.subtitles.first)
-        XCTAssertNil(f.model.visibleQCMarks(of: other, in: f.hr, overlapping: []))
+        XCTAssertEqual(f.model.visibleQCMarks(of: other, in: f.hr, overlapping: overlaps), [.readingSpeed])
+        // Its own overlaps, not the focused language's.
+        let late = try XCTUnwrap(f.hr.doc.subtitle(f.hr.doc.add(start: 1.5, end: 3, text: "Late.", select: false)))
+        XCTAssertEqual(f.model.visibleQCMarks(of: late, in: f.hr, overlapping: overlaps)?.contains(.overlap), true)
         // Kinds that aren't checked for aren't shown.
         f.model.qcKinds.remove(.readingSpeed)
         XCTAssertEqual(f.model.visibleQCMarks(of: fast, in: f.en, overlapping: overlaps), [])

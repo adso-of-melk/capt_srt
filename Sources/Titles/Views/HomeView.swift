@@ -29,7 +29,7 @@ struct HomeView: View {
                     HomeAction(title: "Open Project…", shortcut: "⌘O", color: Theme.periwinkle) { model.openProjectPanel() }
                 }
 
-                Text("One project per film. It holds the film's videos and every language. You can also drop a video or a .kptnsub file onto this window.")
+                Text("One project per film. It holds the film's videos and every language. Or drop videos and subtitle files (or whole folders) onto this window: they're matched up into a new project.")
                     .font(Theme.label(12, .regular))
                     .foregroundStyle(Theme.textFaint)
                     .fixedSize(horizontal: false, vertical: true)

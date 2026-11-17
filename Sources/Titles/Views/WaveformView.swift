@@ -439,8 +439,9 @@ final class WaveformNSView: NSView {
         let tagFont = labelFont(9)
         let tagSize = (langTag as NSString).size(withAttributes: [.font: tagFont])
         let viewEnd = viewStart + visibleDuration
-        // Focused language: titles with an issue get a yellow-alert bar along the top, in QC
-        // mode or not (not the title being typed in or spotted). QC mode: the rest step back.
+        // Titles with an issue get a bar along the top, in QC mode or not (not the title being
+        // typed in or spotted): yellow-alert in the focused language, the quiet blue of an
+        // unfocused card in the others. QC mode: the focused language's other titles step back.
         let qc = focused && model.qcMode
         let baseHeight = rect.height * 0.74
         let laneShift = rect.height * 0.11
@@ -459,7 +460,7 @@ final class WaveformNSView: NSView {
             rects.append((s.id, r))
 
             let isSel = s.id == selected || (focused && model.multiSelection.contains(s.id))
-            let marked = focused && s.id != model.typingIn && s.id != model.spottingID
+            let marked = s.id != model.typingIn && s.id != model.spottingID
                 && !model.qcIssues(of: s, in: track, next: index + 1 < subs.count ? subs[index + 1] : nil,
                                    overlapping: overlaps).isDisjoint(with: model.qcKinds)
             let dim: CGFloat = qc && !marked && !isSel ? 0.45 : bandDim
@@ -480,7 +481,7 @@ final class WaveformNSView: NSView {
                 path.stroke()
             }
             if marked {
-                Palette.alert.setFill()
+                (focused ? Palette.alert : Palette.periwinkle.withAlphaComponent(0.75)).setFill()
                 NSBezierPath(roundedRect: CGRect(x: r.minX + 4, y: r.minY - 5, width: max(2, r.width - 8), height: 3),
                              xRadius: 1.5, yRadius: 1.5).fill()
             }

@@ -17,6 +17,12 @@ struct SheetHost: View {
             case .export: ExportSheet(model: model)
             case .openLink: OpenLinkSheet(model: model)
             case .shiftTitles: ShiftTitlesSheet(model: model)
+            case .dropImport:
+                if let plan = model.importPlan {
+                    DropImportSheet(model: model, plan: plan)
+                } else {
+                    Color.clear.frame(width: 1, height: 1).onAppear { model.sheet = nil }
+                }
             case .languageOptions:
                 if let track = model.video?.track(model.languageOptionsID) {
                     LanguageOptionsSheet(model: model, track: track)
@@ -31,7 +37,7 @@ struct SheetHost: View {
     }
 }
 
-private struct SheetHeader: View {
+struct SheetHeader: View {
     let title: String
     var color: Color = Theme.amber
     var body: some View {

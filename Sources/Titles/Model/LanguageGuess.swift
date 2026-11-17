@@ -5,7 +5,7 @@ import Foundation
 /// elsewhere in the name is only a last resort, because it's usually part of the film's
 /// title ("The English Patient", "The Rum Diary").
 enum LanguageGuess {
-    private static let threeLetter: [String: String] = [
+    static let threeLetter: [String: String] = [
         "eng": "en", "hrv": "hr", "cro": "hr", "srp": "sr-Latn", "scc": "sr-Latn", "bos": "bs",
         "slv": "sl", "slo": "sl", "mkd": "mk", "mac": "mk", "alb": "sq", "sqi": "sq",
         "ger": "de", "deu": "de", "fre": "fr", "fra": "fr", "ita": "it", "spa": "es", "esp": "es",
@@ -14,13 +14,19 @@ enum LanguageGuess {
         "bul": "bg", "gre": "el", "ell": "el", "tur": "tr", "rus": "ru", "ukr": "uk", "ara": "ar",
         "heb": "he", "jpn": "ja", "kor": "ko", "chi": "zh-Hans", "zho": "zh-Hans"
     ]
-    private static let names: [String: String] = [
+    static let names: [String: String] = [
         "english": "en", "engleski": "en", "croatian": "hr", "hrvatski": "hr", "serbian": "sr-Latn",
         "srpski": "sr-Latn", "bosnian": "bs", "bosanski": "bs", "slovenian": "sl", "slovenski": "sl",
         "german": "de", "deutsch": "de", "njemacki": "de", "french": "fr", "francais": "fr",
         "italian": "it", "italiano": "it", "spanish": "es", "espanol": "es", "portuguese": "pt-PT",
         "dutch": "nl", "polish": "pl", "czech": "cs", "hungarian": "hu", "russian": "ru"
     ]
+
+    /// A word of a file name that names a language: a three-letter code or a language's name
+    /// ("eng", "croatian", "hrvatski"), lower case and without accents.
+    static func isLanguageWord(_ word: String) -> Bool {
+        threeLetter[word] != nil || names[word] != nil
+    }
 
     static func language(of url: URL) -> Language? {
         let name = url.deletingPathExtension().lastPathComponent

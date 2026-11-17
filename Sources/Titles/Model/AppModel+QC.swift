@@ -177,13 +177,17 @@ extension AppModel {
         return qcIssues(of: s, in: track, next: next, overlapping: overlapping).intersection(qcKinds)
     }
 
-    /// The issue marks a title shows (yellow tag on its card, yellow bar over its waveform
-    /// box), in QC mode or not, so titles can be checked while they're made. Only the focused
-    /// language's titles, and never the one being typed in or spotted (it would flash on and
-    /// off as the words go in): nil for those. QC mode adds the colours and Tab.
+    /// The issue marks a title shows (a tag on its card, a bar over its waveform box), in QC
+    /// mode or not, so titles can be checked while they're made. Every language shows them:
+    /// the focused one in yellow-alert, the others in the quiet blue of their columns. Never
+    /// on the title being typed in or spotted (it would flash on and off as the words go
+    /// in): nil for those. QC mode adds the colours and Tab (in the focused language).
+    /// `overlapping`: the focused language's overlapping titles (another language's are
+    /// worked out here).
     func visibleQCMarks(of s: Subtitle, in track: Track, overlapping: Set<UUID>) -> Set<QCIssue>? {
-        guard track.id == video?.focusedTrackID, s.id != typingIn, s.id != spottingID else { return nil }
-        return qcMarks(of: s, in: track, overlapping: overlapping)
+        guard s.id != typingIn, s.id != spottingID else { return nil }
+        let focused = track.id == video?.focusedTrackID
+        return qcMarks(of: s, in: track, overlapping: focused ? overlapping : track.doc.overlappingIDs)
     }
 
     /// A card's text changed in its editor (typing, pasting, deleting).

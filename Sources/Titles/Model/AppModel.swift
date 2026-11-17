@@ -96,6 +96,8 @@ final class AppModel: ObservableObject {
     @Published var newProjectVideo: URL?
     /// A subtitle file waiting for its language to be chosen.
     @Published var pendingImport: URL?
+    /// Videos and subtitle files dropped together, matched up, waiting to be checked.
+    @Published var importPlan: ImportPlan?
     @Published var textOnly = false {
         didSet { UserDefaults.standard.set(textOnly, forKey: "textOnly") }
     }
