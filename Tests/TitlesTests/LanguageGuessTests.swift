@@ -143,6 +143,62 @@ final class LanguageGuessTests: XCTestCase {
         XCTAssertEqual(Language.named("HR").name, "Croatian")
         XCTAssertEqual(Language.named("sr-latn").code, "sr-Latn")
         XCTAssertEqual(Language.named("xx").name, "xx")
+        // Not in the list: the system's name for it, not "kk (kk)".
+        XCTAssertEqual(Language.named("kk").name, "Kazakh")
         XCTAssertEqual(Set(Language.common.map(\.code)).count, Language.common.count)
+    }
+
+    // MARK: Languages the recogniser mixes up
+
+    /// The same few lines in each language (Jeremy's test set had Farsi read as Urdu and
+    /// Arabic, Serbian Cyrillic as Bulgarian and Kazakh).
+    static let lookAlikes: [(code: String, text: String)] = [
+        ("sr-Cyrl", "Рекла је да ће већ бити овде. Нешто није у реду. Где си био синоћ? Морамо да разговарамо о томе шта се десило. Њен брат ће доћи сутра. Љубав није довољна."),
+        ("mk", "Рече дека веќе ќе биде тука. Нешто не е во ред. Каде беше синоќа? Мораме да зборуваме за тоа што се случи. Нејзиниот брат ќе дојде утре. Љубовта не е доволна."),
+        ("bg", "Каза, че вече ще бъде тук. Нещо не е наред. Къде беше снощи? Трябва да поговорим за това, което се случи. Брат ѝ ще дойде утре. Любовта не е достатъчна."),
+        ("ru", "Она сказала, что уже будет здесь. Что-то не так. Где ты был вчера вечером? Нам нужно поговорить о том, что случилось. Её брат придёт завтра. Любви недостаточно, это ясно."),
+        ("uk", "Вона сказала, що вже буде тут. Щось не так. Де ти був учора ввечері? Нам треба поговорити про те, що сталося. Її брат прийде завтра. Любові недостатньо, і це ясно."),
+        ("kk", "Ол мұнда болатынын айтты. Бірдеңе дұрыс емес. Кеше кешке қайда болдың? Не болғаны туралы сөйлесуіміз керек. Оның ағасы ертең келеді. Махаббат жеткіліксіз."),
+        ("fa", "گفت که دیگر اینجا خواهد بود. چیزی درست نیست. دیشب کجا بودی؟ باید درباره اتفاقی که افتاد صحبت کنیم. برادرش فردا می‌آید. عشق کافی نیست."),
+        ("ar", "قالت إنها ستكون هنا بالفعل. هناك شيء غير صحيح. أين كنت الليلة الماضية؟ يجب أن نتحدث عما حدث. سيأتي أخوها غدا. الحب ليس كافيا في هذه الحالة."),
+        ("ur", "اس نے کہا کہ وہ پہلے ہی یہاں ہوگی۔ کچھ ٹھیک نہیں ہے۔ تم کل رات کہاں تھے؟ ہمیں اس بارے میں بات کرنی چاہیے جو ہوا۔ اس کا بھائی کل آئے گا۔ محبت کافی نہیں ہے۔"),
+    ]
+
+    func testLanguagesTheRecogniserMixesUpAreToldApartByTheirOwnLetters() {
+        for (code, text) in Self.lookAlikes {
+            XCTAssertEqual(LanguageGuess.byLetters(text)?.code, code, text)
+            XCTAssertEqual(SubtitleFormats.languageGuess(text).code, code, text)
+        }
+        // Persian typed with the Arabic forms of ye and kaf is still Persian.
+        let persian = Self.lookAlikes.first { $0.code == "fa" }!.text
+            .replacingOccurrences(of: "ی", with: "ي").replacingOccurrences(of: "ک", with: "ك")
+        XCTAssertEqual(LanguageGuess.byLetters(persian)?.code, "fa")
+        // Latin letters: the recogniser decides, as before.
+        XCTAssertNil(LanguageGuess.byLetters("Rekla je da će već biti ovdje."))
+    }
+
+    func testAFileWithNoLanguageInItsNameIsReadForItsLetters() throws {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        for (n, sample) in Self.lookAlikes.enumerated() {
+            let lines = sample.text.components(separatedBy: ". ")
+            let srt = lines.enumerated().map { i, line in
+                "\(i + 1)\n00:00:\(String(format: "%02d", i * 3 + 1)),000 --> 00:00:\(String(format: "%02d", i * 3 + 3)),000\n\(line)\n"
+            }.joined(separator: "\n")
+            let url = try writeFile("jumbled \(n).srt", srt, in: folder)
+            XCTAssertEqual(LanguageGuess.language(of: url)?.code, sample.code, sample.code)
+        }
+    }
+
+    func testTheWordsAreTakenFromAllThroughTheFile() {
+        // Credits in English at the start, then a long film in Croatian.
+        let text = String(repeating: "Subtitles by the team www.example.com ", count: 50)
+            + String(repeating: "Rekla je da će već biti ovdje. Nešto nije u redu. ", count: 2000)
+            + "Kraj filma."
+        let sample = SubtitleFormats.sample(text)
+        XCTAssertLessThanOrEqual(sample.count, 24_000 + 12)
+        XCTAssertTrue(sample.contains("Kraj filma."))
+        XCTAssertFalse(sample.contains("www.example.com"))
+        XCTAssertEqual(SubtitleFormats.languageGuess(text).code, "hr")
     }
 }

@@ -41,11 +41,21 @@ enum SubtitleFormats {
         let damaged = lossy.unicodeScalars.reduce(0) { $1 == "\u{FFFD}" ? $0 + 1 : $0 }
         if damaged * 20 < high { return lossy }
 
-        // Mostly letters outside ASCII: Cyrillic or Greek. Cyrillic text is full of а and я
-        // (bytes E0 and FF), which Greek text doesn't use.
+        // Mostly letters outside ASCII: Cyrillic or Greek (Cyrillic text is full of а and я,
+        // bytes E0 and FF, which Greek text doesn't use), Arabic (Persian, Urdu), Hebrew or
+        // Thai. The same bytes are letters in each, so each reading is checked: its language
+        // against the code page it's written in, and whether it reads like real text.
         if high > letters {
-            let encoding: String.Encoding = cyrillicMarks * 50 > high ? .windowsCP1251 : .windowsCP1253
-            return String(data: data, encoding: encoding) ?? String(data: data, encoding: .isoLatin1)
+            let cyrillicOrGreek = cyrillicMarks * 50 > high ? "windows-1251" : "windows-1253"
+            var best: (text: String, score: Double)?
+            for name in [cyrillicOrGreek, "windows-1256", "windows-1255", "windows-874"] {
+                guard let codePage = encoding(named: name), let text = String(data: data, encoding: codePage) else { continue }
+                let guess = languageGuess(text)
+                let fits = guess.code.map { legacyEncoding(for: $0) == codePage } ?? false
+                let score = (fits ? 1 : 0) + guess.confidence + plausibility(text)
+                if best == nil || score > best!.score + 0.0001 { best = (text, score) }
+            }
+            return best?.text ?? String(data: data, encoding: .isoLatin1)
         }
 
         // Latin script. Central European (č ć đ), Western (è æ ð) and Turkish files use the
@@ -63,11 +73,37 @@ enum SubtitleFormats {
         return best?.text ?? String(data: data, encoding: .isoLatin1)
     }
 
+    /// How much a reading of a file looks like real text (0…1): its letters in one script,
+    /// mostly small letters where the script has capitals (Arabic read as Cyrillic comes out
+    /// half in capitals), and in Thai, mostly consonants (other scripts read as Thai come out
+    /// as vowel and tone signs).
+    static func plausibility(_ text: String) -> Double {
+        var blocks: [UInt32: Int] = [:]
+        var letters = 0, lower = 0, upper = 0, thaiConsonants = 0
+        for s in text.unicodeScalars where s.properties.isAlphabetic {
+            letters += 1
+            blocks[s.value >> 8, default: 0] += 1
+            if s.properties.isLowercase { lower += 1 } else if s.properties.isUppercase { upper += 1 }
+            if (0x0E01...0x0E2E).contains(s.value) { thaiConsonants += 1 }
+        }
+        guard letters > 0, let top = blocks.max(by: { $0.value < $1.value }) else { return 0 }
+        var p = Double(top.value) / Double(letters)
+        let cased = lower + upper
+        if cased * 4 > letters { p *= 0.5 + 0.5 * min(1, Double(lower) / Double(cased) / 0.7) }
+        if top.key == 0x0E { p *= min(1, Double(thaiConsonants) / Double(top.value) / 0.4) }
+        return p
+    }
+
     /// The Windows encoding old files in a language were saved in.
     static func legacyEncoding(for language: String) -> String.Encoding {
         switch language {
-        case "hr", "bs", "sr", "sl", "cs", "sk", "pl", "hu", "ro", "sq": return .windowsCP1250
+        case "hr", "bs", "sr", "sr-Latn", "sl", "cs", "sk", "pl", "hu", "ro", "sq": return .windowsCP1250
         case "tr": return .windowsCP1254
+        case "ru", "uk", "bg", "sr-Cyrl", "mk", "kk", "be", "mn": return .windowsCP1251
+        case "el": return .windowsCP1253
+        case "ar", "fa", "ur", "ps", "ckb": return encoding(named: "windows-1256") ?? .windowsCP1252
+        case "he", "yi": return encoding(named: "windows-1255") ?? .windowsCP1252
+        case "th": return encoding(named: "windows-874") ?? .windowsCP1252
         default: return .windowsCP1252
         }
     }
@@ -82,15 +118,44 @@ enum SubtitleFormats {
             .joined(separator: " ")
     }
 
-    /// The language the system's recogniser hears in a file's words, and how sure it is.
+    /// The language of a file's words, and how sure the system's recogniser is of it. The
+    /// words come from all through the file. Languages the recogniser mixes up or doesn't
+    /// know (Serbian and Bulgarian, Persian and Urdu…) are told apart by their own letters
+    /// (`LanguageGuess.byLetters`).
     static func languageGuess(_ decoded: String) -> (code: String?, confidence: Double) {
-        let words = String(spokenText(String(decoded.prefix(40_000))).prefix(12_000))
+        let words = sample(spokenText(String(decoded.prefix(600_000))))
         guard !words.trimmingCharacters(in: .whitespaces).isEmpty else { return (nil, 0) }
         let recognizer = NLLanguageRecognizer()
         recognizer.processString(words)
-        guard let top = recognizer.languageHypotheses(withMaximum: 1).first,
-              top.key != .undetermined else { return (nil, 0) }
-        return (top.key.rawValue, top.value)
+        let top = recognizer.languageHypotheses(withMaximum: 1).first.flatMap { $0.key == .undetermined ? nil : $0 }
+        let confidence = top?.value ?? 0
+        guard let letters = LanguageGuess.byLetters(words) else { return (top?.key.rawValue, confidence) }
+        if let code = letters.code { return (code, confidence) }
+        // The script is known but its letters don't decide: the recogniser, among that
+        // script's languages only.
+        let narrowed = NLLanguageRecognizer()
+        narrowed.languageConstraints = letters.family.map { NLLanguage(rawValue: $0) }
+        narrowed.processString(words)
+        return (narrowed.dominantLanguage.map(\.rawValue) ?? top?.key.rawValue, confidence)
+    }
+
+    /// Words from all through a file, not only its start (where the credits, a subtitler's
+    /// ad or a song in another language often sit): a dozen stretches spread evenly when
+    /// there's more than `limit` characters. Web and mail addresses are left out.
+    static func sample(_ spoken: String, limit: Int = 24_000) -> String {
+        let text = spoken.split(separator: " ").filter { word in
+            !["www", "http", ".com", ".org", ".net", "@"].contains { word.lowercased().contains($0) }
+        }.joined(separator: " ")
+        guard text.count > limit else { return text }
+        let pieces = 12, piece = limit / pieces
+        let chars = Array(text)
+        var out = ""
+        out.reserveCapacity(limit + pieces)
+        for k in 0..<pieces {
+            let start = (chars.count - piece) * k / (pieces - 1)
+            out += String(chars[start..<(start + piece)]) + " "
+        }
+        return out
     }
 
     /// Parses SRT and WebVTT (cue identifiers optional, `,` or `.` before milliseconds).

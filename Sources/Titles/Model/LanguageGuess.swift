@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 
 /// Guesses which language a subtitle file is in: from the end of its name first (Film.en.srt,
 /// Film_HR.srt, Film ENG.srt, Film croatian.srt), otherwise from its text. A language word
@@ -81,5 +82,75 @@ enum LanguageGuess {
         case "no", "nb": return Language.named("nb")
         default: return Language.named(found)
         }
+    }
+
+    // MARK: Letters
+
+    /// What a text's letters say: `code` when a letter only that language uses decides it,
+    /// and `family`, the languages written in that script (for the recogniser to choose
+    /// among when the letters don't decide).
+    struct LetterVerdict: Equatable {
+        var code: String?
+        var family: [String]
+    }
+
+    /// Languages the system's recogniser mixes up or doesn't know, told apart by letters only
+    /// they use. It has no Serbian or Macedonian (it hears Bulgarian or Kazakh), and often hears
+    /// Persian as Urdu or Arabic. Nil when the text isn't mostly Cyrillic, Arabic or Hebrew.
+    static func byLetters(_ text: String) -> LetterVerdict? {
+        var cyrillic = 0, arabic = 0, hebrew = 0, all = 0
+        var count: [UInt32: Int] = [:]
+        for scalar in text.lowercased().unicodeScalars where scalar.properties.isAlphabetic {
+            all += 1
+            switch scalar.value {
+            case 0x0400...0x04FF:
+                cyrillic += 1
+                count[scalar.value, default: 0] += 1
+            case 0x0600...0x06FF, 0x0750...0x077F:
+                arabic += 1
+                count[scalar.value, default: 0] += 1
+            case 0x0590...0x05FF:
+                hebrew += 1
+            default:
+                break
+            }
+        }
+        guard all > 0 else { return nil }
+        /// How often these letters come, among the script's letters.
+        func share(_ letters: String, of total: Int) -> Double {
+            Double(letters.unicodeScalars.reduce(0) { $0 + (count[$1.value] ?? 0) }) / Double(max(1, total))
+        }
+        if cyrillic * 2 > all {
+            let family = ["ru", "uk", "bg", "kk", "be", "mn"]
+            func verdict(_ code: String?) -> LetterVerdict { LetterVerdict(code: code, family: family) }
+            // ј љ њ џ: Serbian and Macedonian only (ђ ћ Serbian, ѓ ќ ѕ Macedonian).
+            if share("ђћјљњџ", of: cyrillic) > 0.005 {
+                return verdict(share("ѓќѕ", of: cyrillic) > share("ђћ", of: cyrillic) ? "mk" : "sr-Cyrl")
+            }
+            if share("әғқңұһ", of: cyrillic) > 0.005 { return verdict("kk") }
+            if share("өү", of: cyrillic) > 0.005 { return verdict("mn") }
+            if share("ў", of: cyrillic) > 0.002 { return verdict("be") }
+            if share("їєґ", of: cyrillic) > 0.002 || (share("і", of: cyrillic) > 0.01 && share("ыэ", of: cyrillic) == 0) {
+                return verdict("uk")
+            }
+            if share("ыэ", of: cyrillic) > 0.003 { return verdict("ru") }
+            // ъ is everywhere in Bulgarian, rare in Russian.
+            if share("ъ", of: cyrillic) > 0.005 { return verdict("bg") }
+            return verdict(nil)
+        }
+        if arabic * 2 > all {
+            let family = ["ar", "fa", "ur"]
+            func verdict(_ code: String?) -> LetterVerdict { LetterVerdict(code: code, family: family) }
+            // ٹ ڈ ڑ ں ے: Urdu. ټ ډ ړ ښ ږ: Pashto. ڕ ڵ ۆ ێ: Sorani Kurdish. پ چ ژ گ: Persian
+            // (and the others above, checked first); Arabic has none of them.
+            if share("ٹڈڑںے", of: arabic) > 0.005 { return verdict("ur") }
+            if share("ټډړښږ", of: arabic) > 0.005 { return verdict("ps") }
+            if share("ڕڵۆێ", of: arabic) > 0.005 { return verdict("ckb") }
+            if share("پچژگ", of: arabic) > 0.005 { return verdict("fa") }
+            // Persian's own ی and ک against Arabic's ي ك ة ى.
+            return verdict(share("یک", of: arabic) > share("يكةى", of: arabic) ? "fa" : "ar")
+        }
+        if hebrew * 2 > all { return LetterVerdict(code: "he", family: ["he"]) }
+        return nil
     }
 }

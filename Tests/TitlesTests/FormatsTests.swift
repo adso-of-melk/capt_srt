@@ -206,6 +206,18 @@ final class FormatsTests: XCTestCase {
         XCTAssertEqual(SubtitleFormats.decodeText(data), text)
     }
 
+    func testReadsOldArabicFiles() throws {
+        let text = file([
+            "قالت إنها ستكون هنا بالفعل.",
+            "هناك شيء غير صحيح.",
+            "أين كنت الليلة الماضية؟",
+            "يجب أن نتحدث عما حدث.",
+        ])
+        let codePage = try XCTUnwrap(SubtitleFormats.encoding(named: "windows-1256"))
+        let data = try XCTUnwrap(text.data(using: codePage))
+        XCTAssertEqual(SubtitleFormats.decodeText(data), text)
+    }
+
     func testReadsOldGreekFiles() throws {
         let text = file([
             "Δεν ξέρω τι έγινε χθες το βράδυ.",

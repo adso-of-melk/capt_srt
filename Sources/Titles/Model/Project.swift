@@ -31,8 +31,12 @@ struct Language: Hashable, Identifiable, Codable, Sendable {
         ("sw", "Swahili"), ("af", "Afrikaans")
     ].map { Language(code: $0.0, name: $0.1) }
 
+    /// A language by its code. One not in `common` gets its English name from the system
+    /// ("kk": Kazakh), or its code when the system doesn't know it.
     static func named(_ code: String) -> Language {
-        common.first { $0.code.lowercased() == code.lowercased() } ?? Language(code: code, name: code)
+        if let known = common.first(where: { $0.code.lowercased() == code.lowercased() }) { return known }
+        let name = Locale(identifier: "en").localizedString(forIdentifier: code)
+        return Language(code: code, name: name.flatMap { $0.isEmpty || $0.lowercased() == code.lowercased() ? nil : $0 } ?? code)
     }
 }
 
