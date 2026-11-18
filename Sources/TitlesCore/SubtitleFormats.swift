@@ -123,39 +123,60 @@ enum SubtitleFormats {
     /// know (Serbian and Bulgarian, Persian and Urdu…) are told apart by their own letters
     /// (`LanguageGuess.byLetters`).
     static func languageGuess(_ decoded: String) -> (code: String?, confidence: Double) {
-        let words = sample(spokenText(String(decoded.prefix(600_000))))
+        let pieces = samplePieces(spokenText(String(decoded.prefix(600_000))))
+        let words = pieces.joined(separator: " ")
         guard !words.trimmingCharacters(in: .whitespaces).isEmpty else { return (nil, 0) }
-        let recognizer = NLLanguageRecognizer()
-        recognizer.processString(words)
-        let top = recognizer.languageHypotheses(withMaximum: 1).first.flatMap { $0.key == .undetermined ? nil : $0 }
-        let confidence = top?.value ?? 0
-        guard let letters = LanguageGuess.byLetters(words) else { return (top?.key.rawValue, confidence) }
+        let top = vote(pieces, among: nil)
+        let confidence = top?.share ?? 0
+        guard let letters = LanguageGuess.byLetters(words) else { return (top?.code, confidence) }
         if let code = letters.code { return (code, confidence) }
         // The script is known but its letters don't decide: the recogniser, among that
         // script's languages only.
-        let narrowed = NLLanguageRecognizer()
-        narrowed.languageConstraints = letters.family.map { NLLanguage(rawValue: $0) }
-        narrowed.processString(words)
-        return (narrowed.dominantLanguage.map(\.rawValue) ?? top?.key.rawValue, confidence)
+        return (vote(pieces, among: letters.family)?.code ?? top?.code, confidence)
+    }
+
+    /// The recogniser's pick over all the pieces: each piece is read on its own (the
+    /// recogniser goes by the start of what it's given, so one long string would be judged
+    /// by its first piece) and their likelihoods are added up. `share`: the winner's average
+    /// likelihood. `among`: language codes to choose from (nil: any).
+    static func vote(_ pieces: [String], among: [String]?) -> (code: String, share: Double)? {
+        var total: [String: Double] = [:]
+        var counted = 0
+        let recognizer = NLLanguageRecognizer()
+        for piece in pieces where !piece.trimmingCharacters(in: .whitespaces).isEmpty {
+            recognizer.reset()
+            if let among { recognizer.languageConstraints = among.map { NLLanguage(rawValue: $0) } }
+            recognizer.processString(piece)
+            counted += 1
+            for (language, p) in recognizer.languageHypotheses(withMaximum: 3) where language != .undetermined {
+                total[language.rawValue, default: 0] += p
+            }
+        }
+        guard counted > 0, let best = total.max(by: { $0.value < $1.value || ($0.value == $1.value && $0.key > $1.key) })
+        else { return nil }
+        return (best.key, best.value / Double(counted))
     }
 
     /// Words from all through a file, not only its start (where the credits, a subtitler's
-    /// ad or a song in another language often sit): a dozen stretches spread evenly when
-    /// there's more than `limit` characters. Web and mail addresses are left out.
+    /// ad or a song in another language often sit), as one string: see `samplePieces`.
     static func sample(_ spoken: String, limit: Int = 24_000) -> String {
+        samplePieces(spoken, limit: limit).joined(separator: " ")
+    }
+
+    /// Up to a dozen stretches of `limit / 12` characters, spread evenly through the text
+    /// (end to end when it's short). Web and mail addresses are left out.
+    static func samplePieces(_ spoken: String, limit: Int = 24_000) -> [String] {
         let text = spoken.split(separator: " ").filter { word in
             !["www", "http", ".com", ".org", ".net", "@"].contains { word.lowercased().contains($0) }
         }.joined(separator: " ")
-        guard text.count > limit else { return text }
-        let pieces = 12, piece = limit / pieces
+        let most = 12, piece = limit / most
+        guard text.count > piece else { return [text] }
         let chars = Array(text)
-        var out = ""
-        out.reserveCapacity(limit + pieces)
-        for k in 0..<pieces {
-            let start = (chars.count - piece) * k / (pieces - 1)
-            out += String(chars[start..<(start + piece)]) + " "
+        let count = min(most, (chars.count + piece - 1) / piece)
+        return (0..<count).map { k in
+            let start = (chars.count - piece) * k / (count - 1)
+            return String(chars[start..<(start + piece)])
         }
-        return out
     }
 
     /// Parses SRT and WebVTT (cue identifiers optional, `,` or `.` before milliseconds).
