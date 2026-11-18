@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+@testable import TitlesCore
 
 @main
 struct TitlesApp: App {

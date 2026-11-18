@@ -1,5 +1,6 @@
 import XCTest
 @testable import Titles
+@testable import TitlesCore
 
 /// Dropping a mix of videos and subtitle files: matching each file to its video, and the
 /// project made from that.

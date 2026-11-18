@@ -1,6 +1,7 @@
 import XCTest
 import SwiftUI
 @testable import Titles
+@testable import TitlesCore
 
 /// QC mode: finding titles with issues, going from one to the next, and the automatic fixes
 /// (extend to fit the reading speed, widen and close gaps). 25 frames a second, General
@@ -278,7 +279,7 @@ final class QCTests: XCTestCase {
     let rules = TimingPreset.general
 
     private func extend(_ s: Subtitle, prev: Subtitle?, next: Subtitle?) -> Subtitle {
-        AppModel.extended(s, prev: prev, next: next, rules: rules, gap: 0.08, frame: 0.04, videoEnd: 600)
+        QCRules.extended(s, prev: prev, next: next, rules: rules, gap: 0.08, frame: 0.04, videoEnd: 600)
     }
 
     func testTheEndMovesFirstOntoAFrame() {
@@ -311,13 +312,13 @@ final class QCTests: XCTestCase {
     func testNeverLongerThanTheMaximumDuration() {
         let s = extend(sub(10, 11, String(repeating: "x", count: 200)), prev: nil, next: sub(30, 31))
         XCTAssertEqual(s.end, 17, accuracy: 0.0001)
-        XCTAssertTrue(AppModel.needsMoreTime(s, rules: rules))       // still too fast: no more time allowed
+        XCTAssertTrue(QCRules.needsMoreTime(s, rules: rules))       // still too fast: no more time allowed
     }
 
     func testAShortTitleGetsTheMinimumDuration() {
         let s = extend(sub(10, 10.4, "Hi."), prev: sub(5, 6), next: sub(20, 21))
         XCTAssertEqual(s.end, 10.84, accuracy: 0.0001)
-        XCTAssertFalse(AppModel.needsMoreTime(s, rules: rules))
+        XCTAssertFalse(QCRules.needsMoreTime(s, rules: rules))
     }
 
     func testExtendSelectedOrAllInOneUndoStep() throws {
@@ -342,7 +343,7 @@ final class QCTests: XCTestCase {
     // MARK: Gaps
 
     private func gapFixed(_ a: Subtitle, _ b: Subtitle, close: Bool = false) -> (Subtitle, Subtitle) {
-        AppModel.fixedGap(a, b, rules: rules, gap: 0.08, frame: 0.04, closeUnder: close ? 0.5 : nil)
+        QCRules.fixedGap(a, b, rules: rules, gap: 0.08, frame: 0.04, closeUnder: close ? 0.5 : nil)
     }
 
     func testAGapUnderTheMinimumWidensByTheFirstTitlesEnd() {

@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import UniformTypeIdentifiers
 import Combine
+@testable import TitlesCore
 
 /// What the Language Options dialog edits, until Done.
 struct LanguageOptions: Equatable {
@@ -127,8 +128,8 @@ extension AppModel {
         track.doc.tidy = { [weak self, weak track] before, after in
             guard let self, let track, self.keepMinGap else { return }
             let rules = self.preset(for: track)
-            Self.keepGaps(before: before, after: &after, rules: rules,
-                          gap: Double(rules.minGapFrames) * self.frameDuration, frame: self.frameDuration)
+            QCRules.keepGaps(before: before, after: &after, rules: rules,
+                             gap: Double(rules.minGapFrames) * self.frameDuration, frame: self.frameDuration)
         }
         let watcher = track.doc.$selectedID.sink { [weak self] id in
             if id != nil { self?.emptySlotRow = nil }

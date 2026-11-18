@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+@testable import TitlesCore
 
 /// The project's videos at a glance. New videos are added here (not in the editor);
 /// each video can be opened, given a different file, renamed or removed.

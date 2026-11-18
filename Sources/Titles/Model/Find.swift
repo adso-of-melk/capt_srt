@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+@testable import TitlesCore
 
 /// One place a search matched: a stretch of a title's visible text (tags left out).
 struct FindMatch: Equatable {

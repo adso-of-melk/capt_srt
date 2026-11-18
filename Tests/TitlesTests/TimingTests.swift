@@ -1,5 +1,6 @@
 import XCTest
 @testable import Titles
+@testable import TitlesCore
 
 /// Reading speed, duration and line limits, and what colour they get.
 @MainActor

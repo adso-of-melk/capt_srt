@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 @testable import Titles
+@testable import TitlesCore
 
 /// Spell check with a tiny made-up dictionary ("xx"), so the results never depend on the
 /// dictionaries installed on the Mac running the tests. Nothing is written to the Mac.

@@ -2,6 +2,7 @@ import XCTest
 import AppKit
 import SwiftUI
 @testable import Titles
+@testable import TitlesCore
 
 /// Italics that stay on, ⌘I and ⌘V on a selected title that isn't being typed in,
 /// Control-Delete, drawing a title near its neighbours, and the selection colour.

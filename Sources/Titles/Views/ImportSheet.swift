@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+@testable import TitlesCore
 
 /// Videos and subtitle files dropped together: each video with the files matched to it, and
 /// why. Languages can be changed, files moved between videos (menu or drag) or left out,

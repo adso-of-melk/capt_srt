@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+@testable import TitlesCore
 
 /// Bottom right: the waveform with numbered title boxes.
 struct WaveformPane: View {
@@ -93,7 +94,7 @@ final class WaveformNSView: NSView {
         case moving(id: UUID, grab: Double, length: Double)
         case movingGroup(grab: Double, originals: [UUID: Double])
         case marquee(from: CGPoint, to: CGPoint)
-        case resizing(id: UUID, edge: Edge)
+        case resizing(id: UUID, edge: TitlesCore.Edge)
         case scrolling(grab: CGFloat)
         case bandResize(upper: UUID, lower: UUID, startY: CGFloat, hu: CGFloat, hl: CGFloat, wu: CGFloat, wl: CGFloat)
         /// A language dragged by its code, up or down (see `languageDrop`).
@@ -800,7 +801,7 @@ final class WaveformNSView: NSView {
 
     // MARK: Hit testing
 
-    private enum Hit { case edge(UUID, Edge), body(UUID), empty }
+    private enum Hit { case edge(UUID, TitlesCore.Edge), body(UUID), empty }
 
     private func hit(_ p: CGPoint) -> Hit {
         // Selected box first, then later boxes (drawn on top).
@@ -1293,7 +1294,7 @@ final class WaveformNSView: NSView {
             if let box = boxRects.first(where: { $0.rect.contains(p) && $0.id == model.doc.selectedID }),
                !model.focusedIsLocked {
                 if event.phase == .began { swipeAccumulator = 0 }
-                let edge: Edge = p.x < box.rect.midX ? .start : .end
+                let edge: TitlesCore.Edge = p.x < box.rect.midX ? .start : .end
                 // Fingers moving right = later in time, whatever the scroll-direction setting.
                 let finger = event.isDirectionInvertedFromDevice ? dx : -dx
                 swipeAccumulator += finger

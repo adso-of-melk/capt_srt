@@ -1,5 +1,6 @@
 import XCTest
 @testable import Titles
+@testable import TitlesCore
 
 /// How titles from different languages line up side by side.
 @MainActor

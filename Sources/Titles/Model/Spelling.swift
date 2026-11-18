@@ -1,6 +1,7 @@
 import AppKit
 import NaturalLanguage
 import CHunspell
+@testable import TitlesCore
 
 /// A Hunspell dictionary (.aff + .dic), the format LibreOffice, Firefox and Chrome use.
 final class HunspellDictionary {

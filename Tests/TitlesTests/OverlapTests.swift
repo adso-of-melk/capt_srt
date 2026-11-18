@@ -1,5 +1,6 @@
 import XCTest
 @testable import Titles
+@testable import TitlesCore
 
 /// Dragging titles into each other: they stop at the minimum gap, and only go over a
 /// neighbour when overlapping titles are enabled (Title menu), and then only when pulled on.

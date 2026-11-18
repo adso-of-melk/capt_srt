@@ -1,4 +1,5 @@
 import AppKit
+@testable import TitlesCore
 
 /// Everything the editor needs from a video engine. Build 1 uses AVFoundation;
 /// a libmpv engine (MKV, WebM, AVI…) can be dropped in behind this protocol later.

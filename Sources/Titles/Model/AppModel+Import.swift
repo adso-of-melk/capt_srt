@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import UniformTypeIdentifiers
+@testable import TitlesCore
 
 /// Dropping files and folders on the window: videos, subtitle files and projects.
 extension AppModel {

@@ -1,4 +1,5 @@
 import SwiftUI
+@testable import TitlesCore
 
 /// QC mode's bar across the top of the editor, under the top strip: a "yellow alert" light,
 /// one chip per kind of issue (how many titles of the focused language have it; click to

@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 @testable import Titles
+@testable import TitlesCore
 
 /// Language Options: changing a column's language, its own limits, and spell check.
 @MainActor

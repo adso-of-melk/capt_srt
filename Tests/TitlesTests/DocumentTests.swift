@@ -1,5 +1,6 @@
 import XCTest
 @testable import Titles
+@testable import TitlesCore
 
 /// One language's list of titles: order, selection, undo and gestures.
 @MainActor

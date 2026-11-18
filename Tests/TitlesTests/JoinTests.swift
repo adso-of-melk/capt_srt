@@ -1,5 +1,6 @@
 import XCTest
 @testable import Titles
+@testable import TitlesCore
 
 /// Title ▸ Join Titles (⌘J): picked neighbouring titles become one.
 @MainActor

@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import os
+@testable import TitlesCore
 
 /// App-wide keyboard, modifier-jog and wheel handling.
 ///

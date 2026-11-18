@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 @testable import Titles
+@testable import TitlesCore
 
 /// Several languages in one project: locks, columns, the master, importing files, and how
 /// they share the window.

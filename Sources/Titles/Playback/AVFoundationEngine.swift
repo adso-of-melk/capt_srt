@@ -1,6 +1,7 @@
 import AVFoundation
 import AVKit
 import AppKit
+@testable import TitlesCore
 
 enum EngineError: LocalizedError {
     case unsupported(String)

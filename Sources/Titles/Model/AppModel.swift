@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import UniformTypeIdentifiers
+@testable import TitlesCore
 
 /// Fast-changing playback state, kept separate so that only the views that
 /// need it (video overlay, title bar, waveform) redraw 60 times a second.
@@ -10,9 +11,8 @@ final class PlayheadClock: ObservableObject {
     @Published var isPlaying = false
 }
 
-enum ExportFormat: String, CaseIterable, Codable, Sendable {
-    case srt, vtt
-    var title: String { self == .srt ? "SubRip (.srt)" : "WebVTT (.vtt)" }
+extension ExportFormat {
+    /// For save panels.
     var type: UTType { UTType(filenameExtension: rawValue) ?? .plainText }
 }
 

@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+@testable import TitlesCore
 
 /// Top strip above everything. Card pane on the left; video top right; title bar and
 /// waveform bottom right. Text Only mode keeps just the cards and a slim transport.

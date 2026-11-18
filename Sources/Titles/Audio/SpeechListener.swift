@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+@testable import TitlesCore
 
 /// Listens to a video's sound for matching subtitle files by speech: how loud the speech band
 /// is in each tenth of a second. Low-pitched sound (rumble, music's bass) counts for less.

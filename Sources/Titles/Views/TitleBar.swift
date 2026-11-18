@@ -1,4 +1,5 @@
 import SwiftUI
+@testable import TitlesCore
 
 /// The strip above the waveform: timecode, transport, spotting mode, zoom and scale.
 /// On a narrow window it switches to a compact layout (no labels, narrower controls),

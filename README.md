@@ -68,6 +68,7 @@ Each video has a **master** language (★) and any number of others, shown side 
 - **Smarter matching when names don't help.** Files are timed alike when most of their titles start within half a second of each other, even with one moved against the other (up to 10 s, or whole hours as in broadcast files starting at 10:00:00) or timed for another frame rate (25 against 23.976 or 24 fps). The TIMING chip says how alike (TIMING 92%), and turns amber when the file is offset or at another frame rate; hover for the details. When files are still unplaced (or placed by length alone), the videos are listened to once ("Listening to video 2 of 4…"): each set of files goes to the video whose speech its titles follow, when that's clearly the one (**SPEECH**). Length is the last resort.
 - **Languages are told apart by their own letters.** A file's language is read from words taken all through it (not just the start), and languages that look alike are told apart by the letters only they use: Serbian (ђ ћ ј љ њ џ) and Macedonian (ѓ ќ ѕ) from Russian, Bulgarian and Kazakh; Ukrainian, Belarusian, Kazakh and Mongolian by theirs; Persian (پ چ ژ گ and its own ی ک) from Arabic; Urdu (ٹ ڈ ڑ ں ے), Pashto and Kurdish (Sorani) by theirs. A code the app has no name for is named in English (Kazakh, not "kk (kk)").
 - **Older Arabic, Persian, Hebrew and Thai files** (Windows code pages 1256, 1255, 874) open with the right letters, as Cyrillic, Greek and Central European ones already did.
+- **Behind the scenes: the core is its own module.** Titles, projects, the subtitle formats, QC's rules, line breaking and the timing rules now live in TitlesCore, apart from the Mac app's windows (see Code layout). Nothing changes in the app.
 
 ## New in 0.47
 
@@ -208,18 +209,34 @@ During playback, the last title the playhead reached stays highlighted, and the 
 
 ## Code layout
 
+The app is two modules. **TitlesCore** is everything about titles that isn't a window: it uses only Foundation (plus Apple's language recogniser for guessing languages), so a later iOS app, or a port, can share it. **Titles** is the Mac app around it.
+
 ```
-Sources/Titles/
+Sources/TitlesCore/          the core: no windows, no AppKit
+  Subtitle.swift             a title, timing rules (CPS, duration, gap), timing standards
+  SubtitleDocument.swift     one language's titles + undo
+  Project.swift              Project / video / language, project settings, card rows
+  ProjectStore.swift         reading and writing .kptnsub projects, backups
+  SubtitleFormats.swift      SRT and WebVTT in and out, timecodes, text encodings
+  Markup.swift               italic and other tags
+  LineBreaker.swift          line breaking rules
+  QC.swift                   what QC finds, in words, and its timing fixes
+  DragResistance.swift       where a dragged title stops near its neighbours
+  LanguageGuess.swift, FileMatcher.swift, ImportPlan.swift   matching dropped files to videos
+  ExportFormat.swift         SRT / VTT
+Sources/Titles/              the Mac app
   TitlesApp.swift            app, window, menus
-  Model/                     Subtitle, document + undo, SRT/VTT, Project/Track/rows, ProjectStore, AppModel
+  Model/                     AppModel (every editing action), import, QC commands, spelling, Find
   Playback/                  PlaybackEngine protocol + AVFoundation engine (libmpv slots in here)
-  Audio/                     audio decoding, waveform pyramid, scrub-audio grains
+  Audio/                     audio decoding, waveform pyramid, scrub-audio grains, speech levels
   Input/InputController.swift  modifier jog, nudges, wheel, spotting keys
+  Views/                     theme, top strip, home, sheets, card columns, video pane, title bar, waveform
 Sources/CHunspell/           Hunspell 1.7.2 spelling engine, unchanged (MPL 1.1; see its README)
 scripts/                     package-app.sh (the .app), fetch-dictionaries.sh (spelling dictionaries)
-  Views/                     theme, top strip, home, sheets, card columns, video pane, title bar, waveform
 Tests/TitlesTests/           automated tests (run with `swift test`)
 ```
+
+For now the app reaches the core with `@testable import TitlesCore` (the core is built with `-enable-testing`), so the core's code needs no `public` marks yet. When a second app shares it, the parts it uses get `public` (or `package`) and the testable import goes.
 
 ## Tests
 

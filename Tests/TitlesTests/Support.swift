@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 @testable import Titles
+@testable import TitlesCore
 
 /// A title for a test.
 func sub(_ start: Double, _ end: Double, _ text: String = "Text") -> Subtitle {

@@ -1,4 +1,5 @@
 import SwiftUI
+@testable import TitlesCore
 
 /// The slim strip across the top of the editor: Home, the project and its videos, and the name.
 struct TopStrip: View {

@@ -1,5 +1,6 @@
 import XCTest
 @testable import Titles
+@testable import TitlesCore
 
 /// Reading and writing subtitle files, and the timecodes in them.
 @MainActor

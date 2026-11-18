@@ -1,5 +1,6 @@
 import XCTest
 @testable import Titles
+@testable import TitlesCore
 
 /// Line breaks by the style-guide rules (42 characters, two lines unless said otherwise).
 @MainActor

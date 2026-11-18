@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 @testable import Titles
+@testable import TitlesCore
 
 /// Formatting tags: hidden from the viewer's count, shown as real italics in the editor,
 /// and written back exactly.

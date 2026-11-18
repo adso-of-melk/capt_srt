@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+@testable import TitlesCore
 
 /// Left pane: one column of cards per open language, side by side. Linked titles share a
 /// row, and a language with no title in a row shows an empty slot, so rows always line up.

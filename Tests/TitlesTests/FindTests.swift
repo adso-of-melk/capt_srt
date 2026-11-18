@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 @testable import Titles
+@testable import TitlesCore
 
 /// Find and Replace: matching what the viewer reads, keeping tags, going from match to
 /// match, and replacing with undo.

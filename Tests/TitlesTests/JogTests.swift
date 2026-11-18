@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 @testable import Titles
+@testable import TitlesCore
 
 /// Fine-tuning an edge with Control or Option held. The mouse, the wheel and the [ ] keys
 /// all move the same edge through one session, so they can be mixed under one hold.

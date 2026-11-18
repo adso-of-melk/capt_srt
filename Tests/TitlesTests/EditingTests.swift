@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 @testable import Titles
+@testable import TitlesCore
 
 /// Editing through the app's own actions: selection, Tab, nudging, splitting, undo across
 /// languages, line breaks, locks and export. A fake player stands in for the video.

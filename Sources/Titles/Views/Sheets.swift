@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+@testable import TitlesCore
 
 /// All the editor's dialogs, chosen by `model.sheet`.
 struct SheetHost: View {

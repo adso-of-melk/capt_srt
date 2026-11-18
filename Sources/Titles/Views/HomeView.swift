@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+@testable import TitlesCore
 
 /// The start screen: start a project, open one, or pick up a recent one where you left off.
 struct HomeView: View {

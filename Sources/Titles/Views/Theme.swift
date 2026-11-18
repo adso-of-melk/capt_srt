@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+@testable import TitlesCore
 
 /// Dark, minimal "future-retro" console palette: near-black blue panels,
 /// warm amber and peach accents, cool periwinkle and lilac secondaries,

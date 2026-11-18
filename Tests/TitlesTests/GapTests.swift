@@ -1,5 +1,6 @@
 import XCTest
 @testable import Titles
+@testable import TitlesCore
 
 /// Title ▸ Keep Minimum Gap. On (the default): no gap goes under the project's minimum, and a
 /// title that moves while it sits too close to a neighbour gets that gap fixed in the same

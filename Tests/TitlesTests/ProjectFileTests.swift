@@ -1,5 +1,6 @@
 import XCTest
 @testable import Titles
+@testable import TitlesCore
 
 /// The project file: everything survives saving and opening, and files from other builds
 /// (or damaged ones) still open.

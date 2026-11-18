@@ -1,4 +1,5 @@
 import SwiftUI
+@testable import TitlesCore
 
 /// KPTN.SUB ▸ Settings… (⌘,). Kept deliberately short. Reading speed and line rules
 /// live per project (File ▸ Project Settings…).

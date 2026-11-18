@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+@testable import TitlesCore
 
 /// Top right: the video with the current title drawn over it.
 struct VideoPane: View {

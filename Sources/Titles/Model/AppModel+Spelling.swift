@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+@testable import TitlesCore
 
 /// Spell check: project words, learning, and going from one misspelling to the next.
 extension AppModel {

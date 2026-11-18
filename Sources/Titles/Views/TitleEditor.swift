@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Carbon
+@testable import TitlesCore
 
 /// Formatted text for the card editor: <i>, <b> and <u> become real italic, bold and
 /// underline, and the tags are written back when the text changes. Other tags

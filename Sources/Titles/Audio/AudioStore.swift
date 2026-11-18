@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+@testable import TitlesCore
 
 /// Owns the decoded audio for the current video and loads it in the background.
 @MainActor

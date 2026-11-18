@@ -1,5 +1,6 @@
 import XCTest
 @testable import Titles
+@testable import TitlesCore
 
 /// Guessing a subtitle file's language from its name and its words.
 @MainActor
