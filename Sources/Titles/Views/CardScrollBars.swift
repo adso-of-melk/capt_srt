@@ -32,6 +32,18 @@ final class CardScrollTracker: ObservableObject {
     let rowRequests = PassthroughSubject<Request, Never>()
     /// The cards' scroll view, once found (see RowsScrollObserver).
     weak var rowsScrollView: NSScrollView?
+    /// Where each row of cards is, in the list's own points (see CardRowFramesKey). Not
+    /// published: only the flow reads it, frame by frame.
+    var rowFrames: [UUID: CGRect] = [:]
+    /// Moves the cards with the film while playing (see CardFlow).
+    weak var flow: RowsScrollObserverView?
+
+    /// Playing, a title was reached: true when the flow takes the cards there (and takes up
+    /// again after a scroll by hand). False: glide there instead (the flow waits meanwhile).
+    func flowTakesOver(glide: Double) -> Bool { flow?.takeOver(glide: glide) ?? false }
+
+    /// The cards were moved by hand (the scroll bar): the flow waits for the next title.
+    func handScrolled() { flow?.pauseForHand() }
     private var fade: Task<Void, Never>?
     private var fadeAt = Date.distantPast
 
@@ -55,6 +67,7 @@ final class CardScrollTracker: ObservableObject {
     /// Moves the cards so the thumb's start is at this point of its travel (0 at the top, 1 at
     /// the bottom), exactly, as a Mac scroll bar does. False if the scroll view isn't known.
     func scrollRows(toFraction f: CGFloat) -> Bool {
+        handScrolled()
         guard let sv = rowsScrollView, let doc = sv.documentView else { return false }
         let clip = sv.contentView
         let range = max(0, doc.frame.height - clip.bounds.height)
@@ -164,38 +177,53 @@ struct CardRowsViewportKey: PreferenceKey {
 /// change in how much there is to scroll) to the tracker.
 struct RowsScrollObserver: NSViewRepresentable {
     let tracker: CardScrollTracker
+    let model: AppModel
 
     func makeNSView(context: Context) -> RowsScrollObserverView {
         let v = RowsScrollObserverView()
         v.tracker = tracker
+        v.model = model
         return v
     }
 
     func updateNSView(_ v: RowsScrollObserverView, context: Context) {
         v.tracker = tracker
+        v.model = model
         v.attach()
     }
 }
 
+/// Sits behind the list of cards, the same size as the list (so its points are the list's
+/// own), watches the scroll view the list is in, and moves it while the cards flow.
 final class RowsScrollObserverView: NSView {
     weak var tracker: CardScrollTracker?
+    weak var model: AppModel? {
+        didSet { if model !== oldValue { watchPlaying() } }
+    }
     private weak var watched: NSScrollView?
 
+    override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         attach()
+        updateFlowLink()
     }
 
     func attach() {
+        tracker?.flow = self
         guard let sv = enclosingScrollView else { return }
         if sv !== watched {
             if let old = watched {
                 NotificationCenter.default.removeObserver(self, name: nil, object: old.contentView)
+                NotificationCenter.default.removeObserver(self, name: NSScrollView.willStartLiveScrollNotification, object: old)
                 if let doc = old.documentView { NotificationCenter.default.removeObserver(self, name: nil, object: doc) }
             }
             watched = sv
+            // A scroll by hand (trackpad, wheel): the flow waits for the next title.
+            NotificationCenter.default.addObserver(self, selector: #selector(liveScroll(_:)),
+                                                   name: NSScrollView.willStartLiveScrollNotification, object: sv)
             sv.contentView.postsBoundsChangedNotifications = true
             sv.contentView.postsFrameChangedNotifications = true
             NotificationCenter.default.addObserver(self, selector: #selector(changed(_:)),
@@ -213,6 +241,113 @@ final class RowsScrollObserverView: NSView {
     }
 
     @objc private func changed(_ note: Notification) { report() }
+
+    @objc private func liveScroll(_ note: Notification) { pauseForHand() }
+
+    // MARK: Flowing with the film (see CardFlow)
+
+    private var flowLink: CADisplayLink?
+    private var playingWatch: AnyCancellable?
+    /// Scrolled by hand while playing: the flow waits for the next title to be reached.
+    private var handHeld = false
+    /// A glide is taking the cards to a title the flow couldn't place: it waits till then.
+    private var waitUntil: CFTimeInterval = 0
+    /// The flow moved the cards on the last frame, and where it put them (to tell a scroll
+    /// by anyone else apart).
+    private var flowing = false
+    private var lastPut: CGFloat?
+    private var lastTime: Double?
+    /// Easing in from where the cards were (starting, after a pause, after a jump).
+    private var blend: (offset: CGFloat, start: CFTimeInterval)?
+    private static let blendTime = 0.45
+
+    private func watchPlaying() {
+        playingWatch = model?.clock.$isPlaying.sink { [weak self] playing in
+            MainActor.assumeIsolated { self?.updateFlowLink(playing: playing) }
+        }
+    }
+
+    private func updateFlowLink(playing: Bool? = nil) {
+        let on = window != nil && (playing ?? model?.clock.isPlaying ?? false)
+        if on, flowLink == nil {
+            let link = displayLink(target: self, selector: #selector(flowTick(_:)))
+            link.add(to: .main, forMode: .common)
+            flowLink = link
+        } else if !on, let link = flowLink {
+            link.invalidate()
+            flowLink = nil
+            flowing = false
+            handHeld = false
+            lastPut = nil
+            lastTime = nil
+        }
+    }
+
+    /// Nothing else has the cards: no typing, spotting, preview, dragging of the bar or text.
+    private func mayFlow(_ model: AppModel) -> Bool {
+        model.cardsFlow && model.clock.isPlaying && !model.isPreviewing && model.spottingID == nil
+            && model.focusRequest == nil && model.typingIn == nil && !model.fastScrolling
+            && !model.doc.isLive && model.textDrag == nil
+    }
+
+    func pauseForHand() {
+        guard flowLink != nil else { return }
+        handHeld = true
+        flowing = false
+    }
+
+    func takeOver(glide: Double) -> Bool {
+        guard let model, flowLink != nil, mayFlow(model) else { return false }
+        handHeld = false
+        if let frames = tracker?.rowFrames,
+           CardFlow.points(at: model.engine.currentTime + 0.05, rows: model.rows, frames: frames) != nil {
+            return true
+        }
+        // Not laid out yet (far away): glide there, and flow on from there.
+        waitUntil = CACurrentMediaTime() + glide + 0.05
+        flowing = false
+        return false
+    }
+
+    @objc private func flowTick(_ link: CADisplayLink) {
+        guard let model, let tracker, let sv = watched, let doc = sv.documentView, window != nil else {
+            updateFlowLink(); return
+        }
+        guard mayFlow(model), !handHeld, CACurrentMediaTime() >= waitUntil else {
+            flowing = false
+            return
+        }
+        let t = WaveformNSView.displayTime(now: model.engine.currentTime, rate: Double(model.playbackRate),
+                                           ahead: link.targetTimestamp - CACurrentMediaTime())
+        guard let points = CardFlow.points(at: t, rows: model.rows, frames: tracker.rowFrames),
+              let centre = CardFlow.centre(at: t, points: points) else {
+            flowing = false
+            return
+        }
+        let clip = sv.contentView
+        let now = clip.bounds.origin.y
+        // Moved by anyone else since the last frame: a scroll by hand (one the scroll view
+        // didn't announce). The flow waits for the next title.
+        if flowing, let put = lastPut, abs(now - put) > 3 { pauseForHand(); return }
+        // A jump in the film's time: ease over to the new place.
+        if flowing, let last = lastTime, abs(t - last) > 0.5 { flowing = false }
+        let range = max(0, doc.frame.height - clip.bounds.height)
+        let middle = convert(NSPoint(x: 0, y: centre), to: doc).y
+        let target = min(range, max(0, middle - clip.bounds.height / 2))
+        let stamp = CACurrentMediaTime()
+        if !flowing { blend = (now - target, stamp) }
+        var y = target
+        if let b = blend {
+            let left = CardFlow.blendLeft(elapsed: stamp - b.start, duration: Self.blendTime)
+            if left <= 0 { blend = nil } else { y = target + b.offset * left }
+        }
+        flowing = true
+        lastTime = t
+        guard abs(y - now) > 0.05 else { lastPut = now; return }
+        clip.scroll(to: NSPoint(x: clip.bounds.minX, y: y))
+        sv.reflectScrolledClipView(clip)
+        lastPut = clip.bounds.origin.y
+    }
 
     private func report() {
         guard let sv = watched, let tracker else { return }
@@ -367,6 +502,7 @@ struct CardScrollBarV: View {
             let id = rows[target.index].key
             guard id != lastRequest else { return }
             lastRequest = id
+            tracker.handScrolled()
             tracker.rowRequests.send(.init(id: id, anchor: target.anchor))
         }
         .frame(width: Self.width)

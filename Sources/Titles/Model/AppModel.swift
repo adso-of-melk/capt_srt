@@ -116,6 +116,11 @@ final class AppModel: ObservableObject {
     @Published var replayAfterMove = true {
         didSet { UserDefaults.standard.set(replayAfterMove, forKey: "replayAfterMove") }
     }
+    /// While playing, the title cards flow with the film on every frame, each card
+    /// reaching the middle as its title starts (see CardFlow). Off: they glide to each title.
+    @Published var cardsFlow = true {
+        didSet { UserDefaults.standard.set(cardsFlow, forKey: "cardsFlow") }
+    }
     /// Title ▸ Enable Overlapping Titles. Off (the default): a dragged title stops at the
     /// minimum gap from the next one and never goes over it, and spotting, new titles and
     /// Shift Titles keep clear of other titles too. On: pull a little further and it gives.
@@ -218,6 +223,7 @@ final class AppModel: ObservableObject {
         if defaults.object(forKey: "replayAfterJog") != nil { replayAfterJog = defaults.bool(forKey: "replayAfterJog") }
         if defaults.object(forKey: "replayAfterResize") != nil { replayAfterResize = defaults.bool(forKey: "replayAfterResize") }
         if defaults.object(forKey: "replayAfterMove") != nil { replayAfterMove = defaults.bool(forKey: "replayAfterMove") }
+        if defaults.object(forKey: "cardsFlow") != nil { cardsFlow = defaults.bool(forKey: "cardsFlow") }
         if defaults.object(forKey: "allowOverlaps") != nil { allowOverlaps = defaults.bool(forKey: "allowOverlaps") }
         if defaults.object(forKey: "keepMinGap") != nil { keepMinGap = defaults.bool(forKey: "keepMinGap") }
         if let off = defaults.array(forKey: "qcKindsOff") as? [String] {

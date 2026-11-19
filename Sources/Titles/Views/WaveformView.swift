@@ -97,6 +97,8 @@ final class WaveformNSView: NSView {
     /// Boxes of the other open languages, in their slim lanes under the waveform.
     private var laneBoxes: [(track: UUID, id: UUID, rect: CGRect)] = []
     private var laneRects: [(track: UUID, rect: CGRect)] = []
+    /// The slim lanes' codes, as drawn.
+    private var laneCodes: [(track: Track, rect: CGRect, focused: Bool)] = []
 
     // Interaction
     private enum Drag {
@@ -137,6 +139,7 @@ final class WaveformNSView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override init(frame frameRect: NSRect) {
+        stripView = WaveStripView(frame: NSRect(origin: .zero, size: frameRect.size))
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = Palette.lane.cgColor
@@ -144,6 +147,10 @@ final class WaveformNSView: NSView {
         // (Views don't clip on macOS 14 and later unless asked; the split view used to.)
         clipsToBounds = true
         layer?.masksToBounds = true
+        // While playing, the strip covers this view (see WaveStripView).
+        stripView.autoresizingMask = [.width, .height]
+        stripView.isHidden = true
+        addSubview(stripView)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -161,7 +168,10 @@ final class WaveformNSView: NSView {
     private var pps: Double { model?.pixelsPerSecond ?? 120 }
     private func x(_ t: Double) -> CGFloat { CGFloat((t - viewStart) * pps) }
     private func t(_ x: CGFloat) -> Double { max(0, viewStart + Double(x) / pps) }
-    private var visibleDuration: Double { Double(bounds.width) / pps }
+    private var visibleDuration: Double { Double(area.width) / pps }
+    /// The size being drawn: the view's own, or a tile's while one is drawn for the strip.
+    private var canvas: CGSize?
+    private var area: CGSize { canvas ?? bounds.size }
     /// Languages open as full bands (double-click a code to open or close one). The language
     /// you work in isn't always one of them: closed, it's the slim lane with the amber code.
     private var bandTracks: [Track] { model?.waveBandTracks ?? [] }
@@ -207,7 +217,7 @@ final class WaveformNSView: NSView {
     /// lanes of the rest take their share). Opening one more closes the lowest open one.
     private var roomForBands: Int {
         let n = model?.openTracks.count ?? 1
-        let h = max(0, bounds.height - rulerHeight - scrollbarHeight)
+        let h = max(0, area.height - rulerHeight - scrollbarHeight)
         var k = max(1, n)
         while k > 1, (h - lanesHeight(count: n - k)) / CGFloat(k) < Self.minBandHeight { k -= 1 }
         return k
@@ -253,18 +263,18 @@ final class WaveformNSView: NSView {
 
     private func lanesHeight(count n: Int) -> CGFloat {
         guard n > 0 else { return 0 }
-        return min(CGFloat(n) * WaveLayout.lane, max(0, bounds.height - rulerHeight - scrollbarHeight) * 0.45)
+        return min(CGFloat(n) * WaveLayout.lane, max(0, area.height - rulerHeight - scrollbarHeight) * 0.45)
     }
 
     private var waveRect: CGRect {
-        CGRect(x: 0, y: rulerHeight, width: bounds.width,
-               height: max(0, bounds.height - rulerHeight - lanesHeight - scrollbarHeight))
+        CGRect(x: 0, y: rulerHeight, width: area.width,
+               height: max(0, area.height - rulerHeight - lanesHeight - scrollbarHeight))
     }
 
     // MARK: Scroll bar
 
     private var scrollbarRect: CGRect {
-        CGRect(x: 0, y: bounds.height - scrollbarHeight, width: bounds.width, height: scrollbarHeight)
+        CGRect(x: 0, y: area.height - scrollbarHeight, width: area.width, height: scrollbarHeight)
     }
 
     /// The length the scroll bar stands for: the video, or the titles if there's no video yet.
@@ -292,31 +302,48 @@ final class WaveformNSView: NSView {
     }
 
     private func drawScrollbar(model: AppModel) {
-        let track = scrollbarRect
-        Palette.panel.setFill()
-        track.fill()
-        Palette.rule.setFill()
-        CGRect(x: 0, y: track.minY, width: track.width, height: 1).fill()
-        let total = max(totalDuration, visibleDuration)
-        // Where the titles are, as faint marks, so you can find your way along the film.
-        Palette.textFaint.withAlphaComponent(0.35).setFill()
-        let scale = track.width / CGFloat(total)
-        for sub in model.doc.subtitles {
-            CGRect(x: CGFloat(sub.start) * scale, y: track.midY - 1, width: max(1, CGFloat(sub.duration) * scale), height: 2).fill()
-        }
+        drawScrollTrack(model: model, in: scrollbarRect)
         let thumb = thumbRect
         let dragging: Bool = { if case .scrolling = drag { return true } else { return false } }()
         (dragging ? Palette.amber : Palette.periwinkle).withAlphaComponent(dragging ? 0.75 : 0.45).setFill()
         NSBezierPath(roundedRect: thumb, xRadius: thumb.height / 2, yRadius: thumb.height / 2).fill()
         // The playhead's place in the film.
         Palette.amber.setFill()
-        CGRect(x: CGFloat(playheadTime) * scale - 0.5, y: track.minY + 1, width: 1.5, height: track.height - 1).fill()
+        scrollHeadRect.fill()
+    }
+
+    /// The scroll bar's track, with the titles on it as faint marks, so you can find your
+    /// way along the film.
+    private func drawScrollTrack(model: AppModel, in track: CGRect) {
+        Palette.panel.setFill()
+        track.fill()
+        Palette.rule.setFill()
+        CGRect(x: track.minX, y: track.minY, width: track.width, height: 1).fill()
+        let total = max(totalDuration, visibleDuration)
+        Palette.textFaint.withAlphaComponent(0.35).setFill()
+        let scale = track.width / CGFloat(total)
+        for sub in model.doc.subtitles {
+            CGRect(x: track.minX + CGFloat(sub.start) * scale, y: track.midY - 1,
+                   width: max(1, CGFloat(sub.duration) * scale), height: 2).fill()
+        }
+    }
+
+    /// The playhead's mark on the scroll bar.
+    private var scrollHeadRect: CGRect {
+        let track = scrollbarRect
+        let scale = track.width / CGFloat(max(totalDuration, visibleDuration))
+        return CGRect(x: CGFloat(playheadTime) * scale - 0.5, y: track.minY + 1, width: 1.5, height: track.height - 1)
     }
 
     /// Keeps the playhead in view and keeps zoom anchored on it.
     func refresh() {
         guard let model else { return }
         updateFrameLink()
+        // Playing on the strip: only what's drawn on it can need redrawing.
+        if stripOn {
+            if wantsStrip(model), stripUpdate(model) { return }
+            leaveStrip()
+        }
         let time = playheadTime
         if lastPPS != 0 && lastPPS != pps {
             let anchorX = x(time) >= 0 && x(time) <= bounds.width ? x(time) : bounds.width / 2
@@ -366,12 +393,27 @@ final class WaveformNSView: NSView {
         }
     }
 
+    /// The film's time when the frame being made reaches the screen: the player's time now,
+    /// plus the little while until then.
+    static func displayTime(now t: Double, rate: Double, ahead: Double) -> Double {
+        t + max(0, min(0.05, ahead)) * rate
+    }
+
     @objc private func frameTick(_ link: CADisplayLink) {
         guard let model, model.clock.isPlaying, window != nil else { updateFrameLink(); return }
-        let t = model.engine.currentTime
+        let t = Self.displayTime(now: model.engine.currentTime, rate: Double(model.playbackRate),
+                                 ahead: link.targetTimestamp - CACurrentMediaTime())
         // Never backwards by a hair (the player's time can wobble as frames are decoded).
         if let last = frameTime, t < last, last - t < 0.05 { return }
         frameTime = t
+        // The strip moves itself, by the film's clock; this only keeps it drawn ahead.
+        if stripOn, !wantsStrip(model) { leaveStrip() }
+        if !stripOn, wantsStrip(model) { enterStrip(model, at: t) }
+        if stripOn {
+            stripTick(model, at: t)
+            lastTime = t
+            return
+        }
         if case .none = drag {
             if model.followPlayhead {
                 // Playhead parked at 40% of the width; the waveform glides under it.
@@ -385,17 +427,350 @@ final class WaveformNSView: NSView {
         needsDisplay = true
     }
 
+    // MARK: The strip (see WaveStripView)
+
+    private let stripView: WaveStripView
+    /// Playing, with the strip shown over this view (whose own drawing waits underneath).
+    private var stripOn = false
+    /// Until then the view draws itself, frame by frame: a click, the wheel or a pinch has
+    /// just had the waveform in hand.
+    private var stripHold: CFTimeInterval = 0
+    private var stripMotion = StripMotion(follow: true, lead: 0, page: 0, pps: 120)
+    /// The strip's zero, a tile near the playhead (so its positions stay small numbers).
+    private var stripOrigin = 0
+    /// The time the strip's current run was set going around.
+    private var stripRunTime = 0.0
+    /// The film's clock isn't reaching the strip: it's moved by hand on each frame instead.
+    private var stripManual = false
+    private var stripMisses = 0
+    private var stripScale: CGFloat = 2
+    private var stripSpace: CGColorSpace?
+    private var tileDirty: Set<Int> = []
+
+    /// What the strip's size and movement were set up for: any change starts it afresh.
+    private struct StripGeometry: Equatable {
+        var pps: Double
+        var size: CGSize
+        var scale: CGFloat
+        var follow: Bool
+        var qc: Bool
+    }
+    private var stripGeometry: StripGeometry?
+
+    /// Everything else the tiles are drawn from, but the titles, the selection and the title
+    /// being typed in (those redraw only the tiles they're on): a change redraws every tile.
+    private struct StripContent: Equatable {
+        var focused: UUID?
+        var bands: [UUID]
+        var weights: [CGFloat]
+        var lanes: [UUID]
+        var qcKinds: Set<QCIssue>
+        var gain: Double
+        var db: Bool
+        var wave: ObjectIdentifier?
+        var multi: Set<UUID>
+        var find: String
+    }
+    private var stripContent: StripContent?
+    private var stripRevision = 0
+    private var stripTitles: [UUID: [Subtitle]] = [:]
+    private var stripSelected: UUID?
+    private var stripTyping: UUID?
+
+    /// What the strip's top layer (codes, notices) and scroll bar track show: redrawn when
+    /// it changes. (The handle and the playhead's mark on it just move: see stripTick.)
+    private struct OverlayKey: Equatable {
+        var revision: Int
+        var content: StripContent?
+        var notice: String?
+        var locked: Bool
+        var size: CGSize
+        var span: Double
+    }
+    private var overlayKey: OverlayKey?
+
+    private var tileDuration: Double { StripTiles.duration(pps: pps) }
+    /// How far either side of the playhead one run of the strip reaches (see StripMotion.stripRun).
+    private var stripReach: Double { max(20, 100_000 / pps) }
+
+    private func wantsStrip(_ model: AppModel) -> Bool {
+        guard frameLink != nil, window != nil, model.clock.isPlaying, model.spottingID == nil,
+              model.engine.syncItem != nil, bounds.width >= 40, bounds.height >= 40,
+              CACurrentMediaTime() >= stripHold else { return false }
+        if case .none = drag { return true }
+        return false
+    }
+
+    private func currentStripGeometry(_ model: AppModel) -> StripGeometry? {
+        guard let scale = window?.backingScaleFactor else { return nil }
+        return StripGeometry(pps: pps, size: bounds.size, scale: scale, follow: model.followPlayhead, qc: model.qcMode)
+    }
+
+    private func enterStrip(_ model: AppModel, at t: Double) {
+        guard let item = model.engine.syncItem, let window, let geometry = currentStripGeometry(model) else { return }
+        stripGeometry = geometry
+        stripScale = geometry.scale
+        stripSpace = window.colorSpace?.cgColorSpace
+        let vis = visibleDuration
+        var page = viewStart
+        if !model.followPlayhead, x(t) < 0 || x(t) > bounds.width { page = max(0, t - vis * 0.4) }
+        stripMotion = StripMotion(follow: model.followPlayhead, lead: vis * 0.4, page: page, pps: pps)
+        viewStart = stripMotion.viewStart(at: t)
+        stripOrigin = Int((viewStart / tileDuration).rounded(.down))
+        let height = bounds.height
+        let head = StripImage.render(size: CGSize(width: WaveStripView.playheadHalf * 2, height: height),
+                                     scale: stripScale, space: stripSpace) {
+            Self.drawPlayheadMark(at: WaveStripView.playheadHalf, height: height)
+        }
+        stripView.prepare(item: item, size: bounds.size, scale: stripScale,
+                          background: (model.qcMode ? Palette.alertLane : Palette.lane).cgColor, playhead: head,
+                          thumb: Palette.periwinkle.withAlphaComponent(0.45).cgColor, head: Palette.amber.cgColor)
+        stripView.rebase(origin: stripOrigin)
+        stripOn = true
+        stripManual = false
+        noteStripContent(model)
+        tileDirty.removeAll()
+        renderTiles(model, budget: 0)   // everything in view, now
+        renderOverlay(model)
+        runStrip(at: t)
+        stripView.isHidden = false
+    }
+
+    /// Back to the view's own drawing, just where the strip was.
+    private func leaveStrip(now: Bool = true) {
+        guard stripOn else { return }
+        stripOn = false
+        if let model { viewStart = stripMotion.viewStart(at: frameTime ?? model.engine.currentTime) }
+        if now { display() } else { needsDisplay = true }
+        stripView.isHidden = true
+        stripView.clear()
+        tileDirty.removeAll()
+        overlayKey = nil
+        stripContent = nil
+        stripGeometry = nil
+    }
+
+    /// A click, the wheel or a pinch: the waveform draws itself for a moment, so what's
+    /// under the pointer is exactly what's drawn.
+    private func takeBack(for seconds: Double = 0.6) {
+        stripHold = max(stripHold, CACurrentMediaTime() + seconds)
+        leaveStrip()
+    }
+
+    private func runStrip(at t: Double) {
+        stripRunTime = t
+        stripMisses = 0
+        if stripManual { placeStrip(at: t); return }
+        let origin = Double(stripOrigin) * tileDuration
+        stripView.run(strip: stripMotion.stripRun(origin: origin, around: t, reach: stripReach),
+                      stripAt: stripMotion.stripX(origin: origin, at: t),
+                      playhead: stripMotion.playheadRun(span: visibleDuration * 3),
+                      playheadAt: stripMotion.playheadX(at: t))
+    }
+
+    private func placeStrip(at t: Double) {
+        let origin = Double(stripOrigin) * tileDuration
+        stripView.place(stripAt: stripMotion.stripX(origin: origin, at: t), playheadAt: stripMotion.playheadX(at: t))
+    }
+
+    private func stripTick(_ model: AppModel, at t: Double) {
+        guard stripView.item === model.engine.syncItem else { leaveStrip(); return }
+        var rerun = false
+        if !stripMotion.follow {
+            // Not following: a new page once the playhead runs off this one.
+            let px = stripMotion.playheadX(at: t)
+            if px < 0 || px > bounds.width { stripMotion.page = max(0, t - visibleDuration * 0.4); rerun = true }
+        }
+        let start = stripMotion.viewStart(at: t)
+        viewStart = start
+        // A new zero near the playhead now and then (and after a jump), so the numbers the
+        // graphics system works with stay small.
+        if abs(t - stripRunTime) > stripReach / 2 || abs(start - Double(stripOrigin) * tileDuration) * pps > 50_000 {
+            stripOrigin = Int((start / tileDuration).rounded(.down))
+            stripView.rebase(origin: stripOrigin)
+            rerun = true
+        }
+        if rerun { runStrip(at: t) }
+        if stripManual { placeStrip(at: t) } else { checkStripClock(model) }
+        renderTiles(model, budget: 0.004)
+        if makeOverlayKey(model) != overlayKey { renderOverlay(model) }
+        stripView.placeScrollBar(thumb: thumbRect, head: scrollHeadRect)
+    }
+
+    /// The strip should be moving by the film's clock. If the graphics system shows it
+    /// somewhere else for a while (the clock isn't reaching it), it's moved by hand instead.
+    private func checkStripClock(_ model: AppModel) {
+        guard let shown = stripView.shown else { return }
+        let now = model.engine.currentTime
+        let origin = Double(stripOrigin) * tileDuration
+        let off = stripMotion.follow && now > stripMotion.lead
+            ? abs(shown.strip - stripMotion.stripX(origin: origin, at: now))
+            : abs(shown.playhead - stripMotion.playheadX(at: now))
+        stripMisses = off > max(40, CGFloat(0.25 * pps)) ? stripMisses + 1 : 0
+        guard stripMisses > 30 else { return }
+        stripManual = true
+        NSLog("KPTN.SUB: the waveform strip is moved frame by frame (the film's clock isn't reaching it)")
+        placeStrip(at: frameTime ?? now)
+    }
+
+    private func makeStripContent(_ model: AppModel) -> StripContent {
+        let bandIDs = bandTracks.map(\.id)
+        let find = model.find
+        return StripContent(
+            focused: model.video?.focusedTrackID, bands: bandIDs, weights: bandIDs.map { bandWeights[$0] ?? 1 },
+            lanes: laneTracks.map(\.id), qcKinds: model.qcKinds, gain: model.waveGain, db: model.dbScale,
+            wave: model.audio.waveform.map { ObjectIdentifier($0) }, multi: model.multiSelection,
+            find: find.isShown ? "\(find.query)|\(find.matchCase)|\(find.wholeWord)|\(find.scope.rawValue)" : "")
+    }
+
+    private func titlesSnapshot(_ model: AppModel) -> [UUID: [Subtitle]] {
+        Dictionary(model.openTracks.map { ($0.id, $0.doc.subtitles) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// What the tiles now on the strip were drawn from.
+    private func noteStripContent(_ model: AppModel) {
+        stripContent = makeStripContent(model)
+        stripRevision = model.revision
+        stripTitles = titlesSnapshot(model)
+        stripSelected = model.doc.selectedID
+        stripTyping = model.typingIn
+    }
+
+    /// Marks the tiles a change is on for redrawing (they keep their picture until then).
+    /// False when the strip has to start afresh (a new size, zoom or way of following).
+    private func stripUpdate(_ model: AppModel) -> Bool {
+        guard currentStripGeometry(model) == stripGeometry else {
+            stripHold = max(stripHold, CACurrentMediaTime() + 0.3)
+            return false
+        }
+        let content = makeStripContent(model)
+        if content != stripContent {
+            noteStripContent(model)
+            tileDirty = stripView.tileNumbers
+            return true
+        }
+        let focusedID = model.video?.focusedTrackID
+        if model.revision != stripRevision || focusedID.map({ stripTitles[$0] != model.doc.subtitles }) == true {
+            let titles = titlesSnapshot(model)
+            if let spans = StripTiles.changedSpans(old: stripTitles, new: titles) {
+                for span in spans { redraw(span) }
+            } else {
+                tileDirty = stripView.tileNumbers
+            }
+            stripTitles = titles
+            stripRevision = model.revision
+        }
+        let selected = model.doc.selectedID
+        if selected != stripSelected {
+            redraw(title: stripSelected)
+            redraw(title: selected)
+            stripSelected = selected
+        }
+        if model.typingIn != stripTyping {
+            redraw(title: stripTyping)
+            redraw(title: model.typingIn)
+            stripTyping = model.typingIn
+        }
+        return true
+    }
+
+    private func redraw(_ span: ClosedRange<Double>) {
+        let touched = StripTiles.touched(from: span.lowerBound, to: span.upperBound, pps: pps)
+        tileDirty.formUnion(stripView.tileNumbers.filter { touched.contains($0) })
+    }
+
+    private func redraw(title id: UUID?) {
+        guard let id else { return }
+        for subs in stripTitles.values {
+            if let s = subs.first(where: { $0.id == id }) { redraw(s.start...max(s.start, s.end)) }
+        }
+    }
+
+    /// Draws the tiles the strip needs: those in view at once, the rest (ahead of the
+    /// playhead, and any marked for redrawing) a few at a time, `budget` seconds a frame.
+    private func renderTiles(_ model: AppModel, budget: CFTimeInterval) {
+        let d = tileDuration
+        let start = viewStart, end = viewStart + visibleDuration
+        let visible = StripTiles.range(from: start, to: end, pps: pps)
+        let wanted = StripTiles.range(from: start - d, to: end + 2 * d, pps: pps)
+        let keep = (wanted.lowerBound - 1)...(wanted.upperBound + 1)
+        stripView.removeTiles { !keep.contains($0) }
+        let have = stripView.tileNumbers
+        tileDirty.formIntersection(have)
+        let blank = Set(wanted).subtracting(have)
+        let todo = Array(blank.union(tileDirty.filter { wanted.contains($0) }))
+        guard !todo.isEmpty else { return }
+        let playhead = Int((max(0, frameTime ?? start) / d).rounded(.down))
+        let began = CACurrentMediaTime()
+        for k in StripTiles.order(todo, visible: visible, blank: blank, playhead: playhead) {
+            let mustNow = visible.contains(k) && blank.contains(k)
+            if !mustNow, CACurrentMediaTime() - began > budget { break }
+            if let image = renderTile(k, model: model) { stripView.setTile(k, image: image) }
+            tileDirty.remove(k)
+        }
+    }
+
+    /// Tile `k`: drawn just as the view draws that stretch of film (see drawContent).
+    private func renderTile(_ k: Int, model: AppModel) -> CGImage? {
+        let saved = (viewStart, bands, boxRectsByTrack, numberPills, laneBoxes, laneRects, laneTags, laneCodes)
+        defer {
+            (viewStart, bands, boxRectsByTrack, numberPills, laneBoxes, laneRects, laneTags, laneCodes) = saved
+            canvas = nil
+        }
+        let size = CGSize(width: StripTiles.width, height: bounds.height)
+        canvas = size
+        viewStart = Double(k) * tileDuration
+        return StripImage.render(size: size, scale: stripScale, space: stripSpace) { drawContent(model: model) }
+    }
+
+    private func makeOverlayKey(_ model: AppModel) -> OverlayKey {
+        OverlayKey(revision: model.revision, content: stripContent, notice: audioNotice(model),
+                   locked: model.focusedIsLocked, size: bounds.size, span: max(totalDuration, visibleDuration))
+    }
+
+    /// The strip's top layer: codes and notices (see drawOverlay), and the scroll bar's track.
+    private func renderOverlay(_ model: AppModel) {
+        overlayKey = makeOverlayKey(model)
+        layoutBands()
+        layoutLanes(top: waveRect.maxY)
+        stripView.setOverlay(StripImage.render(size: bounds.size, scale: stripScale, space: stripSpace) {
+            drawOverlay(model: model, strip: true)
+        })
+        let track = scrollbarRect
+        stripView.setScrollTrack(StripImage.render(size: track.size, scale: stripScale, space: stripSpace) {
+            drawScrollTrack(model: model, in: CGRect(origin: .zero, size: track.size))
+        }, in: track)
+        stripView.placeScrollBar(thumb: thumbRect, head: scrollHeadRect)
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        if stripOn {
+            stripHold = max(stripHold, CACurrentMediaTime() + 0.3)
+            leaveStrip(now: false)
+        }
+    }
+
     // MARK: Drawing
 
     override func draw(_ dirtyRect: NSRect) {
-        guard let model, let ctx = NSGraphicsContext.current?.cgContext else { return }
-        let w = bounds.width
+        // While the strip is shown, it covers this view (see WaveStripView).
+        guard let model, !stripOn else { return }
+        drawContent(model: model)
+        drawOverlay(model: model, strip: false)
+    }
+
+    /// What moves with the film: the ruler, each language's waveform and boxes, the slim
+    /// lanes. (Drawn into the strip's tiles too, a tile at a time: see `canvas`.)
+    private func drawContent(model: AppModel) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let size = area
         let wave = waveRect
 
         (model.qcMode ? Palette.alertLane : Palette.lane).setFill()
-        bounds.fill()
+        CGRect(origin: .zero, size: size).fill()
 
-        drawRuler(ctx, width: w)
+        drawRuler(ctx, width: size.width)
         layoutBands()
         boxRectsByTrack.removeAll(keepingCapacity: true)
         numberPills.removeAll(keepingCapacity: true)
@@ -408,11 +783,22 @@ final class WaveformNSView: NSView {
             drawBoxes(ctx, in: band.rect, track: band.track, focused: band.focused, model: model)
             if showsCodes {
                 Palette.rule.setFill()
-                CGRect(x: 0, y: band.rect.minY, width: w, height: 1).fill()
-                drawCode(band.track, in: band.label, focused: band.focused)
+                CGRect(x: 0, y: band.rect.minY, width: size.width, height: 1).fill()
             }
         }
         drawLanes(model: model, top: wave.maxY)
+    }
+
+    /// What stays put on top: the languages' codes, the scroll bar and notices; while
+    /// dragging, the drop line, marquee and new box; and the playhead. (`strip`: for the
+    /// strip's top layer, which has its own scroll bar and playhead.)
+    private func drawOverlay(model: AppModel, strip: Bool) {
+        let w = area.width
+        let wave = waveRect
+        if showsCodes {
+            for band in bands { drawCode(band.track, in: band.label, focused: band.focused) }
+        }
+        for code in laneCodes { drawCode(code.track, in: code.rect, focused: code.focused) }
         // A language dragged by its code: an amber line where it would land, and its code
         // at the pointer.
         if case let .language(id) = drag, didDrag, let drop = languageDrop, let track = model.video?.track(id) {
@@ -421,7 +807,7 @@ final class WaveformNSView: NSView {
             let tw = (codeText(track) as NSString).size(withAttributes: [.font: labelFont(9)]).width + 10
             drawCode(track, in: CGRect(x: drop.point.x - tw / 2, y: drop.point.y - 7, width: tw, height: 13), focused: true)
         }
-        drawScrollbar(model: model)
+        if !strip { drawScrollbar(model: model) }
         if case let .marquee(a, b) = drag {
             let r = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
             Palette.amber.withAlphaComponent(0.08).setFill()
@@ -433,7 +819,7 @@ final class WaveformNSView: NSView {
         }
         let focusRect = focusedBandRect
         if model.focusedIsLocked, bands.contains(where: \.focused) {
-            drawText("LOCKED TO MASTER: TEXT ONLY", at: CGPoint(x: bounds.width - 190, y: focusRect.minY + 6),
+            drawText("LOCKED TO MASTER: TEXT ONLY", at: CGPoint(x: w - 190, y: focusRect.minY + 6),
                      font: labelFont(9), color: Palette.lilac)
         }
 
@@ -450,23 +836,32 @@ final class WaveformNSView: NSView {
             path.stroke()
         }
 
-        // Playhead
-        let px = x(playheadTime)
-        if px >= -2 && px <= w + 2 {
-            Palette.amber.setFill()
-            CGRect(x: px - 0.75, y: 0, width: 1.5, height: bounds.height).fill()
-            let tri = NSBezierPath()
-            tri.move(to: CGPoint(x: px - 6, y: 0))
-            tri.line(to: CGPoint(x: px + 6, y: 0))
-            tri.line(to: CGPoint(x: px, y: 8))
-            tri.close()
-            tri.fill()
+        if !strip {
+            let px = x(playheadTime)
+            if px >= -2 && px <= w + 2 { Self.drawPlayheadMark(at: px, height: area.height) }
         }
 
-        if model.audio.waveform == nil {
-            let msg = model.audio.isLoading ? "READING AUDIO…" : (model.hasMedia ? "NO AUDIO" : "NO VIDEO LOADED")
-            drawText(msg, at: CGPoint(x: 12, y: wave.minY + 8), font: labelFont(10), color: Palette.textFaint)
+        if let notice = audioNotice(model) {
+            drawText(notice, at: CGPoint(x: 12, y: wave.minY + 8), font: labelFont(10), color: Palette.textFaint)
         }
+    }
+
+    /// The playhead: an amber line down the pane, with a small triangle at the top.
+    private static func drawPlayheadMark(at px: CGFloat, height: CGFloat) {
+        Palette.amber.setFill()
+        CGRect(x: px - 0.75, y: 0, width: 1.5, height: height).fill()
+        let tri = NSBezierPath()
+        tri.move(to: CGPoint(x: px - 6, y: 0))
+        tri.line(to: CGPoint(x: px + 6, y: 0))
+        tri.line(to: CGPoint(x: px, y: 8))
+        tri.close()
+        tri.fill()
+    }
+
+    /// Why there's no waveform, when there isn't one.
+    private func audioNotice(_ model: AppModel) -> String? {
+        guard model.audio.waveform == nil else { return nil }
+        return model.audio.isLoading ? "READING AUDIO…" : (model.hasMedia ? "NO AUDIO" : "NO VIDEO LOADED")
     }
 
     private func drawRuler(_ ctx: CGContext, width: CGFloat) {
@@ -478,7 +873,9 @@ final class WaveformNSView: NSView {
         let steps: [Double] = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
         let step = steps.first(where: { $0 * pps >= 80 }) ?? 600
         let minor = step / 5
-        var tick = (viewStart / minor).rounded(.down) * minor
+        // From a step before the left edge: a label that starts just off it still shows its
+        // end (the strip's tiles meet there).
+        var tick = max(0, ((viewStart - step) / minor).rounded(.down) * minor)
         let end = viewStart + visibleDuration
         while tick <= end {
             let px = x(tick)
@@ -818,25 +1215,44 @@ final class WaveformNSView: NSView {
         }
     }
 
-    /// Slim lanes for the other open languages: boxes and numbers, no text, never highlighted.
-    private func drawLanes(model: AppModel, top: CGFloat) {
-        laneBoxes.removeAll(keepingCapacity: true)
+    /// Where the slim lanes of the other open languages are, and their codes.
+    private func layoutLanes(top: CGFloat) {
         laneRects.removeAll(keepingCapacity: true)
         laneTags.removeAll(keepingCapacity: true)
+        laneCodes.removeAll(keepingCapacity: true)
         let tracks = laneTracks
         guard !tracks.isEmpty else { return }
         let laneH = lanesHeight / CGFloat(tracks.count)
+        let focusedID = model?.video?.focusedTrackID
+        for (i, track) in tracks.enumerated() {
+            let lane = CGRect(x: 0, y: top + CGFloat(i) * laneH, width: area.width, height: laneH)
+            laneRects.append((track.id, lane))
+            // Language code tag at the left edge.
+            let tw = (codeText(track) as NSString).size(withAttributes: [.font: labelFont(9)]).width + 10
+            let tagRect = CGRect(x: 10, y: lane.minY + (laneH - 13) / 2, width: tw, height: 13)
+            laneTags.append((track.id, tagRect.insetBy(dx: -3, dy: -3)))
+            laneCodes.append((track, tagRect, track.id == focusedID))
+        }
+    }
+
+    /// Slim lanes for the other open languages: boxes and numbers, no text, never highlighted.
+    /// (Their codes are drawn on top, with the bands' codes: see drawOverlay.)
+    private func drawLanes(model: AppModel, top: CGFloat) {
+        laneBoxes.removeAll(keepingCapacity: true)
+        layoutLanes(top: top)
+        let tracks = laneTracks
+        guard !tracks.isEmpty, tracks.count == laneRects.count else { return }
         let viewEnd = viewStart + visibleDuration
         let focusedID = model.video?.focusedTrackID
         for (i, track) in tracks.enumerated() {
             // The language you work in, closed: its code is amber and its selected title shows.
             let focused = track.id == focusedID
-            let lane = CGRect(x: 0, y: top + CGFloat(i) * laneH, width: bounds.width, height: laneH)
-            laneRects.append((track.id, lane))
+            let lane = laneRects[i].rect
+            let laneH = lane.height
             Palette.background.withAlphaComponent(0.6).setFill()
             lane.fill()
             Palette.rule.setFill()
-            CGRect(x: 0, y: lane.minY, width: bounds.width, height: 1).fill()
+            CGRect(x: 0, y: lane.minY, width: lane.width, height: 1).fill()
             let preset = model.preset(for: track)
             for s in track.doc.subtitles where s.end >= viewStart && s.start <= viewEnd {
                 let r = CGRect(x: x(s.start), y: lane.minY + 2, width: max(2, x(s.end) - x(s.start)), height: max(4, laneH - 4))
@@ -858,11 +1274,6 @@ final class WaveformNSView: NSView {
                              font: labelFont(9), color: Palette.text.withAlphaComponent(0.7))
                 }
             }
-            // Language code tag at the left edge.
-            let tw = (codeText(track) as NSString).size(withAttributes: [.font: labelFont(9)]).width + 10
-            let tagRect = CGRect(x: 10, y: lane.minY + (laneH - 13) / 2, width: tw, height: 13)
-            laneTags.append((track.id, tagRect.insetBy(dx: -3, dy: -3)))
-            drawCode(track, in: tagRect, focused: focused)
         }
     }
 
@@ -928,6 +1339,7 @@ final class WaveformNSView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if let m = flagsMonitor { NSEvent.removeMonitor(m); flagsMonitor = nil }
+        if window == nil { leaveStrip(now: false) }
         updateFrameLink()
         guard window != nil else { return }
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] e in
@@ -955,6 +1367,9 @@ final class WaveformNSView: NSView {
         if languageCode(at: p) != nil { NSCursor.openHand.set(); return }
         if p.y < rulerHeight || laneRects.contains(where: { $0.rect.contains(p) }) { NSCursor.pointingHand.set(); return }
         if model?.focusedIsLocked == true { NSCursor.arrow.set(); return }
+        // Playing on the strip: the boxes are where the strip shows them, not where they
+        // were last drawn here (a click finds them again: see mouseDown).
+        if stripOn { NSCursor.crosshair.set(); return }
         let split = Self.isSplitClick(flags)
         switch hit(p) {
         case .edge: (split ? NSCursor.split : NSCursor.resizeLeftRight).set()
@@ -967,6 +1382,9 @@ final class WaveformNSView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         guard let model else { return }
+        // Clicked while playing: the view draws itself again, so what's under the pointer
+        // is exactly what's drawn (the strip comes back once the hand is off).
+        takeBack()
         window?.makeFirstResponder(self)
         let p = convert(event.locationInWindow, from: nil)
         downPoint = p
@@ -1213,6 +1631,7 @@ final class WaveformNSView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         guard let model else { return }
+        stripHold = max(stripHold, CACurrentMediaTime() + 0.3)
         defer {
             drag = .none
             resistance = nil
@@ -1315,6 +1734,7 @@ final class WaveformNSView: NSView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         guard let model else { return nil }
+        takeBack(for: 1)
         let p = convert(event.locationInWindow, from: nil)
         if let b = band(at: p), !b.focused { model.focusTrack(b.track.id, edit: false) }
         let id: UUID
@@ -1372,6 +1792,7 @@ final class WaveformNSView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         guard let model else { return }
+        takeBack()
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
         // ⌘ + scroll: zoom around the pointer.
@@ -1420,6 +1841,7 @@ final class WaveformNSView: NSView {
     }
 
     override func magnify(with event: NSEvent) {
+        takeBack()
         zoom(by: 1 + Double(event.magnification), around: convert(event.locationInWindow, from: nil).x)
     }
 

@@ -82,6 +82,15 @@ struct SettingsView: View {
                 Toggle("Replay title after drag-resize", isOn: $model.replayAfterResize)
                 Toggle("Replay title after dragging it to a new time", isOn: $model.replayAfterMove)
             }
+
+            Section {
+                Toggle("Title cards flow with the film while playing", isOn: $model.cardsFlow)
+                Text(model.cardsFlow
+                     ? "The cards move on every frame, and each title's card reaches the middle just as it starts."
+                     : "The cards glide to each title as it starts.")
+                    .font(Theme.label(11, .regular))
+                    .foregroundStyle(Theme.textDim)
+            }
         }
         .formStyle(.grouped)
         .frame(width: 560)

@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 @testable import TitlesCore
 
 /// Everything the editor needs from a video engine. Build 1 uses AVFoundation;
@@ -31,4 +32,12 @@ protocol PlaybackEngine: AnyObject {
 
     /// The view that renders the picture.
     func makeVideoView() -> NSView
+
+    /// The item the picture is playing, for drawing that moves in step with it (the
+    /// waveform's strip, see WaveStripView). Nil when there's none.
+    var syncItem: AVPlayerItem? { get }
+}
+
+extension PlaybackEngine {
+    var syncItem: AVPlayerItem? { nil }
 }

@@ -58,6 +58,8 @@ final class AVFoundationEngine: NSObject, PlaybackEngine {
 
     var isPlaying: Bool { player.rate != 0 }
 
+    var syncItem: AVPlayerItem? { player.currentItem }
+
     func load(url: URL) async throws {
         pause()
         let asset = AVURLAsset(url: url)

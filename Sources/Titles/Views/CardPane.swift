@@ -14,6 +14,8 @@ struct CardPane: View {
     /// scrolling redraws only the bars.
     @State private var scroll = CardScrollTracker()
     private static let rowsSpace = "cardRows"
+    /// The list's own points, from its top (rows don't move in it as it scrolls).
+    private static let listSpace = "cardList"
     /// The language bars above the cards (26 points and their padding).
     private static let headerRowHeight: CGFloat = 38
 
@@ -148,6 +150,11 @@ struct CardPane: View {
                                     .frame(width: width)
                             }
                         }
+                        // Where the row is, for the cards' flow with the film (see CardFlow).
+                        .background(GeometryReader { g in
+                            Color.clear.preference(key: CardRowFramesKey.self,
+                                                   value: [row.key: g.frame(in: .named(Self.listSpace))])
+                        })
                         .id(row.key)
                     }
                     if model.rows.isEmpty { EmptyCards(hasMedia: model.hasMedia, locked: model.focusedIsLocked) }
@@ -155,13 +162,14 @@ struct CardPane: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
                 .padding(.top, 2)
+                .coordinateSpace(.named(Self.listSpace))
                 .background(GeometryReader { g in
                     Color.clear.preference(key: CardRowsScrollKey.self,
                                            value: CardScrollMetrics(offset: -g.frame(in: .named(Self.rowsSpace)).minY,
                                                                     content: g.size.height))
                 })
                 // Watches the scroll view itself, for the scroll bar (see RowsScrollObserver).
-                .background(RowsScrollObserver(tracker: scroll))
+                .background(RowsScrollObserver(tracker: scroll, model: model))
             }
             .coordinateSpace(.named(Self.rowsSpace))
             .background(GeometryReader { g in
@@ -173,15 +181,20 @@ struct CardPane: View {
             .onPreferenceChange(CardRowsViewportKey.self) { h in
                 MainActor.assumeIsolated { scroll.setRowsFromLayout(viewport: h) }
             }
+            .onPreferenceChange(CardRowFramesKey.self) { frames in
+                MainActor.assumeIsolated { scroll.rowFrames = frames }
+            }
             // A click or drag on the scroll bar.
             .onReceive(scroll.rowRequests) { request in
                 proxy.scrollTo(request.id, anchor: request.anchor)
             }
             .onChange(of: doc.selectedID) { _, id in
                 guard let id, let key = model.rowKey(ofSub: id) else { return }
-                // Following the playhead: a slow, eased glide, so the list flows with the film
-                // instead of jumping at each title. Picked by hand (click, Tab): straight there.
+                // Following the playhead: the cards flow with the film, frame by frame (see
+                // CardFlow), or (that turned off, or the title not laid out yet) a slow, eased
+                // glide. Picked by hand (click, Tab): straight there.
                 let follow = model.clock.isPlaying
+                if follow, scroll.flowTakesOver(glide: model.glideDuration(to: id)) { return }
                 withAnimation(follow ? .easeInOut(duration: model.glideDuration(to: id)) : .easeOut(duration: 0.15)) {
                     proxy.scrollTo(key, anchor: .center)
                 }
