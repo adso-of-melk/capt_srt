@@ -100,11 +100,14 @@ struct CardColumnsScrollKey: PreferenceKey {
 
 /// How the bars look: a thin dim line at rest, wider and brighter under the pointer or while
 /// dragged, lit while the pane scrolls.
+/// At rest the track is a hairline and the thumb a thicker, brighter capsule on it, so the
+/// thumb stands out even when it's long (most of the languages in view).
 private enum BarLook {
-    static func thickness(active: Bool) -> CGFloat { active ? 8 : 3 }
-    static func track(active: Bool) -> Color { Theme.rule.opacity(active ? 0.8 : 0.45) }
+    static func thickness(active: Bool) -> CGFloat { active ? 8 : 4 }
+    static func trackThickness(active: Bool) -> CGFloat { active ? 8 : 1 }
+    static func track(active: Bool) -> Color { active ? Theme.rule.opacity(0.9) : Theme.periwinkle.opacity(0.18) }
     static func thumb(active: Bool, lit: Bool) -> Color {
-        Theme.periwinkle.opacity(active ? 0.8 : (lit ? 0.6 : 0.3))
+        Theme.periwinkle.opacity(active ? 0.85 : (lit ? 0.7 : 0.45))
     }
 }
 
@@ -131,7 +134,9 @@ struct CardScrollBarV: View {
             let thumbY = (h - thumbH) * m.position
             Canvas { ctx, size in
                 let x = size.width - right - bar
-                ctx.fill(Path(roundedRect: CGRect(x: x, y: 0, width: bar, height: size.height), cornerRadius: bar / 2),
+                let line = BarLook.trackThickness(active: active)
+                ctx.fill(Path(roundedRect: CGRect(x: x + (bar - line) / 2, y: 0, width: line, height: size.height),
+                              cornerRadius: line / 2),
                          with: .color(BarLook.track(active: active)))
                 if m.overflows {
                     ctx.fill(Path(roundedRect: CGRect(x: x, y: thumbY, width: bar, height: thumbH), cornerRadius: bar / 2),
@@ -179,6 +184,10 @@ struct CardScrollBarH: View {
     @ObservedObject var tracker: CardScrollTracker
     /// The open languages, in order.
     let columnIDs: [UUID]
+    /// How wide all the columns are together, and how much of that the pane shows (from the
+    /// pane's layout; only how far it's scrolled comes from the scroll view).
+    let content: CGFloat
+    let viewport: CGFloat
     /// Scrolls the pane to a language's column.
     let scrollTo: (UUID, UnitPoint) -> Void
     @State private var hover = false
@@ -188,7 +197,7 @@ struct CardScrollBarH: View {
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
-            let m = tracker.columns
+            let m = CardScrollMetrics(offset: tracker.columns.offset, content: content, viewport: viewport)
             let active = hover || dragging
             let bar = BarLook.thickness(active: active)
             let bottom: CGFloat = 2
@@ -196,7 +205,9 @@ struct CardScrollBarH: View {
             let thumbX = (w - thumbW) * m.position
             Canvas { ctx, size in
                 let y = size.height - bottom - bar
-                ctx.fill(Path(roundedRect: CGRect(x: 0, y: y, width: size.width, height: bar), cornerRadius: bar / 2),
+                let line = BarLook.trackThickness(active: active)
+                ctx.fill(Path(roundedRect: CGRect(x: 0, y: y + (bar - line) / 2, width: size.width, height: line),
+                              cornerRadius: line / 2),
                          with: .color(BarLook.track(active: active)))
                 ctx.fill(Path(roundedRect: CGRect(x: thumbX, y: y, width: thumbW, height: bar), cornerRadius: bar / 2),
                          with: .color(BarLook.thumb(active: active, lit: tracker.lit)))
@@ -223,10 +234,11 @@ struct CardScrollBarH: View {
     }
 
     private func scroll(toX x: CGFloat, width w: CGFloat, thumbWidth: CGFloat) {
-        guard !columnIDs.isEmpty, tracker.columns.overflows else { return }
+        let m = CardScrollMetrics(offset: tracker.columns.offset, content: content, viewport: viewport)
+        guard !columnIDs.isEmpty, m.overflows else { return }
         let fraction = (x - thumbWidth / 2) / max(1, w - thumbWidth)
         guard let target = CardScrollTracker.rowTarget(fraction: fraction, count: columnIDs.count,
-                                                       share: tracker.columns.share) else { return }
+                                                       share: m.share) else { return }
         let id = columnIDs[target.index]
         guard id != lastRequest else { return }
         lastRequest = id

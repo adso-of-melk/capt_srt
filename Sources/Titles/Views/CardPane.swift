@@ -82,7 +82,8 @@ struct CardPane: View {
                     }
                     .overlay(alignment: .bottom) {
                         if overflows {
-                            CardScrollBarH(tracker: scroll, columnIDs: tracks.map(\.id)) { id, anchor in
+                            CardScrollBarH(tracker: scroll, columnIDs: tracks.map(\.id),
+                                           content: total, viewport: viewport) { id, anchor in
                                 withAnimation(.easeOut(duration: 0.12)) { hProxy.scrollTo(id, anchor: anchor) }
                             }
                             .padding(.trailing, CardScrollBarV.width)
