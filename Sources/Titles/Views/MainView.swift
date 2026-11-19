@@ -85,6 +85,7 @@ struct MainView: View {
                                 WaveformPane(model: model, doc: doc, clock: model.clock, audio: model.audio)
                             }
                             .frame(height: waveHeight)
+                            .clipped()
                         }
                         .frame(minWidth: AppModel.pictureMinWidth, maxWidth: .infinity)
                     }

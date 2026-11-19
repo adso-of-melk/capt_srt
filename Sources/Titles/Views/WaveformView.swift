@@ -128,6 +128,10 @@ final class WaveformNSView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = Palette.lane.cgColor
+        // Boxes scrolled past the edge are cut off there, not drawn over the title pane.
+        // (Views don't clip on macOS 14 and later unless asked; the split view used to.)
+        clipsToBounds = true
+        layer?.masksToBounds = true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }

@@ -612,7 +612,7 @@ final class InputController {
     /// Sideways scrolling over the title pane goes a whole language at a time (see
     /// ColumnStepper). True when the event is taken.
     private func sidewaysOverCards(_ e: NSEvent, model: AppModel) -> Bool {
-        guard model.pointerOverCards else { return false }
+        guard model.cardPaneFrame.contains(e.locationInWindow) else { return false }
         let phase: ColumnStepper.Phase
         if !e.momentumPhase.isEmpty {
             phase = .momentum

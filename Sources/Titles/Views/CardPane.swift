@@ -12,7 +12,6 @@ struct CardPane: View {
     /// Where the pane is scrolled to, for its own scroll bars. Held, not observed, so
     /// scrolling redraws only the bars.
     @State private var scroll = CardScrollTracker()
-    private static let columnsSpace = "cardColumns"
     private static let rowsSpace = "cardRows"
     /// The language bars above the cards (26 points and their padding).
     private static let headerRowHeight: CGFloat = 38
@@ -70,35 +69,39 @@ struct CardPane: View {
                             rowsList(tracks: tracks, width: width, gap: gap)
                         }
                         .frame(width: max(total, geo.size.width), height: geo.size.height, alignment: .top)
-                        .background(GeometryReader { g in
-                            Color.clear.preference(key: CardColumnsScrollKey.self,
-                                                   value: CardScrollMetrics(offset: -g.frame(in: .named(Self.columnsSpace)).minX,
-                                                                            content: g.size.width, viewport: viewport))
-                        })
-                    }
-                    .coordinateSpace(.named(Self.columnsSpace))
-                    .onPreferenceChange(CardColumnsScrollKey.self) { m in
-                        MainActor.assumeIsolated { scroll.setColumns(m) }
                     }
                     // Another language focused (⌘L, a click): bring its column into view,
                     // still with a whole column at the left edge.
                     .onChange(of: model.video?.focusedTrackID) { _, id in
                         guard overflows, let id, let index = tracks.firstIndex(where: { $0.id == id }) else { return }
-                        let current = ColumnStops.current(offset: scroll.columns.offset, width: width, gap: gap)
-                        let stop = ColumnStops.revealing(index, from: current,
+                        let stop = ColumnStops.revealing(index, from: scroll.columnStop,
                                                          fit: ColumnStops.fitting(width: width, gap: gap, viewport: viewport),
                                                          last: lastStop)
-                        guard stop != current else { return }
-                        withAnimation(.easeOut(duration: 0.15)) { hProxy.scrollTo(ColumnStopID(index: stop), anchor: .leading) }
+                        guard stop != scroll.columnStop else { return }
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            scroll.setColumnStop(stop)
+                            hProxy.scrollTo(ColumnStopID(index: stop), anchor: .leading)
+                        }
                     }
                     // Sideways scrolling over the pane (wheel, trackpad): a whole column at a time.
                     .onReceive(model.columnSteps) { move in
                         guard overflows else { return }
-                        let current = ColumnStops.current(offset: scroll.columns.offset, width: width, gap: gap)
-                        guard let stop = scroll.columnStop(move: move, current: current, last: lastStop) else { return }
                         withAnimation(.easeInOut(duration: 0.28)) {
+                            guard let stop = scroll.stepColumns(move: move, last: lastStop) else { return }
                             hProxy.scrollTo(ColumnStopID(index: stop), anchor: .leading)
                         }
+                    }
+                    // Wider or narrower columns, or fewer of them: the same language stays at
+                    // the left edge (as far as the last one allows), exactly lined up.
+                    .onChange(of: width) { _, _ in
+                        let stop = overflows ? min(scroll.columnStop, lastStop) : 0
+                        scroll.setColumnStop(stop, light: false)
+                        hProxy.scrollTo(ColumnStopID(index: stop), anchor: .leading)
+                    }
+                    .onChange(of: lastStop) { _, _ in
+                        let stop = overflows ? min(scroll.columnStop, lastStop) : 0
+                        scroll.setColumnStop(stop, light: false)
+                        hProxy.scrollTo(ColumnStopID(index: stop), anchor: .leading)
                     }
                     // Our own scroll bars, on the pane's edges whichever way it's scrolled.
                     .overlay(alignment: .topTrailing) {
@@ -109,8 +112,9 @@ struct CardPane: View {
                     .overlay(alignment: .bottom) {
                         if overflows {
                             CardScrollBarH(tracker: scroll, lastStop: lastStop,
-                                           content: total, viewport: viewport) { stop in
-                                withAnimation(.easeOut(duration: 0.12)) {
+                                           share: min(1, viewport / max(1, total))) { stop in
+                                withAnimation(.easeOut(duration: 0.15)) {
+                                    scroll.setColumnStop(stop)
                                     hProxy.scrollTo(ColumnStopID(index: stop), anchor: .leading)
                                 }
                             }
@@ -120,8 +124,7 @@ struct CardPane: View {
                 }
             }
             // For sideways scrolling a column at a time (see InputController).
-            .onHover { model.pointerOverCards = $0 }
-            .onDisappear { model.pointerOverCards = false }
+            .background(WindowFrameReporter { model.cardPaneFrame = $0 })
         }
         .background(model.qcMode ? Theme.alertPanel : Theme.panel)
     }
@@ -157,16 +160,18 @@ struct CardPane: View {
                                            value: CardScrollMetrics(offset: -g.frame(in: .named(Self.rowsSpace)).minY,
                                                                     content: g.size.height))
                 })
+                // Watches the scroll view itself, for the scroll bar (see RowsScrollObserver).
+                .background(RowsScrollObserver(tracker: scroll))
             }
             .coordinateSpace(.named(Self.rowsSpace))
             .background(GeometryReader { g in
                 Color.clear.preference(key: CardRowsViewportKey.self, value: g.size.height)
             })
             .onPreferenceChange(CardRowsScrollKey.self) { m in
-                MainActor.assumeIsolated { scroll.setRows(offset: m.offset, content: m.content) }
+                MainActor.assumeIsolated { scroll.setRowsFromLayout(offset: m.offset, content: m.content) }
             }
             .onPreferenceChange(CardRowsViewportKey.self) { h in
-                MainActor.assumeIsolated { scroll.setRows(viewport: h) }
+                MainActor.assumeIsolated { scroll.setRowsFromLayout(viewport: h) }
             }
             // A click or drag on the scroll bar.
             .onReceive(scroll.rowRequests) { request in

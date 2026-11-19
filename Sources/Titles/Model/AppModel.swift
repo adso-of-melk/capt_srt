@@ -534,8 +534,9 @@ final class AppModel: ObservableObject {
     /// Sideways scrolling over the title pane: columns to move (+ on to the later languages,
     /// - back). See ColumnStepper.
     let columnSteps = PassthroughSubject<Int, Never>()
-    /// The pointer is over the title pane (not published: nothing redraws for it).
-    var pointerOverCards = false
+    /// Where the title pane is in the window (AppKit window points), so the scroll wheel knows
+    /// when it's over it. Not published: nothing redraws for it.
+    var cardPaneFrame: NSRect = .zero
 
     /// While playing, the cards glide to each title the playhead reaches instead of jumping:
     /// for about half the time until the next title starts (0.3 to 0.9 s), so the list keeps

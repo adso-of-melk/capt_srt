@@ -66,26 +66,39 @@ final class PaneScrollingTests: XCTestCase {
         XCTAssertEqual(ColumnStops.fitting(width: 240, gap: 8, viewport: 512), 2)
         XCTAssertEqual(ColumnStops.last(count: 5, width: 240, gap: 8, viewport: 512), 3)
         XCTAssertEqual(ColumnStops.last(count: 2, width: 240, gap: 8, viewport: 512), 0)
-        XCTAssertEqual(ColumnStops.current(offset: 496, width: 240, gap: 8), 2)
-        XCTAssertEqual(ColumnStops.current(offset: 130, width: 240, gap: 8), 1)
-        XCTAssertEqual(ColumnStops.current(offset: -20, width: 240, gap: 8), 0)
         // Focusing a language out of view brings it in, moving as little as it can.
         XCTAssertEqual(ColumnStops.revealing(4, from: 0, fit: 2, last: 3), 3)
         XCTAssertEqual(ColumnStops.revealing(1, from: 3, fit: 2, last: 3), 1)
         XCTAssertEqual(ColumnStops.revealing(2, from: 1, fit: 2, last: 3), 1, "already in view")
     }
 
-    func testQuickStepsCountOnFromTheLastOneAskedFor() {
+    /// The pane remembers which language is at its left edge, so each step goes on from there,
+    /// whichever way and however fast the wheel turns.
+    func testEachStepGoesOnFromTheLanguageAtTheLeftEdge() {
         let tracker = CardScrollTracker()
-        let t = Date()
-        XCTAssertEqual(tracker.columnStop(move: 1, current: 0, last: 3, now: t), 1)
-        // The pane is still on its way there: the next notch goes one further, not to 1 again.
-        XCTAssertEqual(tracker.columnStop(move: 1, current: 0, last: 3, now: t.addingTimeInterval(0.1)), 2)
-        XCTAssertEqual(tracker.columnStop(move: 5, current: 1, last: 3, now: t.addingTimeInterval(0.2)), 3, "never past the last")
-        XCTAssertNil(tracker.columnStop(move: 1, current: 3, last: 3, now: t.addingTimeInterval(0.3)), "already there")
-        // Later, it counts from where the pane is.
-        XCTAssertEqual(tracker.columnStop(move: -1, current: 3, last: 3, now: t.addingTimeInterval(2)), 2)
-        XCTAssertEqual(tracker.columnStop(move: -9, current: 2, last: 3, now: t.addingTimeInterval(4)), 0)
+        XCTAssertEqual(tracker.columnStop, 0)
+        XCTAssertNil(tracker.stepColumns(move: -1, last: 3), "already at the first")
+        XCTAssertEqual(tracker.stepColumns(move: 1, last: 3), 1)
+        XCTAssertEqual(tracker.stepColumns(move: 1, last: 3), 2)
+        XCTAssertEqual(tracker.stepColumns(move: -1, last: 3), 1, "back is back")
+        XCTAssertEqual(tracker.stepColumns(move: 5, last: 3), 3, "never past the last")
+        XCTAssertNil(tracker.stepColumns(move: 1, last: 3))
+        XCTAssertEqual(tracker.columnStop, 3)
+        XCTAssertEqual(tracker.stepColumns(move: -9, last: 3), 0)
+        // The bar and ⌘L set it directly.
+        tracker.setColumnStop(2)
+        XCTAssertEqual(tracker.stepColumns(move: -1, last: 3), 1)
+    }
+
+    func testTheBarsThumbStaysWhereItWasGrabbed() {
+        // A 300-point bar with a 60-point thumb at 90: grabbed 20 points into it, it's held there.
+        XCTAssertEqual(PaneScrollBar.grabPoint(at: 110, thumbStart: 90, thumb: 60), 20)
+        // Clicked on the track instead: the thumb's middle jumps to the pointer.
+        XCTAssertEqual(PaneScrollBar.grabPoint(at: 250, thumbStart: 90, thumb: 60), 30)
+        // Dragged on to 140 with 240 points of travel: its start at 120, half way.
+        XCTAssertEqual(PaneScrollBar.fraction(pointer: 140, grab: 20, travel: 240), 0.5, accuracy: 0.001)
+        XCTAssertEqual(PaneScrollBar.fraction(pointer: 5, grab: 20, travel: 240), 0)
+        XCTAssertEqual(PaneScrollBar.fraction(pointer: 900, grab: 20, travel: 240), 1)
     }
 
     func testDraggingTheSidewaysBarGoesToWholeColumns() {
