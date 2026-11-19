@@ -1287,6 +1287,8 @@ extension AppModel {
         let data: Data
         /// Characters the language's code page couldn't hold (written as "?").
         var lost = 0
+        /// Titles whose broken formatting tags were repaired in the file.
+        var repaired = 0
     }
 
     func exportItems(allLanguages: Bool, allVideos: Bool, format: ExportFormat) -> [ExportItem] {
@@ -1312,7 +1314,8 @@ extension AppModel {
                     name = "\(base)-\(n).\(format.rawValue)"
                     n += 1
                 }
-                items.append(ExportItem(name: name, data: out.data, lost: out.lost))
+                items.append(ExportItem(name: name, data: out.data, lost: out.lost,
+                                        repaired: TextChecks.brokenTagCount(t.doc.subtitles)))
             }
         }
         return items
@@ -1330,7 +1333,7 @@ extension AppModel {
             panel.nameFieldStringValue = items[0].name
             panel.roomy()
             guard panel.runModal() == .OK, let url = panel.url else { return }
-            write(items[0].data, to: url)
+            if write(items[0].data, to: url) { noteRepairs(items, done: "Exported \(url.lastPathComponent)") }
             warnAboutLostCharacters(items)
             return
         }
@@ -1354,7 +1357,15 @@ extension AppModel {
         var written = 0
         for item in items where write(item.data, to: folder.appendingPathComponent(item.name), quiet: true) { written += 1 }
         flash("Exported \(written) file\(written == 1 ? "" : "s") to \(folder.lastPathComponent)")
+        noteRepairs(items, done: "Exported \(written) file\(written == 1 ? "" : "s") to \(folder.lastPathComponent)")
         warnAboutLostCharacters(items)
+    }
+
+    /// Broken formatting tags are repaired in the files written: say how many titles had them.
+    private func noteRepairs(_ items: [ExportItem], done: String) {
+        let n = items.reduce(0) { $0 + $1.repaired }
+        guard n > 0 else { return }
+        flash("\(done). Broken formatting tags repaired in \(n) title\(n == 1 ? "" : "s") in the file\(items.count == 1 ? "" : "s") (the TAGS issue shows them here).")
     }
 
     /// A code page can't hold every character: say so, rather than leave "?" to be found later.

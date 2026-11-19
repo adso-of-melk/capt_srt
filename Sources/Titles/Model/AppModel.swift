@@ -537,6 +537,12 @@ final class AppModel: ObservableObject {
     /// Where the title pane is in the window (AppKit window points), so the scroll wheel knows
     /// when it's over it. Not published: nothing redraws for it.
     var cardPaneFrame: NSRect = .zero
+    /// Words being dragged out of a card (see AppModel+TextDrag). Not published.
+    var textDrag: TextDrag?
+    /// The title pane's scroll bar is being dragged: cards are drawn light until it's let go.
+    @Published var fastScrolling = false
+    /// QC's findings per title, kept while nothing they depend on changes (see qcIssues).
+    var qcIssueMemo: [QCIssueKey: Set<QCIssue>] = [:]
 
     /// While playing, the cards glide to each title the playhead reaches instead of jumping:
     /// for about half the time until the next title starts (0.3 to 0.9 s), so the list keeps

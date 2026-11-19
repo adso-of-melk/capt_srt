@@ -275,6 +275,8 @@ struct PaneScrollBar: View {
     let share: CGFloat
     let lit: Bool
     var minThumb: CGFloat = 30
+    /// Told when a drag starts (true) and ends (false).
+    var dragging: (Bool) -> Void = { _ in }
     /// Asked for while dragging: where the thumb's start is, 0 to 1 of its travel.
     let scroll: (CGFloat) -> Void
     @State private var hover = false
@@ -314,12 +316,14 @@ struct PaneScrollBar: View {
                         if grab == nil {
                             let s = vertical ? v.startLocation.y : v.startLocation.x
                             grab = Self.grabPoint(at: s, thumbStart: start, thumb: thumb)
+                            dragging(true)
                         }
                         let f = Self.fraction(pointer: p, grab: grab ?? 0, travel: travel)
                         dragged = f
                         scroll(f)
                     }
                     .onEnded { _ in
+                        if grab != nil { dragging(false) }
                         grab = nil
                         withAnimation(.easeOut(duration: 0.2)) { dragged = nil }
                     }
@@ -349,12 +353,14 @@ struct CardScrollBarV: View {
 
     @ObservedObject var tracker: CardScrollTracker
     let rows: [CardRow]
+    /// The thumb is held (true) or let go (false).
+    var dragging: (Bool) -> Void = { _ in }
     @State private var lastRequest: UUID?
 
     var body: some View {
         let m = tracker.rows
         PaneScrollBar(vertical: true, position: m.position, share: m.overflows ? m.share : 1,
-                      lit: tracker.lit, minThumb: 30) { f in
+                      lit: tracker.lit, minThumb: 30, dragging: dragging) { f in
             if tracker.scrollRows(toFraction: f) { return }
             // The scroll view wasn't found: go by rows instead.
             guard let target = CardScrollTracker.rowTarget(fraction: f, count: rows.count, share: m.share) else { return }

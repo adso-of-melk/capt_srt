@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 @testable import TitlesCore
 
 /// Left pane: one column of cards per open language, side by side. Linked titles share a
@@ -105,7 +106,7 @@ struct CardPane: View {
                     }
                     // Our own scroll bars, on the pane's edges whichever way it's scrolled.
                     .overlay(alignment: .topTrailing) {
-                        CardScrollBarV(tracker: scroll, rows: model.rows)
+                        CardScrollBarV(tracker: scroll, rows: model.rows) { model.fastScrolling = $0 }
                             .padding(.top, Self.headerRowHeight)
                             .padding(.bottom, overflows ? CardScrollBarH.height : 0)
                     }
@@ -200,6 +201,7 @@ struct CardPane: View {
     private func cell(row: CardRow, number: Int, track: Track, width: CGFloat, isFocusedColumn: Bool,
                       inSelectedRow: Bool, overlaps: Set<UUID>) -> some View {
         if let sub = row.cells[track.id] {
+            let fast = model.fastScrolling && !(isFocusedColumn && doc.selectedID == sub.id)
             CardView(
                 model: model,
                 track: track,
@@ -209,13 +211,16 @@ struct CardPane: View {
                 inGroup: isFocusedColumn && model.multiSelection.count > 1 && model.multiSelection.contains(sub.id),
                 inSelectedRow: inSelectedRow,
                 isOverlapping: isFocusedColumn && overlaps.contains(sub.id),
-                qcMarks: model.visibleQCMarks(of: sub, in: track, overlapping: overlaps),
+                // While the scroll bar is dragged, cards come in light (no issue tags or
+                // spelling marks) so the list keeps up; they fill in when it's let go.
+                qcMarks: fast ? nil : model.visibleQCMarks(of: sub, in: track, overlapping: overlaps),
                 qcMuted: !isFocusedColumn,
                 // QC mode's outline and dimming are for the language being checked.
                 qcLook: model.qcMode && isFocusedColumn,
                 preset: model.preset(for: track),
                 compact: model.openTracks.count > 1,
-                width: width
+                width: width,
+                light: fast
             )
         } else {
             EmptySlot(isSelected: isFocusedColumn && model.emptySlotRow == row.key && doc.selectedID == nil,
@@ -235,6 +240,41 @@ struct CardPane: View {
                 }
         }
     }
+}
+
+/// A card takes words dragged out of the card being typed in (see AppModel.dropText):
+/// they move there, or are copied with Option or into another language.
+private struct TextDropTarget: DropDelegate {
+    let model: AppModel
+    let track: Track
+    let id: UUID
+    @Binding var hovering: Bool
+
+    func validateDrop(info: DropInfo) -> Bool { model.acceptsTextDrop(on: id) }
+    func dropEntered(info: DropInfo) { hovering = model.acceptsTextDrop(on: id) }
+    func dropExited(info: DropInfo) { hovering = false }
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        // Always "copy" to the card the words came from: the move is done here, in one undo
+        // step, and the card mustn't take the words out a second time.
+        DropProposal(operation: .copy)
+    }
+    func performDrop(info: DropInfo) -> Bool {
+        hovering = false
+        return model.dropText(on: id, in: track, copy: NSEvent.modifierFlags.contains(.option))
+    }
+}
+
+/// Card texts as shown, already worked out (see CardView.decoratedText).
+@MainActor
+private enum DecoratedTexts {
+    struct Key: Hashable {
+        let text: String
+        let language: String
+        let spelling: Int
+        let found: [NSRange]
+        let current: Int?
+    }
+    static var known: [Key: AttributedString] = [:]
 }
 
 /// Text sizes the cards have already worked out (see CardView.fittingSize).
@@ -333,6 +373,8 @@ private struct LanguageHeader: View {
     var gap: CGFloat = 8
     /// Dragging the bar sideways reorders the columns.
     @State private var dragX: CGFloat = 0
+    /// How far the bar's own place has moved since the drag began (the columns swap as it goes).
+    @State private var slotShift: CGFloat = 0
 
     var body: some View {
         let isFocused = model.video?.focusedTrackID == track.id
@@ -378,24 +420,32 @@ private struct LanguageHeader: View {
         .modifier(StepBack(on: model.columnStepsBack(track.id)))
         .contentShape(Rectangle())
         .offset(x: dragX)
+        // The bar being dragged jumps to its new place as the columns swap (its offset makes
+        // up the difference, so it stays under the pointer); the rest slide.
+        .transaction { t in if model.draggingColumn == track.id { t.animation = nil } }
         .shadow(color: .black.opacity(dragX == 0 ? 0 : 0.5), radius: 6, y: 2)
         .onTapGesture { model.focusTrack(track.id, edit: false) }
         // Drag the bar left or right to move the column there (as Move Column Left / Right).
+        // Once it's half way over its neighbour, the two swap there and then (the cards slide
+        // across, and a Force Touch trackpad gives a tick), with the bar still under the pointer.
         .gesture(
             DragGesture(minimumDistance: 6, coordinateSpace: .global)
                 .onChanged { value in
                     model.draggingColumn = track.id
-                    dragX = value.translation.width
-                }
-                .onEnded { value in
                     let ids = model.video?.openTrackIDs ?? []
-                    let from = ids.firstIndex(of: track.id) ?? 0
-                    let to = AppModel.columnDropIndex(from: from, offset: value.translation.width,
-                                                      step: width + gap, count: ids.count)
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        model.moveColumn(track, to: to)
-                        dragX = 0
+                    guard let here = ids.firstIndex(of: track.id) else { return }
+                    let x = value.translation.width - slotShift
+                    let to = AppModel.columnDropIndex(from: here, offset: x, step: width + gap, count: ids.count)
+                    if to != here {
+                        withAnimation(.easeOut(duration: 0.18)) { model.moveColumn(track, to: to) }
+                        slotShift += CGFloat(to - here) * (width + gap)
+                        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
                     }
+                    dragX = value.translation.width - slotShift
+                }
+                .onEnded { _ in
+                    withAnimation(.easeOut(duration: 0.18)) { dragX = 0 }
+                    slotShift = 0
                     model.draggingColumn = nil
                 }
         )
@@ -617,11 +667,20 @@ struct CardView: View {
         }
     }
 
+    /// The card's text as shown, remembered until the text, the spelling dictionaries or
+    /// Find's highlights change (every card on screen asks each time it's drawn).
     private func decoratedText() -> AttributedString {
-        let misspelled = model.checksSpelling(track)
-            ? SpellService.shared.misspelled(in: Markup.plain(sub.text), language: track.language.code) : []
+        let spell = model.checksSpelling(track)
         let found = model.find.highlights(in: sub.id)
-        return Self.decorated(sub.text, misspelled: misspelled, matches: found.ranges, current: found.current)
+        let key = DecoratedTexts.Key(text: sub.text, language: spell ? track.language.code : "",
+                                     spelling: spell ? SpellService.shared.version : -1,
+                                     found: found.ranges, current: found.current)
+        if let known = DecoratedTexts.known[key] { return known }
+        let misspelled = spell ? SpellService.shared.misspelled(in: Markup.plain(sub.text), language: track.language.code) : []
+        let a = Self.decorated(sub.text, misspelled: misspelled, matches: found.ranges, current: found.current)
+        if DecoratedTexts.known.count > 3000 { DecoratedTexts.known.removeAll(keepingCapacity: true) }
+        DecoratedTexts.known[key] = a
+        return a
     }
 
     @ObservedObject var model: AppModel
@@ -644,6 +703,10 @@ struct CardView: View {
     let compact: Bool
     /// The card's width, so the text can shrink to keep the on-screen line breaks.
     let width: CGFloat
+    /// Drawn quickly (the scroll bar is being dragged): no spelling marks.
+    var light = false
+    /// Words dragged from another card are over this one.
+    @State private var textDropHover = false
 
     /// The title's text as it is now (the row can lag a moment behind typing). Made here, not
     /// handed in as a binding: a binding made of closures is never "the same" to SwiftUI, so
@@ -706,12 +769,15 @@ struct CardView: View {
                         onLearn: { model.learnWord($0, language: track.language.code) },
                         onProjectWord: { model.addProjectWord($0, language: track.language.code) },
                         onEmptiedItalic: { model.italicNext = sub.id },
-                        onCursor: { model.textCursor($0, in: sub.id) }
+                        onCursor: { model.textCursor($0, in: sub.id) },
+                        onDragText: { piece, rest in
+                            model.beginTextDrag(from: sub.id, track: track, piece: piece, rest: rest)
+                        }
                     )
                     // A fresh editor for each title, so nothing of the last one carries over.
                     .id(sub.id)
                 } else {
-                    Text(sub.text.isEmpty ? AttributedString(" ") : decoratedText())
+                    Text(sub.text.isEmpty ? AttributedString(" ") : (light ? Markup.attributed(sub.text) : decoratedText()))
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -771,6 +837,15 @@ struct CardView: View {
         }
         // QC mode: titles with nothing to fix step back.
         .opacity(qcLook && qcMarks?.isEmpty == true && !isSelected && !inGroup ? 0.45 : 1)
+        // Words dragged out of the card being typed in can be dropped here (AppModel.dropText).
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Theme.amber, style: StrokeStyle(lineWidth: 2, dash: [5, 3]))
+                .opacity(textDropHover ? 1 : 0)
+                .allowsHitTesting(false)
+        )
+        .onDrop(of: [UTType.utf8PlainText, UTType.plainText],
+                delegate: TextDropTarget(model: model, track: track, id: sub.id, hovering: $textDropHover))
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded {
             let flags = NSEvent.modifierFlags
@@ -860,7 +935,7 @@ private struct QCTagMenu: View {
                     model.applyQCFix(fix, to: sub.id)
                 }
                 // A language locked to the master keeps the master's timing.
-                .disabled(track.locked && fix != .rebreak)
+                .disabled(track.locked && fix.changesTiming)
             }
         } label: {
             QCTag(marks: marks, muted: muted)

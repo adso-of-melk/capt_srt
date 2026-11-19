@@ -224,11 +224,12 @@ enum SubtitleFormats {
     // MARK: Writing
 
     /// The titles as they go into a file: titles with no text are left out (an empty cue
-    /// breaks some players), and a blank line inside a title is closed up (it would end the
-    /// cue early).
+    /// breaks some players), a blank line inside a title is closed up (it would end the cue
+    /// early), and broken formatting tags are repaired (`TextChecks.repairedTags`).
     static func exportable(_ subs: [Subtitle]) -> [(Subtitle, String)] {
         subs.compactMap { s in
-            let lines = s.text.split(separator: "\n", omittingEmptySubsequences: true)
+            let text = TextChecks.repairedTags(TextChecks.withoutBlankLines(s.text))
+            let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
             guard !Markup.plain(lines.joined()).trimmingCharacters(in: .whitespaces).isEmpty else { return nil }

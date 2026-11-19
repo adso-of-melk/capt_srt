@@ -234,6 +234,9 @@ struct TitlesCommands: Commands {
                 Button("Widen Selected Gaps to the Minimum") { model.fixGaps(all: false, close: false) }
                 Button("Widen All Gaps to the Minimum") { model.fixGaps(all: true, close: false) }
                 Button("Close Short Gaps (Under ½ s) to the Minimum") { model.fixGaps(all: true, close: true) }
+                Divider()
+                Button("Repair Formatting Tags in All Titles") { model.fixTextInAll(.repairTags) }
+                Button("Remove Blank Lines in All Titles") { model.fixTextInAll(.removeBlankLines) }
             }
             .disabled(noProject)
         }

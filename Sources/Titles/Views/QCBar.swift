@@ -58,6 +58,9 @@ struct QCBar: View {
                 Button("Widen Selected Gaps to the Minimum") { model.fixGaps(all: false, close: false) }
                 Button("Widen All Gaps to the Minimum") { model.fixGaps(all: true, close: false) }
                 Button("Close Short Gaps (Under ½ s) to the Minimum") { model.fixGaps(all: true, close: true) }
+                Divider()
+                Button("Repair Formatting Tags in All Titles") { model.fixTextInAll(.repairTags) }
+                Button("Remove Blank Lines in All Titles") { model.fixTextInAll(.removeBlankLines) }
             } label: {
                 Text("FIX").font(Theme.label(11, .bold)).tracking(1.2)
             }

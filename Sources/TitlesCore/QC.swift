@@ -3,6 +3,7 @@ import Foundation
 /// What QC looks for in a title.
 enum QCIssue: String, CaseIterable, Identifiable, Codable, Sendable {
     case spelling, readingSpeed, nearReadingSpeed, lineLength, lineCount, duration, overlap, gap, empty
+    case blankLine, partItalic, tags
 
     var id: String { rawValue }
 
@@ -18,6 +19,9 @@ enum QCIssue: String, CaseIterable, Identifiable, Codable, Sendable {
         case .overlap: return "Overlap"
         case .gap: return "Gap"
         case .empty: return "Empty"
+        case .blankLine: return "Blank Line"
+        case .partItalic: return "Part Italic"
+        case .tags: return "Tags"
         }
     }
 
@@ -33,6 +37,9 @@ enum QCIssue: String, CaseIterable, Identifiable, Codable, Sendable {
         case .overlap: return "Overlaps"
         case .gap: return "Gaps Under the Minimum"
         case .empty: return "Empty Titles"
+        case .blankLine: return "Blank Lines"
+        case .partItalic: return "Words Partly in Italics"
+        case .tags: return "Broken Formatting Tags"
         }
     }
 
@@ -48,13 +55,16 @@ enum QCIssue: String, CaseIterable, Identifiable, Codable, Sendable {
         case .overlap: return "Overlaps another title"
         case .gap: return "Less than the minimum gap before the next title"
         case .empty: return "No text"
+        case .blankLine: return "A line with no text, or only spaces"
+        case .partItalic: return "A word with only some of its letters in italics"
+        case .tags: return "An italic, bold or underline tag left open, closed twice, crossed or empty (export repairs them in the file)"
         }
     }
 }
 
 /// What clicking a title's issue tag offers to do about it.
 enum QCFix: String, CaseIterable, Identifiable {
-    case extend, widenGaps, rebreak
+    case extend, widenGaps, rebreak, removeBlankLines, italicizeWords, unitalicizeWords, repairTags
 
     var id: String { rawValue }
 
@@ -63,8 +73,15 @@ enum QCFix: String, CaseIterable, Identifiable {
         case .extend: return "Extend to Fit Reading Speed"
         case .widenGaps: return "Widen Gaps to the Minimum"
         case .rebreak: return "Re-break Lines"
+        case .removeBlankLines: return "Remove Blank Lines"
+        case .italicizeWords: return "Italicize Whole Words"
+        case .unitalicizeWords: return "Remove Italics From Those Words"
+        case .repairTags: return "Repair Formatting Tags"
         }
     }
+
+    /// Moves titles in time (not allowed in a language locked to the master's timing).
+    var changesTiming: Bool { self == .extend || self == .widenGaps }
 
     /// The fixes for a title's issues, in this order. Spelling, overlaps and empty titles
     /// have none: they need a person.
@@ -73,6 +90,9 @@ enum QCFix: String, CaseIterable, Identifiable {
         if !issues.isDisjoint(with: [.readingSpeed, .duration]) { out.append(.extend) }
         if issues.contains(.gap) { out.append(.widenGaps) }
         if !issues.isDisjoint(with: [.lineLength, .lineCount]) { out.append(.rebreak) }
+        if issues.contains(.blankLine) { out.append(.removeBlankLines) }
+        if issues.contains(.partItalic) { out += [.italicizeWords, .unitalicizeWords] }
+        if issues.contains(.tags) { out.append(.repairTags) }
         return out
     }
 }
@@ -93,6 +113,9 @@ enum QCRules {
         } else if misspelled(plain) {
             found.insert(.spelling)
         }
+        if TextChecks.hasBlankLine(s.text) { found.insert(.blankLine) }
+        if TextChecks.hasPartItalicWord(s.text) { found.insert(.partItalic) }
+        if TextChecks.hasBrokenTags(s.text) { found.insert(.tags) }
         // Over the limit by any amount (even 17.02 CPS, shown as 17.0); amber: within 2 of it.
         if overReadingSpeed(s, rules: rules) { found.insert(.readingSpeed) }
         else if rules.cpsStatus(s) == .warn { found.insert(.nearReadingSpeed) }
@@ -127,6 +150,9 @@ enum QCRules {
             case .overlap: return "overlaps"
             case .gap: return "gap to the next title under the minimum"
             case .empty: return "no text"
+            case .blankLine: return "a blank line"
+            case .partItalic: return "a word partly in italics"
+            case .tags: return "broken formatting tags"
             }
         }.joined(separator: " · ")
     }

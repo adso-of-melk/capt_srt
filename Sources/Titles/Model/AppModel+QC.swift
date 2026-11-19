@@ -13,18 +13,39 @@ struct QCCountKey: Equatable {
     var spelling: Int
 }
 
+/// Everything one title's issues are worked out from (see AppModel.qcIssues).
+struct QCIssueKey: Hashable {
+    var sub: Subtitle
+    var nextStart: Double?
+    var overlaps: Bool
+    var rules: TimingPreset
+    var gap: Double
+    var language: String
+    /// The spelling dictionaries' and word lists' version; -1 with spell check off.
+    var spelling: Int
+}
+
 // MARK: QC: finding issues
 
 extension AppModel {
     /// Everything QC finds in one title of a language. `next` is the title after it.
-    /// The rules are `QCRules.issues`; the spelling is the app's.
+    /// The rules are `QCRules.issues`; the spelling is the app's. Remembered while the title,
+    /// its neighbour, the rules and the dictionaries stay the same: every card on screen asks
+    /// each time it's drawn.
     func qcIssues(of s: Subtitle, in track: Track, next: Subtitle?, overlapping: Set<UUID>) -> Set<QCIssue> {
         let checks = checksSpelling(track)
         let code = track.language.code
-        return QCRules.issues(of: s, next: next, overlapping: overlapping, rules: preset(for: track), gap: minGap,
-                              misspelled: { plain in
-                                  checks && !SpellService.shared.misspelled(in: plain, language: code).isEmpty
-                              })
+        let rules = preset(for: track)
+        let key = QCIssueKey(sub: s, nextStart: next?.start, overlaps: overlapping.contains(s.id), rules: rules,
+                             gap: minGap, language: code, spelling: checks ? SpellService.shared.version : -1)
+        if let known = qcIssueMemo[key] { return known }
+        let found = QCRules.issues(of: s, next: next, overlapping: overlapping, rules: rules, gap: minGap,
+                                   misspelled: { plain in
+                                       checks && !SpellService.shared.misspelled(in: plain, language: code).isEmpty
+                                   })
+        if qcIssueMemo.count > 20000 { qcIssueMemo.removeAll(keepingCapacity: true) }
+        qcIssueMemo[key] = found
+        return found
     }
 
     /// Every title of a language with an issue, in time order.
@@ -107,7 +128,11 @@ extension AppModel {
     /// (for marking cards and waveform boxes in QC mode).
     func qcMarks(of s: Subtitle, in track: Track, overlapping: Set<UUID>) -> Set<QCIssue> {
         let subs = track.doc.subtitles
-        let next = subs.firstIndex { $0.id == s.id }.flatMap { $0 + 1 < subs.count ? subs[$0 + 1] : nil }
+        // Its place in the list: from its number when that's right (no search through the list).
+        let numbered = numberOfSub[s.id].map { $0 - 1 }
+        let here = numbered.flatMap { subs.indices.contains($0) && subs[$0].id == s.id ? $0 : nil }
+            ?? subs.firstIndex { $0.id == s.id }
+        let next = here.flatMap { $0 + 1 < subs.count ? subs[$0 + 1] : nil }
         return qcIssues(of: s, in: track, next: next, overlapping: overlapping).intersection(qcKinds)
     }
 
@@ -152,7 +177,44 @@ extension AppModel {
         case .rebreak:
             rebreakSelected()
             doc.endTextCoalescing()
+        case .removeBlankLines: rewriteText(of: id) { TextChecks.withoutBlankLines($0) }
+        case .italicizeWords: rewriteText(of: id) { TextChecks.wholeWordItalics($0, italic: true) }
+        case .unitalicizeWords: rewriteText(of: id) { TextChecks.wholeWordItalics($0, italic: false) }
+        case .repairTags: rewriteText(of: id) { TextChecks.repairedTags($0) }
         }
+    }
+
+    /// Every title of the focused language put right by a text fix (Repair Formatting Tags,
+    /// Remove Blank Lines), in one undo step. How many titles changed.
+    @discardableResult
+    func fixTextInAll(_ fix: QCFix) -> Int {
+        let change: (String) -> String
+        let what: String
+        switch fix {
+        case .repairTags: change = TextChecks.repairedTags; what = "Formatting tags repaired"
+        case .removeBlankLines: change = TextChecks.withoutBlankLines; what = "Blank lines removed"
+        default: return 0
+        }
+        var n = 0
+        doc.perform { subs in
+            for i in subs.indices {
+                let after = change(subs[i].text)
+                if after != subs[i].text { subs[i].text = after; n += 1 }
+            }
+        }
+        doc.endTextCoalescing()
+        flash(n == 0 ? "Nothing to fix" : "\(what) in \(n) title\(n == 1 ? "" : "s")")
+        return n
+    }
+
+    /// A fix to one title's text, in one undo step.
+    private func rewriteText(of id: UUID, _ change: (String) -> String) {
+        doc.perform { subs in
+            guard let i = subs.firstIndex(where: { $0.id == id }) else { return }
+            let after = change(subs[i].text)
+            if after != subs[i].text { subs[i].text = after }
+        }
+        doc.endTextCoalescing()
     }
 }
 

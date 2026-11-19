@@ -145,6 +145,20 @@ final class TitleTextView: NSTextView {
     var spellLanguage: String?
     var onLearn: ((String) -> Void)?
     var onProjectWord: ((String) -> Void)?
+    /// Selected words dragged out of the card: the words, and the text left without them
+    /// (both with their tags). See AppModel.dropText.
+    var onDragText: ((_ piece: String, _ rest: String) -> Void)?
+
+    override func dragSelection(with event: NSEvent, offset mouseOffset: NSSize, slideBack: Bool) -> Bool {
+        let r = selectedRange()
+        if r.length > 0, let storage = textStorage, NSMaxRange(r) <= storage.length {
+            let piece = RichMarkup.markup(from: storage.attributedSubstring(from: r))
+            let rest = NSMutableAttributedString(attributedString: storage)
+            rest.deleteCharacters(in: r)
+            onDragText?(piece, RichMarkup.markup(from: rest))
+        }
+        return super.dragSelection(with: event, offset: mouseOffset, slideBack: slideBack)
+    }
 
     /// Right-click on an underlined word: the dictionary's suggestions, Learn Spelling, and
     /// Add to Project Words (names and places in this film).
@@ -327,6 +341,8 @@ struct TitleEditor: NSViewRepresentable {
     var onEmptiedItalic: () -> Void = {}
     /// The text cursor came into this card (true) or left it, or the card closed (false).
     var onCursor: (Bool) -> Void = { _ in }
+    /// Selected words dragged out of the card (see TitleTextView.onDragText).
+    var onDragText: (_ piece: String, _ rest: String) -> Void = { _, _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -356,6 +372,7 @@ struct TitleEditor: NSViewRepresentable {
         tv.isAutomaticTextReplacementEnabled = false
         tv.onLearn = { [weak c] w in c?.parent.onLearn(w) }
         tv.onProjectWord = { [weak c] w in c?.parent.onProjectWord(w) }
+        tv.onDragText = { [weak c] piece, rest in c?.parent.onDragText(piece, rest) }
         tv.onFocusChange = { [weak c] focused in c?.focusChanged(focused) }
         tv.onWindow = { [weak c, weak tv] in
             guard let c, let tv, c.parent.focusNow else { return }
