@@ -56,8 +56,7 @@ final class CardScrollTracker: ObservableObject {
     }
 
     /// The row to scroll to for a point on the up-down bar (`fraction`: 0 at the top of the
-    /// bar's travel, 1 at the bottom), given how much of the list is in view. Rows stand in
-    /// for the list's length, as the bar's marks do.
+    /// bar's travel, 1 at the bottom), given how much of the list is in view.
     static func rowTarget(fraction: CGFloat, count: Int, share: CGFloat) -> (index: Int, anchor: UnitPoint)? {
         guard count > 0 else { return nil }
         if fraction >= 0.999 { return (count - 1, .bottom) }
@@ -110,17 +109,13 @@ private enum BarLook {
 }
 
 /// The title pane's up-down scroll bar, on the pane's right edge, always there: it shows
-/// where you are in the film. Yellow marks: titles of the focused language with an issue
-/// (of the kinds looked for). Amber: the playhead. Click or drag anywhere on it to go there.
+/// where you are in the film. Click or drag anywhere on it to go there.
 struct CardScrollBarV: View {
     /// Its strip, which can be pointed at; the bar is drawn at its right.
     static let width: CGFloat = 12
 
     @ObservedObject var tracker: CardScrollTracker
-    @ObservedObject var clock: PlayheadClock
     let rows: [CardRow]
-    /// Places in `rows` with an issue.
-    let issueRows: [Int]
     @State private var hover = false
     @State private var dragging = false
     @State private var lastRequest: UUID?
@@ -134,26 +129,14 @@ struct CardScrollBarV: View {
             let right: CGFloat = 2
             let thumbH = min(h, max(24, h * m.share))
             let thumbY = (h - thumbH) * m.position
-            ZStack(alignment: .topLeading) {
-                Canvas { ctx, size in
-                    let x = size.width - right - bar
-                    ctx.fill(Path(roundedRect: CGRect(x: x, y: 0, width: bar, height: size.height), cornerRadius: bar / 2),
-                             with: .color(BarLook.track(active: active)))
-                    if m.overflows {
-                        ctx.fill(Path(roundedRect: CGRect(x: x, y: thumbY, width: bar, height: thumbH), cornerRadius: bar / 2),
-                                 with: .color(BarLook.thumb(active: active, lit: tracker.lit)))
-                    }
-                    guard !rows.isEmpty else { return }
-                    // Issue marks stick out a little to the left of the bar, so they show at rest.
-                    let markW = bar + (active ? 2 : 3)
-                    let yellow = Theme.alert.opacity(active || tracker.lit ? 0.95 : 0.6)
-                    for i in issueRows {
-                        let y = (CGFloat(i) + 0.5) / CGFloat(rows.count) * size.height
-                        ctx.fill(Path(CGRect(x: size.width - right - markW, y: y - 1, width: markW, height: 2)),
-                                 with: .color(yellow))
-                    }
+            Canvas { ctx, size in
+                let x = size.width - right - bar
+                ctx.fill(Path(roundedRect: CGRect(x: x, y: 0, width: bar, height: size.height), cornerRadius: bar / 2),
+                         with: .color(BarLook.track(active: active)))
+                if m.overflows {
+                    ctx.fill(Path(roundedRect: CGRect(x: x, y: thumbY, width: bar, height: thumbH), cornerRadius: bar / 2),
+                             with: .color(BarLook.thumb(active: active, lit: tracker.lit)))
                 }
-                PlayheadMark(clock: clock, rows: rows, height: h, width: bar + 4, right: right)
             }
             .frame(width: Self.width, height: h)
             .contentShape(Rectangle())
@@ -171,7 +154,7 @@ struct CardScrollBarV: View {
             )
             .animation(.easeOut(duration: 0.15), value: active)
             .animation(.easeOut(duration: 0.4), value: tracker.lit)
-            .help("Where you are in the titles. Click or drag to go there; yellow marks are titles with an issue, amber the playhead.")
+            .help("Where you are in the titles. Click or drag to go there.")
         }
         .frame(width: Self.width)
     }
@@ -185,27 +168,6 @@ struct CardScrollBarV: View {
         guard id != lastRequest else { return }
         lastRequest = id
         tracker.rowRequests.send(.init(id: id, anchor: target.anchor))
-    }
-}
-
-/// The playhead's mark on the up-down bar: the row it's in. Its own view, so following the
-/// playhead redraws only this.
-private struct PlayheadMark: View {
-    @ObservedObject var clock: PlayheadClock
-    let rows: [CardRow]
-    let height: CGFloat
-    let width: CGFloat
-    let right: CGFloat
-
-    var body: some View {
-        if let i = AppModel.rowIndex(at: clock.time, in: rows) {
-            let y = (CGFloat(i) + 0.5) / CGFloat(rows.count) * height
-            Capsule()
-                .fill(Theme.amber)
-                .frame(width: width, height: 2)
-                .position(x: CardScrollBarV.width - right - width / 2, y: y)
-                .allowsHitTesting(false)
-        }
     }
 }
 

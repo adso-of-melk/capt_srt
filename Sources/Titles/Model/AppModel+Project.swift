@@ -58,19 +58,6 @@ extension AppModel {
 
     func rowKey(ofSub id: UUID) -> UUID? { rowOfSub[id].map { rows[$0].key } }
 
-    /// The last row starting at or before `time` (the first row before any starts), for the
-    /// playhead's mark on the title pane's scroll bar. Rows are in time order.
-    static func rowIndex(at time: Double, in rows: [CardRow]) -> Int? {
-        guard !rows.isEmpty else { return nil }
-        var lo = 0, hi = rows.count - 1
-        guard rows[0].time <= time + 0.0005 else { return 0 }
-        while lo < hi {
-            let mid = (lo + hi + 1) / 2
-            if rows[mid].time <= time + 0.0005 { lo = mid } else { hi = mid - 1 }
-        }
-        return lo
-    }
-
     /// The 1-based row number shown on cards and waveform boxes.
     /// Each language is numbered on its own, in time order.
     func rowNumber(of id: UUID) -> Int? { numberOfSub[id] }

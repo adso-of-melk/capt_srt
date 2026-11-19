@@ -100,26 +100,4 @@ final class TitlePaneTests: XCTestCase {
         XCTAssertEqual(end?.anchor, .bottom)
         XCTAssertNil(CardScrollTracker.rowTarget(fraction: 0.5, count: 0, share: 1))
     }
-
-    func testThePlayheadsMarkIsOnTheRowItIsIn() {
-        let rows = [1.0, 4.0, 9.0].map { CardRow(key: UUID(), time: $0, cells: [:]) }
-        XCTAssertEqual(AppModel.rowIndex(at: 0, in: rows), 0)       // before the first: the first
-        XCTAssertEqual(AppModel.rowIndex(at: 1, in: rows), 0)
-        XCTAssertEqual(AppModel.rowIndex(at: 5, in: rows), 1)       // in a gap: the row before
-        XCTAssertEqual(AppModel.rowIndex(at: 9, in: rows), 2)
-        XCTAssertEqual(AppModel.rowIndex(at: 500, in: rows), 2)
-        XCTAssertNil(AppModel.rowIndex(at: 5, in: []))
-    }
-
-    func testTheBarMarksTheRowsWithIssues() {
-        // Row 2 reads too fast; the others are fine.
-        let f = makeFixture([("en", [sub(1, 3, "Fine"), sub(4, 6, "Fine too"),
-                                     sub(7, 7.5, "Far too many words for half a second"), sub(9, 11, "Fine")])])
-        XCTAssertEqual(f.model.qcTickRows(), [2])
-        // Only the kinds looked for count.
-        f.model.qcKinds = [.lineLength]
-        XCTAssertEqual(f.model.qcTickRows(), [])
-        f.model.qcKinds = Set(QCIssue.allCases)
-        XCTAssertEqual(f.model.qcTickRows(), [2])
-    }
 }

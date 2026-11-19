@@ -13,13 +13,6 @@ struct QCCountKey: Equatable {
     var spelling: Int
 }
 
-/// What the scroll bar's issue marks are worked out from (see `qcTickRows()`).
-struct QCTickKey: Equatable {
-    var count: QCCountKey
-    var kinds: Set<QCIssue>
-    var rows: [UUID]
-}
-
 // MARK: QC: finding issues
 
 extension AppModel {
@@ -61,25 +54,6 @@ extension AppModel {
         }
         qcCountMemo = (key, counts)
         return counts
-    }
-
-    /// The rows (places in `rows`) holding a title of the focused language with an issue of
-    /// a kind looked for: the yellow marks on the title pane's scroll bar. Worked out again
-    /// only when the titles, the rules, the kinds or the rows change.
-    func qcTickRows() -> [Int] {
-        guard let track = focusedTrack else { return [] }
-        let key = QCTickKey(count: QCCountKey(track: track.id, language: track.language.code,
-                                              subtitles: track.doc.subtitles, rules: preset(for: track), gap: minGap,
-                                              spelling: checksSpelling(track) ? SpellService.shared.version : -1),
-                            kinds: qcKinds, rows: rows.map(\.key))
-        if let memo = qcTickMemo, memo.key == key { return memo.rows }
-        var found = Set<Int>()
-        for entry in qcReport(for: track) where !entry.issues.isDisjoint(with: qcKinds) {
-            if let i = rowOfSub[entry.id] { found.insert(i) }
-        }
-        let sorted = found.sorted()
-        qcTickMemo = (key, sorted)
-        return sorted
     }
 
     /// Tab / Shift-Tab in QC mode, and QC ▸ Next Issue / Previous Issue: the next title

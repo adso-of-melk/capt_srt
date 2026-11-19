@@ -76,8 +76,7 @@ struct CardPane: View {
                     }
                     // Our own scroll bars, on the pane's edges whichever way it's scrolled.
                     .overlay(alignment: .topTrailing) {
-                        CardScrollBarV(tracker: scroll, clock: model.clock, rows: model.rows,
-                                       issueRows: model.qcTickRows())
+                        CardScrollBarV(tracker: scroll, rows: model.rows)
                             .padding(.top, Self.headerRowHeight)
                             .padding(.bottom, overflows ? CardScrollBarH.height : 0)
                     }
