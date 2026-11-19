@@ -246,20 +246,28 @@ extension AppModel {
     static let waveformDefaultHeight: CGFloat = 260
 
     /// The waveform's height (title bar included) when the picture and waveform together are
-    /// this tall: what was dragged, or the usual height, kept between its minimum and what
-    /// leaves the picture its room.
+    /// this tall: what was dragged, or the usual height, kept between its minimum (room for
+    /// two lines in every language open on it, `waveformLeastHeight`) and what leaves the
+    /// picture its room. The picture's room comes first.
     func waveformPaneHeight(in total: CGFloat, divider: CGFloat) -> CGFloat {
-        let upper = max(Self.waveformMinHeight, total - Self.videoMinHeight - divider)
+        let (lower, upper) = waveformPaneLimits(in: total, divider: divider)
         let wanted = waveformPaneHeight > 0 ? waveformPaneHeight : Self.waveformDefaultHeight
-        return min(max(wanted, Self.waveformMinHeight), upper)
+        return min(max(wanted, lower), upper)
     }
 
     /// Dragging the line between the picture and the waveform: the waveform takes this height,
     /// as far as its limits allow.
     func setWaveformPaneHeight(_ height: CGFloat, in total: CGFloat, divider: CGFloat) {
-        let upper = max(Self.waveformMinHeight, total - Self.videoMinHeight - divider)
-        let h = min(max(height, Self.waveformMinHeight), upper).rounded()
+        let (lower, upper) = waveformPaneLimits(in: total, divider: divider)
+        let h = min(max(height, lower), upper).rounded()
         if abs(h - waveformPaneHeight) > 0.25 { waveformPaneHeight = h }
+    }
+
+    /// The least and most the waveform pane can be with the picture and waveform this tall.
+    func waveformPaneLimits(in total: CGFloat, divider: CGFloat) -> (lower: CGFloat, upper: CGFloat) {
+        let room = total - Self.videoMinHeight - divider
+        let lower = max(Self.waveformMinHeight, min(waveformLeastHeight, room))
+        return (lower, max(lower, room))
     }
 
     /// The card pane's width for a window this wide: what was set (dragged, or sized when the

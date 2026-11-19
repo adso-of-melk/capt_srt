@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import QuartzCore
 @testable import TitlesCore
 
 /// Bottom right: the waveform with numbered title boxes.
@@ -11,7 +12,7 @@ struct WaveformPane: View {
 
     var body: some View {
         WaveformRepresentable(model: model, revision: Revision(
-            subtitles: doc.subtitles, selected: doc.selectedID, time: clock.time,
+            subtitles: doc.subtitles, selected: doc.selectedID, time: clock.time, playing: clock.isPlaying,
             revision: model.revision, focused: model.video?.focusedTrackID,
             pps: model.pixelsPerSecond, gain: model.waveGain, db: model.dbScale,
             hasWave: audio.waveform != nil, loading: audio.isLoading,
@@ -24,6 +25,8 @@ struct WaveformPane: View {
         var subtitles: [Subtitle]
         var selected: UUID?
         var time: Double
+        /// Starts and stops the waveform's own frame-by-frame movement (see frameTick).
+        var playing: Bool
         var revision: Int
         var focused: UUID?
         var pps: Double
@@ -62,9 +65,9 @@ final class WaveformNSView: NSView {
     private var lastPPS: Double = 0
 
     // Layout
-    private let rulerHeight: CGFloat = 20
+    private let rulerHeight: CGFloat = WaveLayout.ruler
     /// The scroll bar along the bottom: the whole film, with the visible part as a handle.
-    private let scrollbarHeight: CGFloat = 12
+    private let scrollbarHeight: CGFloat = WaveLayout.scrollBar
     private let edgeGrab: CGFloat = 6
     /// Every drawn box, per language band.
     private var boxRectsByTrack: [UUID: [(id: UUID, rect: CGRect)]] = [:]
@@ -73,6 +76,15 @@ final class WaveformNSView: NSView {
         guard let id = model?.video?.focusedTrackID else { return [] }
         return boxRectsByTrack[id] ?? []
     }
+    /// Another language's colours on the waveform: the title pane's StepBack, worked out once.
+    private enum Muted {
+        static let periwinkle = Palette.steppedBack(Palette.periwinkle)
+        static let lilac = Palette.steppedBack(Palette.lilac, saturation: StepBack.rimSaturation)
+        static let gold = Palette.steppedBack(Palette.gold.withAlphaComponent(0.8), saturation: StepBack.rimSaturation)
+        static let red = Palette.steppedBack(Palette.red, saturation: StepBack.rimSaturation)
+        static let teal = Palette.steppedBack(Palette.teal)
+    }
+
     /// Languages drawn as full bands, top to bottom in column order.
     private struct Band { let track: Track; let rect: CGRect; let focused: Bool; let label: CGRect }
     private var bands: [Band] = []
@@ -172,11 +184,12 @@ final class WaveformNSView: NSView {
         let tracks = bandTracks
         let focused = model?.video?.focusedTrackID
         let weights = tracks.map { bandWeights[$0.id] ?? 1 }
-        let total = max(0.001, weights.reduce(0, +))
+        // Shared by their weights, none under two lines' height while there's room.
+        let heights = WaveLayout.bandHeights(weights: weights, area: area.height, minimum: Self.minBandHeight)
         var y = area.minY
         var result: [Band] = []
         for (i, track) in tracks.enumerated() {
-            let h = i == tracks.count - 1 ? area.maxY - y : (area.height * weights[i] / total).rounded()
+            let h = heights[i]
             let r = CGRect(x: 0, y: y, width: area.width, height: max(0, h))
             let tw = (codeText(track) as NSString).size(withAttributes: [.font: labelFont(9)]).width + 10
             let label = showsCodes ? CGRect(x: 10, y: r.minY + 3, width: tw, height: 13) : .zero
@@ -188,7 +201,7 @@ final class WaveformNSView: NSView {
     }
 
     /// The least height of an open language: room for two lines of text in its boxes.
-    static let minBandHeight: CGFloat = 56
+    static var minBandHeight: CGFloat { WaveLayout.minBand }
 
     /// How many languages fit open at once, each at least `minBandHeight` tall (the slim
     /// lanes of the rest take their share). Opening one more closes the lowest open one.
@@ -240,7 +253,7 @@ final class WaveformNSView: NSView {
 
     private func lanesHeight(count n: Int) -> CGFloat {
         guard n > 0 else { return 0 }
-        return min(CGFloat(n) * 20, max(0, bounds.height - rulerHeight - scrollbarHeight) * 0.45)
+        return min(CGFloat(n) * WaveLayout.lane, max(0, bounds.height - rulerHeight - scrollbarHeight) * 0.45)
     }
 
     private var waveRect: CGRect {
@@ -297,13 +310,14 @@ final class WaveformNSView: NSView {
         NSBezierPath(roundedRect: thumb, xRadius: thumb.height / 2, yRadius: thumb.height / 2).fill()
         // The playhead's place in the film.
         Palette.amber.setFill()
-        CGRect(x: CGFloat(model.clock.time) * scale - 0.5, y: track.minY + 1, width: 1.5, height: track.height - 1).fill()
+        CGRect(x: CGFloat(playheadTime) * scale - 0.5, y: track.minY + 1, width: 1.5, height: track.height - 1).fill()
     }
 
     /// Keeps the playhead in view and keeps zoom anchored on it.
     func refresh() {
         guard let model else { return }
-        let time = model.clock.time
+        updateFrameLink()
+        let time = playheadTime
         if lastPPS != 0 && lastPPS != pps {
             let anchorX = x(time) >= 0 && x(time) <= bounds.width ? x(time) : bounds.width / 2
             let anchorT = time >= viewStart && time <= viewStart + Double(bounds.width) / lastPPS
@@ -312,7 +326,8 @@ final class WaveformNSView: NSView {
         }
         lastPPS = pps
 
-        if case .none = drag, time != lastTime {
+        // While playing, the frame link moves the waveform (see frameTick).
+        if case .none = drag, time != lastTime, frameLink == nil {
             let px = x(time)
             if model.clock.isPlaying && model.followPlayhead {
                 // Playhead parked at 40% of the width; the waveform scrolls under it.
@@ -322,6 +337,51 @@ final class WaveformNSView: NSView {
             }
         }
         lastTime = time
+        needsDisplay = true
+    }
+
+    // MARK: Moving with the film
+
+    /// While playing, the waveform moves on every frame the screen shows, at the player's
+    /// own time. (The playhead clock ticks 60 times a second too, but its ticks don't line up
+    /// with the screen's frames, so the boxes moved in uneven steps.)
+    private var frameLink: CADisplayLink?
+    /// The player's time at the frame being drawn, while playing.
+    private var frameTime: Double?
+
+    /// The time the playhead is drawn at: the frame's while playing, the clock's otherwise.
+    private var playheadTime: Double { frameTime ?? model?.clock.time ?? 0 }
+
+    private func updateFrameLink() {
+        let playing = window != nil && (model?.clock.isPlaying ?? false)
+        if playing, frameLink == nil {
+            let link = displayLink(target: self, selector: #selector(frameTick(_:)))
+            link.add(to: .main, forMode: .common)
+            frameLink = link
+            frameTime = model?.engine.currentTime
+        } else if !playing, let link = frameLink {
+            link.invalidate()
+            frameLink = nil
+            frameTime = nil
+        }
+    }
+
+    @objc private func frameTick(_ link: CADisplayLink) {
+        guard let model, model.clock.isPlaying, window != nil else { updateFrameLink(); return }
+        let t = model.engine.currentTime
+        // Never backwards by a hair (the player's time can wobble as frames are decoded).
+        if let last = frameTime, t < last, last - t < 0.05 { return }
+        frameTime = t
+        if case .none = drag {
+            if model.followPlayhead {
+                // Playhead parked at 40% of the width; the waveform glides under it.
+                viewStart = max(0, t - visibleDuration * 0.4)
+            } else {
+                let px = x(t)
+                if px < 0 || px > bounds.width { viewStart = max(0, t - visibleDuration * 0.4) }
+            }
+        }
+        lastTime = t
         needsDisplay = true
     }
 
@@ -344,7 +404,7 @@ final class WaveformNSView: NSView {
                 Palette.background.withAlphaComponent(0.35).setFill()
                 band.rect.fill()
             }
-            drawWaveform(ctx, in: band.rect, model: model)
+            drawWaveform(ctx, in: band.rect, model: model, muted: showsCodes && !band.focused)
             drawBoxes(ctx, in: band.rect, track: band.track, focused: band.focused, model: model)
             if showsCodes {
                 Palette.rule.setFill()
@@ -391,7 +451,7 @@ final class WaveformNSView: NSView {
         }
 
         // Playhead
-        let px = x(model.clock.time)
+        let px = x(playheadTime)
         if px >= -2 && px <= w + 2 {
             Palette.amber.setFill()
             CGRect(x: px - 0.75, y: 0, width: 1.5, height: bounds.height).fill()
@@ -433,14 +493,27 @@ final class WaveformNSView: NSView {
         }
     }
 
-    private func drawWaveform(_ ctx: CGContext, in rect: CGRect, model: AppModel) {
+    /// The audio's outline for the width in view: the same for every band, so worked out
+    /// once a frame.
+    private var envelopeKey: (start: Double, pps: Double, pixels: Int, id: ObjectIdentifier)?
+    private var envelopeCache: [(peak: Float, rms: Float)] = []
+
+    private func envelope(_ wf: Waveform, pixels: Int) -> [(peak: Float, rms: Float)] {
+        let id = ObjectIdentifier(wf)
+        if let k = envelopeKey, k.start == viewStart, k.pps == pps, k.pixels == pixels, k.id == id { return envelopeCache }
+        envelopeCache = wf.envelope(from: viewStart, secondsPerPixel: 1 / pps, pixels: pixels)
+        envelopeKey = (viewStart, pps, pixels, id)
+        return envelopeCache
+    }
+
+    private func drawWaveform(_ ctx: CGContext, in rect: CGRect, model: AppModel, muted: Bool = false) {
         // Centre line
         Palette.rule.setFill()
         CGRect(x: 0, y: rect.midY, width: rect.width, height: 1).fill()
         guard let wf = model.audio.waveform, rect.width > 1 else { return }
 
         let pixels = Int(rect.width)
-        let env = wf.envelope(from: viewStart, secondsPerPixel: 1 / pps, pixels: pixels)
+        let env = envelope(wf, pixels: pixels)
         let half = rect.height / 2 - 4
         let gain = model.waveGain
         let useDB = model.dbScale
@@ -472,10 +545,12 @@ final class WaveformNSView: NSView {
         }
         ctx.setLineWidth(1)
         ctx.addPath(peakPath)
-        ctx.setStrokeColor(Palette.teal.withAlphaComponent(0.35).cgColor)
+        // Another language's band: its waveform steps back with it.
+        let teal = muted ? Muted.teal : Palette.teal
+        ctx.setStrokeColor(teal.withAlphaComponent(teal.alphaComponent * 0.35).cgColor)
         ctx.strokePath()
         ctx.addPath(rmsPath)
-        ctx.setStrokeColor(Palette.teal.withAlphaComponent(0.85).cgColor)
+        ctx.setStrokeColor(teal.withAlphaComponent(teal.alphaComponent * 0.85).cgColor)
         ctx.strokePath()
     }
 
@@ -487,8 +562,11 @@ final class WaveformNSView: NSView {
         // Only the focused language shows a selection.
         let selected = focused ? doc.selectedID : nil
         let preset = model.preset(for: track)
-        // Languages that aren't focused are drawn quieter.
-        let bandDim: CGFloat = focused ? 1 : 0.6
+        // Another language steps back, as its column in the title pane does: its boxes in the
+        // quiet blue of its cards, a rim in the warning colour when a title is near or over a
+        // limit (red the stronger), less colour and fainter all round (see `Muted`).
+        let muted = showsCodes && !focused
+        let bandDim: CGFloat = muted ? CGFloat(StepBack.opacity) : 1
         let langTag = track.language.code.split(separator: "-").first.map { $0.uppercased() } ?? ""
         let tagFont = labelFont(9)
         let tagSize = (langTag as NSString).size(withAttributes: [.font: tagFont])
@@ -497,15 +575,15 @@ final class WaveformNSView: NSView {
         // typed in or spotted): yellow-alert in the focused language, the quiet blue of an
         // unfocused card in the others. QC mode: the focused language's other titles step back.
         let qc = focused && model.qcMode
-        let baseHeight = rect.height * 0.74
-        let laneShift = rect.height * 0.11
+        let baseHeight = rect.height * WaveLayout.boxShare
+        let laneShift = rect.height * (WaveLayout.boxShare - WaveLayout.shiftedBoxShare)
 
         var rects: [(id: UUID, rect: CGRect)] = []
         defer { boxRectsByTrack[track.id] = rects }
         var selectedRect: CGRect?
 
         for (index, s) in subs.enumerated() {
-            let end = (focused ? model.liveSpotEnd(for: s.id) : nil) ?? s.end
+            let end = (focused ? model.liveSpotEnd(for: s.id).map { max($0, playheadTime) } : nil) ?? s.end
             guard end >= viewStart && s.start <= viewEnd else { continue }
             let lane = lanes[s.id] ?? 0
             let height = lane == 0 ? baseHeight : baseHeight - laneShift
@@ -518,12 +596,26 @@ final class WaveformNSView: NSView {
                 && !model.qcIssues(of: s, in: track, next: index + 1 < subs.count ? subs[index + 1] : nil,
                                    overlapping: overlaps).isDisjoint(with: model.qcKinds)
             let dim: CGFloat = qc && !marked && !isSel ? 0.45 : bandDim
-            let base: NSColor = (overlaps.contains(s.id) ? Palette.lilac : Palette.status(preset.status(s)))
-                .withAlphaComponent(dim)
+            let status = preset.status(s)
+            let overlapping = overlaps.contains(s.id)
+            let base: NSColor = muted ? Muted.periwinkle
+                : (overlapping ? Palette.lilac : Palette.status(status)).withAlphaComponent(dim)
             let path = NSBezierPath(roundedRect: r, xRadius: Self.boxCornerRadius, yRadius: Self.boxCornerRadius)
-            base.withAlphaComponent(isSel ? 0.24 : 0.13 * dim).setFill()
-            path.fill()
-            if isSel {
+            if muted {
+                // Like a CPS chip in another language's column (Chip.muted).
+                let rim: NSColor? = overlapping ? Muted.lilac : (status == .bad ? Muted.red : status == .warn ? Muted.gold : nil)
+                (status == .bad && !overlapping ? Muted.red.faded(0.22) : Muted.periwinkle.faded(0.13)).setFill()
+                path.fill()
+                (rim ?? Muted.periwinkle.faded(0.75)).setStroke()
+                path.lineWidth = status == .bad && !overlapping ? 1.5 : 1
+                path.stroke()
+            } else {
+                base.withAlphaComponent(isSel ? 0.24 : 0.13 * dim).setFill()
+                path.fill()
+            }
+            if muted {
+                // Drawn above.
+            } else if isSel {
                 // Selected: the frame keeps the title's own timing colour, and amber LCARS
                 // brackets ( ) hold its left and right ends, so selection never looks like
                 // a timing warning. Frame and brackets run along one line, so the brackets
@@ -535,13 +627,13 @@ final class WaveformNSView: NSView {
                 path.stroke()
             }
             if marked {
-                (focused ? Palette.alert : Palette.periwinkle.withAlphaComponent(0.75)).setFill()
+                (focused ? Palette.alert : Muted.periwinkle.faded(0.75)).setFill()
                 NSBezierPath(roundedRect: CGRect(x: r.minX + 4, y: r.minY - 5, width: max(2, r.width - 8), height: 3),
                              xRadius: 1.5, yRadius: 1.5).fill()
             }
             // Find: a teal bar along the bottom of every title that has a match.
             if model.find.isShown, !model.find.highlights(in: s.id).ranges.isEmpty {
-                Palette.teal.withAlphaComponent(dim).setFill()
+                (muted ? Muted.teal : Palette.teal.withAlphaComponent(dim)).setFill()
                 NSBezierPath(roundedRect: CGRect(x: r.minX + 4, y: r.maxY - 6, width: max(2, r.width - 8), height: 3),
                              xRadius: 1.5, yRadius: 1.5).fill()
             }
@@ -554,7 +646,7 @@ final class WaveformNSView: NSView {
             let numWidth = (numberText as NSString).size(withAttributes: [.font: font]).width + 10
             let pill = CGRect(x: r.minX + 4, y: r.minY + 4, width: numWidth, height: 15)
             numberPills.append((track.id, s.id, pill.intersection(r)))
-            (isSel ? Palette.amber : base).setFill()
+            (isSel ? Palette.amber : (muted ? Muted.periwinkle.faded(0.75) : base)).setFill()
             NSBezierPath(roundedRect: pill, xRadius: 7.5, yRadius: 7.5).fill()
             drawText(numberText, at: CGPoint(x: pill.minX + 5, y: pill.minY + 1), font: font, color: Palette.background)
             let fullText = cachedBoxText(s.text, focused: focused, dim: dim)
@@ -581,10 +673,10 @@ final class WaveformNSView: NSView {
             if !langTag.isEmpty, r.width >= pill.width + tagSize.width + 24, r.height >= 40 {
                 let tag = CGRect(x: r.maxX - tagSize.width - 12, y: r.maxY - 17,
                                  width: tagSize.width + 8, height: 13)
-                base.withAlphaComponent(0.16).setFill()
+                (muted ? base.faded(0.16) : base.withAlphaComponent(0.16)).setFill()
                 NSBezierPath(roundedRect: tag, xRadius: 3, yRadius: 3).fill()
                 drawText(langTag, at: CGPoint(x: tag.minX + 4, y: tag.minY + 1), font: tagFont,
-                         color: base.withAlphaComponent(0.6))
+                         color: muted ? base.faded(0.6) : base.withAlphaComponent(0.6))
             }
             NSGraphicsContext.restoreGraphicsState()
 
@@ -749,13 +841,16 @@ final class WaveformNSView: NSView {
             for s in track.doc.subtitles where s.end >= viewStart && s.start <= viewEnd {
                 let r = CGRect(x: x(s.start), y: lane.minY + 2, width: max(2, x(s.end) - x(s.start)), height: max(4, laneH - 4))
                 laneBoxes.append((track.id, s.id, r))
-                let color = Palette.status(preset.status(s))
+                // Another language steps back here too (see `Muted`).
+                let status = preset.status(s)
+                let color = focused ? Palette.status(status)
+                    : (status == .bad ? Muted.red : status == .warn ? Muted.gold : Muted.periwinkle)
                 let path = NSBezierPath(roundedRect: r, xRadius: 3, yRadius: 3)
-                color.withAlphaComponent(0.16).setFill()
+                color.faded(0.16).setFill()
                 path.fill()
                 // Only the language you work in shows a selection.
                 let selected = focused && s.id == track.doc.selectedID
-                (selected ? Palette.amber : color.withAlphaComponent(0.6)).setStroke()
+                (selected ? Palette.amber : color.faded(0.6)).setStroke()
                 path.lineWidth = selected ? 2 : 1
                 path.stroke()
                 if r.width > 22, laneH >= 12, let n = model.rowNumber(of: s.id) {
@@ -833,6 +928,7 @@ final class WaveformNSView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if let m = flagsMonitor { NSEvent.removeMonitor(m); flagsMonitor = nil }
+        updateFrameLink()
         guard window != nil else { return }
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] e in
             MainActor.assumeIsolated {
@@ -1051,7 +1147,8 @@ final class WaveformNSView: NSView {
             return
         }
         if case let .bandResize(upper, lower, startY, hu, hl, wu, _) = drag {
-            let minH: CGFloat = 36
+            // Neither band under two lines' height (when the two have room for that).
+            let minH = min(Self.minBandHeight, (hu + hl) / 2)
             let newU = min(max(minH, hu + (p.y - startY)), hu + hl - minH)
             let k = hu / max(0.001, wu)   // points per unit of weight
             bandWeights[upper] = newU / k

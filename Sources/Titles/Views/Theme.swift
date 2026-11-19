@@ -39,6 +39,18 @@ enum Palette {
         case .bad: return red
         }
     }
+
+    /// A colour as another language shows it (see StepBack, the title pane's own): less
+    /// saturated, keeping its brightness, and fainter. Warning rims keep a little more of
+    /// their colour (`StepBack.rimSaturation`).
+    static func steppedBack(_ c: NSColor, saturation: Double = StepBack.saturation) -> NSColor {
+        guard let rgb = c.usingColorSpace(.sRGB) else { return c }
+        let k = CGFloat(saturation)
+        let l = 0.2126 * rgb.redComponent + 0.7152 * rgb.greenComponent + 0.0722 * rgb.blueComponent
+        func mix(_ v: CGFloat) -> CGFloat { min(1, max(0, l + (v - l) * k)) }
+        return NSColor(srgbRed: mix(rgb.redComponent), green: mix(rgb.greenComponent), blue: mix(rgb.blueComponent),
+                       alpha: rgb.alphaComponent * CGFloat(StepBack.opacity))
+    }
 }
 
 enum Theme {
@@ -129,6 +141,9 @@ struct Chip: View {
     var filled = false
     /// A rim in its own colour (e.g. red round a quiet blue chip).
     var outline: Color? = nil
+    var rimWidth: CGFloat = 1
+    /// A faint wash of its own colour inside (instead of the chip's colour).
+    var tint: Color? = nil
     var size: CGFloat = 10
 
     var body: some View {
@@ -140,9 +155,22 @@ struct Chip: View {
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
             .background(
-                Capsule().fill(filled ? color : color.opacity(0.12))
+                Capsule().fill(filled ? color : (tint?.opacity(0.22) ?? color.opacity(0.12)))
             )
-            .overlay(Capsule().stroke(outline ?? color.opacity(filled ? 0 : 0.35), lineWidth: 1))
+            .overlay(Capsule().stroke(outline ?? color.opacity(filled ? 0 : 0.35), lineWidth: rimWidth))
+    }
+}
+
+extension Chip {
+    /// A chip in another language's column: the quiet blue of its cards, with a rim in the
+    /// warning colour when it's over or near a limit. Over (red) gets the stronger rim and a
+    /// red wash, so it never draws less notice than near (gold).
+    static func muted(_ text: String, status: TimingStatus, size: CGFloat) -> Chip {
+        switch status {
+        case .ok: return Chip(text: text, color: Theme.periwinkle, size: size)
+        case .warn: return Chip(text: text, color: Theme.periwinkle, outline: Theme.gold.opacity(0.8), size: size)
+        case .bad: return Chip(text: text, color: Theme.periwinkle, outline: Theme.red, rimWidth: 1.5, tint: Theme.red, size: size)
+        }
     }
 }
 
@@ -194,4 +222,9 @@ struct SpotTimerPill: View {
         .fixedSize()
         .animation(.easeOut(duration: 0.2), value: status)
     }
+}
+
+extension NSColor {
+    /// This colour at a share of its own opacity.
+    func faded(_ share: CGFloat) -> NSColor { withAlphaComponent(alphaComponent * share) }
 }

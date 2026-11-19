@@ -174,8 +174,12 @@ final class AppModel: ObservableObject {
         didSet { UserDefaults.standard.set(waveBands.map(\.uuidString), forKey: "waveBands") }
     }
     /// How many languages fit open on the waveform, each tall enough for two lines; set by
-    /// the waveform as it lays out. Nil: no limit.
+    /// the waveform as it lays out. Nil: no limit. (Once the window is laid out,
+    /// `waveBandRoom` goes by `editorHeight` instead.)
     var waveRoom: Int?
+    /// The picture, its divider and the waveform pane together, as last laid out (0: not yet).
+    /// Not published: nothing redraws for it.
+    var editorHeight: CGFloat = 0
     /// What was heard in videos listened to for matching subtitle files (by file), so a
     /// second drop doesn't listen again.
     var speechHeard: [URL: FileMatcher.Speech] = [:]
@@ -1153,20 +1157,22 @@ extension AppModel {
         waveBands.insert(shown.id)
     }
 
-    /// Opens or closes a language on the waveform. Opening one when there's no room for
-    /// another (`waveRoom`) closes the lowest open language, never the one you're working
-    /// in. The last open language stays open. False: nothing changed.
+    /// Opens or closes a language on the waveform. Opening one grows the waveform pane to
+    /// make room for it when the picture can give some (`growWaveformForBands`); when even
+    /// two lines each won't fit (`waveBandRoom`), the lowest open language closes, never the
+    /// one you're working in. The last open language stays open. False: nothing changed.
     @discardableResult
     func setWaveBand(_ id: UUID, shown: Bool) -> Bool {
         pinWaveBands()
         let open = waveBandTracks
         if shown {
             guard !open.contains(where: { $0.id == id }) else { return false }
-            if let room = waveRoom, open.count + 1 > room,
+            if let room = waveBandRoom, open.count + 1 > room,
                let lowest = open.last(where: { $0.id != video?.focusedTrackID }) {
                 waveBands.remove(lowest.id)
             }
             waveBands.insert(id)
+            growWaveformForBands()
         } else {
             guard open.contains(where: { $0.id == id }) else { return false }
             guard open.count > 1 else {
@@ -1217,6 +1223,7 @@ extension AppModel {
         set {
             if newValue {
                 waveBands.formUnion(openTracks.map(\.id))
+                growWaveformForBands()
             } else {
                 waveBands.subtract(openTracks.map(\.id))
                 if let focused = video?.focusedTrackID { waveBands.insert(focused) }

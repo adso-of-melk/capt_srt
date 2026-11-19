@@ -90,6 +90,10 @@ struct MainView: View {
                         .frame(minWidth: AppModel.pictureMinWidth, maxWidth: .infinity)
                     }
                     .frame(width: total, height: height, alignment: .topLeading)
+                    // How tall the picture and waveform are together, for the waveform's
+                    // room rules (opening a language grows the pane; see AppModel+WaveHeight).
+                    .onAppear { model.editorHeight = height }
+                    .onChange(of: height) { _, h in model.editorHeight = h }
                 }
             }
         }

@@ -146,7 +146,6 @@ struct CardPane: View {
                                 cell(row: row, number: index + 1, track: track, width: width, isFocusedColumn: track.id == focusedID,
                                      inSelectedRow: row.key == selectedRow && track.id == focusedID, overlaps: overlaps)
                                     .frame(width: width)
-                                    .modifier(StepBack(on: model.columnStepsBack(track.id)))
                             }
                         }
                         .id(row.key)
@@ -200,6 +199,8 @@ struct CardPane: View {
     @ViewBuilder
     private func cell(row: CardRow, number: Int, track: Track, width: CGFloat, isFocusedColumn: Bool,
                       inSelectedRow: Bool, overlaps: Set<UUID>) -> some View {
+        // Another language's column steps back (see StepBack).
+        let back = model.columnStepsBack(track.id)
         if let sub = row.cells[track.id] {
             let fast = model.fastScrolling && !(isFocusedColumn && doc.selectedID == sub.id)
             CardView(
@@ -220,8 +221,10 @@ struct CardPane: View {
                 preset: model.preset(for: track),
                 compact: model.openTracks.count > 1,
                 width: width,
-                light: fast
+                light: fast,
+                stepBack: back
             )
+            .modifier(StepBack(on: back, desaturates: false))
         } else {
             EmptySlot(isSelected: isFocusedColumn && model.emptySlotRow == row.key && doc.selectedID == nil,
                       inSelectedRow: inSelectedRow, locked: track.locked,
@@ -238,6 +241,7 @@ struct CardPane: View {
                     model.emptySlotRow = row.key
                     model.seek(row.time)
                 }
+                .modifier(StepBack(on: back))
         }
     }
 }
@@ -459,12 +463,18 @@ private struct LanguageHeader: View {
 /// column keeps its full colours.
 struct StepBack: ViewModifier {
     let on: Bool
+    /// False: the view takes the colour out itself (a card, whose CPS and CPL chips keep a
+    /// little more of theirs: `rimSaturation`).
+    var desaturates = true
     static let saturation = 0.4
+    /// Warning chips in another language's column (and rims on its waveform boxes): a smidge
+    /// more of their colour than the rest, so red still reads as red.
+    static let rimSaturation = 0.6
     static let opacity = 0.7
 
     func body(content: Content) -> some View {
         content
-            .saturation(on ? Self.saturation : 1)
+            .saturation(on && desaturates ? Self.saturation : 1)
             .opacity(on ? Self.opacity : 1)
             .animation(.easeOut(duration: 0.15), value: on)
     }
@@ -642,7 +652,7 @@ struct CardView: View {
             // with only a rim in the warning colour, so they nudge without shouting.
             if line == .bad {
                 if qcMuted {
-                    Chip(text: "\(preset.longestLine(sub)) CPL", color: Theme.periwinkle, outline: Theme.status(line), size: size)
+                    Chip.muted("\(preset.longestLine(sub)) CPL", status: line, size: size)
                         .fixedSize()
                 } else {
                     Chip(text: "\(preset.longestLine(sub)) CPL", color: Theme.status(line), filled: true, size: size)
@@ -655,8 +665,7 @@ struct CardView: View {
             }
             Group {
                 if qcMuted {
-                    Chip(text: String(format: cpsWord ? "%.1f CPS" : "%.1f", sub.cps), color: Theme.periwinkle,
-                         outline: cps == .ok ? nil : Theme.status(cps), size: size)
+                    Chip.muted(String(format: cpsWord ? "%.1f CPS" : "%.1f", sub.cps), status: cps, size: size)
                 } else {
                     Chip(text: String(format: cpsWord ? "%.1f CPS" : "%.1f", sub.cps), color: Theme.status(cps),
                          filled: cps == .bad, size: size)
@@ -705,6 +714,9 @@ struct CardView: View {
     let width: CGFloat
     /// Drawn quickly (the scroll bar is being dragged): no spelling marks.
     var light = false
+    /// Another language's column (see StepBack): the card takes the colour out of itself,
+    /// leaving its CPS and CPL chips a little more (`StepBack.rimSaturation`).
+    var stepBack = false
     /// Words dragged from another card are over this one.
     @State private var textDropHover = false
 
@@ -739,6 +751,7 @@ struct CardView: View {
                 header(cps: cps, dur: dur, line: line, size: 9, cpsWord: false, showTime: true)
                 header(cps: cps, dur: dur, line: line, size: 9, cpsWord: false, showTime: false)
             }
+            .saturation(stepBack ? StepBack.rimSaturation : 1)
             .padding(.horizontal, 8)
             .padding(.top, 7)
             .padding(.bottom, 5)
@@ -788,6 +801,7 @@ struct CardView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 9)
                 .frame(maxWidth: .infinity, minHeight: 48)
+                .saturation(stepBack ? StepBack.saturation : 1)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.45)))
                 .overlay(alignment: .topTrailing) {
                     // An empty title that will be italic when you type or paste into it.
@@ -819,6 +833,7 @@ struct CardView: View {
             // Left status cap, like a console indicator.
             Capsule()
                 .fill(Theme.status(preset.status(sub)))
+                .saturation(stepBack ? StepBack.saturation : 1)
                 .frame(width: 3)
                 .padding(.vertical, 10)
                 .offset(x: -1.5)
@@ -829,6 +844,7 @@ struct CardView: View {
         .overlay(alignment: .bottomLeading) {
             if let marks = qcMarks, !marks.isEmpty {
                 QCTagMenu(model: model, track: track, sub: sub, marks: marks, muted: qcMuted)
+                    .saturation(stepBack ? StepBack.saturation : 1)
                     // Room on the right for the "esc" key on the text box's edge.
                     .frame(maxWidth: max(60, width - 76), alignment: .leading)
                     .padding(.leading, 12)
@@ -837,6 +853,8 @@ struct CardView: View {
         }
         // QC mode: titles with nothing to fix step back.
         .opacity(qcLook && qcMarks?.isEmpty == true && !isSelected && !inGroup ? 0.45 : 1)
+        // Stepping back (or forward) fades as the column's opacity does (see StepBack).
+        .animation(.easeOut(duration: 0.15), value: stepBack)
         // Words dragged out of the card being typed in can be dropped here (AppModel.dropText).
         .overlay(
             RoundedRectangle(cornerRadius: 10)
