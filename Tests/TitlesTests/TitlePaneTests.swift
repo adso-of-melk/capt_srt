@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import Titles
 @testable import TitlesCore
 
