@@ -236,6 +236,30 @@ extension AppModel {
     /// The narrowest the picture, control bar and waveform get.
     static let pictureMinWidth: CGFloat = 620
 
+    /// The least the picture gets above the waveform, and the waveform (title bar included)
+    /// below it.
+    static let videoMinHeight: CGFloat = 240
+    static let waveformMinHeight: CGFloat = 170
+    /// The waveform's height (title bar included) until its divider is dragged.
+    static let waveformDefaultHeight: CGFloat = 260
+
+    /// The waveform's height (title bar included) when the picture and waveform together are
+    /// this tall: what was dragged, or the usual height, kept between its minimum and what
+    /// leaves the picture its room.
+    func waveformPaneHeight(in total: CGFloat, divider: CGFloat) -> CGFloat {
+        let upper = max(Self.waveformMinHeight, total - Self.videoMinHeight - divider)
+        let wanted = waveformPaneHeight > 0 ? waveformPaneHeight : Self.waveformDefaultHeight
+        return min(max(wanted, Self.waveformMinHeight), upper)
+    }
+
+    /// Dragging the line between the picture and the waveform: the waveform takes this height,
+    /// as far as its limits allow.
+    func setWaveformPaneHeight(_ height: CGFloat, in total: CGFloat, divider: CGFloat) {
+        let upper = max(Self.waveformMinHeight, total - Self.videoMinHeight - divider)
+        let h = min(max(height, Self.waveformMinHeight), upper).rounded()
+        if abs(h - waveformPaneHeight) > 0.25 { waveformPaneHeight = h }
+    }
+
     /// The card pane's width for a window this wide: what was set (dragged, or sized when the
     /// project opened), kept between its minimum and what leaves the picture its room.
     func cardPaneWidth(in total: CGFloat, divider: CGFloat) -> CGFloat {

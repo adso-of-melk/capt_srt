@@ -47,6 +47,38 @@ final class TitlePaneTests: XCTestCase {
         XCTAssertLessThanOrEqual(f.model.cardPaneWidth(in: small, divider: divider), small - AppModel.pictureMinWidth - divider)
     }
 
+    func testTheWaveformDividerKeepsBothPanesTheirRoom() {
+        let f = makeFixture([("en", [sub(1, 2, "Short")])])
+        let height: CGFloat = 800
+        // At first: the usual height.
+        XCTAssertEqual(f.model.waveformPaneHeight(in: height, divider: divider), AppModel.waveformDefaultHeight)
+        // Dragged, it holds.
+        f.model.setWaveformPaneHeight(400, in: height, divider: divider)
+        XCTAssertEqual(f.model.waveformPaneHeight(in: height, divider: divider), 400)
+        // Never shorter than its minimum...
+        f.model.setWaveformPaneHeight(20, in: height, divider: divider)
+        XCTAssertEqual(f.model.waveformPaneHeight(in: height, divider: divider), AppModel.waveformMinHeight)
+        // ...nor so tall that the picture gets less than its own.
+        f.model.setWaveformPaneHeight(2000, in: height, divider: divider)
+        XCTAssertEqual(f.model.waveformPaneHeight(in: height, divider: divider),
+                       height - AppModel.videoMinHeight - divider)
+        // A shorter window takes the room from the waveform, down to its minimum.
+        XCTAssertEqual(f.model.waveformPaneHeight(in: 500, divider: divider), 500 - AppModel.videoMinHeight - divider)
+        XCTAssertEqual(f.model.waveformPaneHeight(in: 300, divider: divider), AppModel.waveformMinHeight)
+        // Double-click: back to the usual height.
+        f.model.waveformPaneHeight = 0
+        XCTAssertEqual(f.model.waveformPaneHeight(in: height, divider: divider), AppModel.waveformDefaultHeight)
+    }
+
+    func testDraggingADividerGrowsThePaneItMovesAwayFrom() {
+        // Upright: the card pane on its left grows as the line goes right.
+        XCTAssertEqual(PaneDivider.dragged(from: 500, to: 560, size: 400), 460)
+        XCTAssertEqual(PaneDivider.dragged(from: 500, to: 450, size: 400), 350)
+        // Lying flat: the waveform below it grows as the line goes up (window y grows upwards).
+        XCTAssertEqual(PaneDivider.dragged(from: 300, to: 340, size: 260), 300)
+        XCTAssertEqual(PaneDivider.dragged(from: 300, to: 250, size: 260), 210)
+    }
+
     func testColumnsShareThePaneAndWholeColumnsFillItWhenTheyScroll() {
         // Three share 600 points (less the margins and gaps) equally.
         XCTAssertEqual(AppModel.cardColumnWidth(pane: 600, count: 3, floor: 150), (600 - 24 - 16) / 3, accuracy: 0.01)

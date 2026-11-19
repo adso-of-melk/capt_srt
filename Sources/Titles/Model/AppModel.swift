@@ -161,6 +161,9 @@ final class AppModel: ObservableObject {
     /// The card pane's width as dragged (0: not set yet, it opens at `autoCardPaneWidth`).
     /// See `cardPaneWidth(in:divider:)`.
     @Published var cardPaneWidth: CGFloat = 0
+    /// The waveform's height, title bar included, as dragged (0: not set, it gets
+    /// `waveformDefaultHeight`). See `waveformPaneHeight(in:divider:)`.
+    @Published var waveformPaneHeight: CGFloat = 0
     /// See `updateCardColumnWidth()`.
     @Published var cardColumnMinWidth: CGFloat = 240
     /// The narrowest a card column gets (the widest line at half size). See `updateCardColumnWidth()`.
