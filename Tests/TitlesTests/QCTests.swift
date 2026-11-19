@@ -265,7 +265,7 @@ final class QCTests: XCTestCase {
         func height(_ marks: Set<QCIssue>?) -> CGFloat {
             let card = CardView(model: f.model, track: f.en, sub: a, number: 1, isSelected: false,
                                 inSelectedRow: false, isOverlapping: false, qcMarks: marks,
-                                preset: .general, compact: false, width: 260, text: .constant(a.text))
+                                preset: .general, compact: false, width: 260)
             return NSHostingView(rootView: card.frame(width: 260)).fittingSize.height
         }
         let plain = height(nil)

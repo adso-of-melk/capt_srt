@@ -100,6 +100,8 @@ final class InputController {
     /// Space put the cursor into a card; its key repeats are swallowed until another key.
     private var spaceOpenedCard = false
     private var shiftHeld = false
+    /// Sideways scrolling over the title pane, a whole language at a time.
+    private var columnStepper = ColumnStepper()
 
     init(model: AppModel) {
         self.model = model
@@ -203,9 +205,11 @@ final class InputController {
             return e
 
         case .scrollWheel:
-            guard let edge = Self.edge(for: flags), model.wheelJogOn, model.doc.selectedID != nil else { return e }
-            wheelJog(e, edge: edge, coarse: flags.contains(.shift))
-            return nil
+            if let edge = Self.edge(for: flags), model.wheelJogOn, model.doc.selectedID != nil {
+                wheelJog(e, edge: edge, coarse: flags.contains(.shift))
+                return nil
+            }
+            return sidewaysOverCards(e, model: model) ? nil : e
 
         case .keyDown:
             return keyDown(e, flags: flags, model: model)
@@ -605,6 +609,31 @@ final class InputController {
     }
 
     /// Wheel or two-finger swipe while Control / Option is held.
+    /// Sideways scrolling over the title pane goes a whole language at a time (see
+    /// ColumnStepper). True when the event is taken.
+    private func sidewaysOverCards(_ e: NSEvent, model: AppModel) -> Bool {
+        guard model.pointerOverCards else { return false }
+        let phase: ColumnStepper.Phase
+        if !e.momentumPhase.isEmpty {
+            phase = .momentum
+        } else if e.phase.contains(.began) {
+            phase = .began
+        } else if e.phase.contains(.changed) {
+            phase = .changed
+        } else if e.phase.contains(.ended) || e.phase.contains(.cancelled) {
+            phase = .ended
+        } else if e.phase.isEmpty {
+            phase = .none
+        } else {
+            return false        // fingers resting (mayBegin): nothing moves yet
+        }
+        let event = ColumnStepper.Event(dx: e.scrollingDeltaX, dy: e.scrollingDeltaY,
+                                        precise: e.hasPreciseScrollingDeltas, phase: phase, time: e.timestamp)
+        guard let move = columnStepper.feed(event) else { return false }
+        if move != 0 { model.columnSteps.send(move) }
+        return true
+    }
+
     private func wheelJog(_ e: NSEvent, edge: Edge, coarse: Bool) {
         guard let model, e.momentumPhase.isEmpty else { return }
         let d = abs(e.scrollingDeltaX) > abs(e.scrollingDeltaY) ? e.scrollingDeltaX : e.scrollingDeltaY

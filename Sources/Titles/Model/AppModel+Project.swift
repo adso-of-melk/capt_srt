@@ -139,7 +139,9 @@ extension AppModel {
                              gap: Double(rules.minGapFrames) * self.frameDuration, frame: self.frameDuration)
         }
         let watcher = track.doc.$selectedID.sink { [weak self] id in
-            if id != nil { self?.emptySlotRow = nil }
+            // Only when there is one to clear: setting it at all redraws the whole window,
+            // which made the picture stutter each time the playhead reached a title.
+            if id != nil, self?.emptySlotRow != nil { self?.emptySlotRow = nil }
         }
         selectionWatchers.append(watcher)
     }

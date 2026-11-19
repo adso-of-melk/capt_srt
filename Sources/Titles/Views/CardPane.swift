@@ -42,9 +42,19 @@ struct CardPane: View {
                 let total = width * count + gap * (count - 1) + 24
                 let overflows = total > geo.size.width + 1
                 let viewport = geo.size.width
+                let lastStop = ColumnStops.last(count: tracks.count, width: width, gap: gap, viewport: viewport)
                 ScrollViewReader { hProxy in
                     ScrollView(.horizontal, showsIndicators: false) {
                         VStack(spacing: 0) {
+                            // Where sideways scrolling stops: a marker every column along, so a
+                            // whole language always ends up at the left edge (ColumnStops).
+                            HStack(spacing: 0) {
+                                ForEach(0..<max(1, tracks.count), id: \.self) { k in
+                                    Color.clear.frame(width: width + gap, height: 0).id(ColumnStopID(index: k))
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(height: 0)
                             HStack(spacing: gap) {
                                 ForEach(tracks) { track in
                                     LanguageHeader(model: model, track: track, width: width, gap: gap)
@@ -70,9 +80,25 @@ struct CardPane: View {
                     .onPreferenceChange(CardColumnsScrollKey.self) { m in
                         MainActor.assumeIsolated { scroll.setColumns(m) }
                     }
+                    // Another language focused (⌘L, a click): bring its column into view,
+                    // still with a whole column at the left edge.
                     .onChange(of: model.video?.focusedTrackID) { _, id in
-                        guard let id else { return }
-                        withAnimation(.easeOut(duration: 0.15)) { hProxy.scrollTo(id) }
+                        guard overflows, let id, let index = tracks.firstIndex(where: { $0.id == id }) else { return }
+                        let current = ColumnStops.current(offset: scroll.columns.offset, width: width, gap: gap)
+                        let stop = ColumnStops.revealing(index, from: current,
+                                                         fit: ColumnStops.fitting(width: width, gap: gap, viewport: viewport),
+                                                         last: lastStop)
+                        guard stop != current else { return }
+                        withAnimation(.easeOut(duration: 0.15)) { hProxy.scrollTo(ColumnStopID(index: stop), anchor: .leading) }
+                    }
+                    // Sideways scrolling over the pane (wheel, trackpad): a whole column at a time.
+                    .onReceive(model.columnSteps) { move in
+                        guard overflows else { return }
+                        let current = ColumnStops.current(offset: scroll.columns.offset, width: width, gap: gap)
+                        guard let stop = scroll.columnStop(move: move, current: current, last: lastStop) else { return }
+                        withAnimation(.easeInOut(duration: 0.28)) {
+                            hProxy.scrollTo(ColumnStopID(index: stop), anchor: .leading)
+                        }
                     }
                     // Our own scroll bars, on the pane's edges whichever way it's scrolled.
                     .overlay(alignment: .topTrailing) {
@@ -82,15 +108,20 @@ struct CardPane: View {
                     }
                     .overlay(alignment: .bottom) {
                         if overflows {
-                            CardScrollBarH(tracker: scroll, columnIDs: tracks.map(\.id),
-                                           content: total, viewport: viewport) { id, anchor in
-                                withAnimation(.easeOut(duration: 0.12)) { hProxy.scrollTo(id, anchor: anchor) }
+                            CardScrollBarH(tracker: scroll, lastStop: lastStop,
+                                           content: total, viewport: viewport) { stop in
+                                withAnimation(.easeOut(duration: 0.12)) {
+                                    hProxy.scrollTo(ColumnStopID(index: stop), anchor: .leading)
+                                }
                             }
                             .padding(.trailing, CardScrollBarV.width)
                         }
                     }
                 }
             }
+            // For sideways scrolling a column at a time (see InputController).
+            .onHover { model.pointerOverCards = $0 }
+            .onDisappear { model.pointerOverCards = false }
         }
         .background(model.qcMode ? Theme.alertPanel : Theme.panel)
     }
@@ -143,7 +174,12 @@ struct CardPane: View {
             }
             .onChange(of: doc.selectedID) { _, id in
                 guard let id, let key = model.rowKey(ofSub: id) else { return }
-                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(key, anchor: .center) }
+                // Following the playhead: a slow, eased glide, so the list flows with the film
+                // instead of jumping at each title. Picked by hand (click, Tab): straight there.
+                let follow = model.clock.isPlaying
+                withAnimation(follow ? .easeInOut(duration: model.glideDuration(to: id)) : .easeOut(duration: 0.15)) {
+                    proxy.scrollTo(key, anchor: .center)
+                }
             }
             .onChange(of: model.cardScrollTarget) { _, id in
                 guard let id else { return }
@@ -174,14 +210,7 @@ struct CardPane: View {
                 qcLook: model.qcMode && isFocusedColumn,
                 preset: model.preset(for: track),
                 compact: model.openTracks.count > 1,
-                width: width,
-                text: Binding(
-                    get: { track.doc.subtitle(sub.id)?.text ?? "" },
-                    set: {
-                        track.doc.setText(sub.id, $0)
-                        model.typed(in: sub.id)
-                    }
-                )
+                width: width
             )
         } else {
             EmptySlot(isSelected: isFocusedColumn && model.emptySlotRow == row.key && doc.selectedID == nil,
@@ -201,6 +230,16 @@ struct CardPane: View {
                 }
         }
     }
+}
+
+/// Text sizes the cards have already worked out (see CardView.fittingSize).
+@MainActor
+private enum FittingSizes {
+    struct Key: Hashable {
+        let text: String
+        let width: CGFloat
+    }
+    static var known: [Key: CGFloat] = [:]
 }
 
 /// "Italics on" for an empty title: what's typed or pasted into it next is italic (⌘I: off).
@@ -468,8 +507,18 @@ struct CardView: View {
     static let baseFontSize: CGFloat = 15
 
     /// The largest size (up to 15 pt, down to half of that) at which the longest line fits
-    /// on one line.
+    /// on one line. Remembered, since every card on screen asks each time it's drawn.
+    @MainActor
     static func fittingSize(for text: String, width: CGFloat) -> CGFloat {
+        let key = FittingSizes.Key(text: text, width: width)
+        if let known = FittingSizes.known[key] { return known }
+        let size = measuredFittingSize(for: text, width: width)
+        if FittingSizes.known.count > 4000 { FittingSizes.known.removeAll(keepingCapacity: true) }
+        FittingSizes.known[key] = size
+        return size
+    }
+
+    private static func measuredFittingSize(for text: String, width: CGFloat) -> CGFloat {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map { String($0) as NSString }
         func widest(at size: CGFloat) -> CGFloat {
             let font = NSFont.systemFont(ofSize: size, weight: .medium)
@@ -590,7 +639,21 @@ struct CardView: View {
     let compact: Bool
     /// The card's width, so the text can shrink to keep the on-screen line breaks.
     let width: CGFloat
-    @Binding var text: String
+
+    /// The title's text as it is now (the row can lag a moment behind typing). Made here, not
+    /// handed in as a binding: a binding made of closures is never "the same" to SwiftUI, so
+    /// every card on screen was redrawn whenever anything changed (each time the playhead
+    /// reached a title, say), which made the picture stutter.
+    private var text: String { track.doc.subtitle(sub.id)?.text ?? sub.text }
+
+    private var textBinding: Binding<String> {
+        let doc = track.doc, id = sub.id, owner = self.model
+        return Binding(get: { doc.subtitle(id)?.text ?? "" },
+                       set: {
+                           doc.setText(id, $0)
+                           owner.typed(in: id)
+                       })
+    }
 
     var body: some View {
         let cps = preset.cpsStatus(sub)
@@ -622,7 +685,7 @@ struct CardView: View {
             Group {
                 if isSelected {
                     TitleEditor(
-                        text: $text,
+                        text: textBinding,
                         fontSize: fontSize,
                         focusNow: model.focusRequest == sub.id,
                         onFocusTaken: { if model.focusRequest != nil { model.focusRequest = nil } },

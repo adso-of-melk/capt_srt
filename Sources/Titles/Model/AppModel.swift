@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import Combine
 import UniformTypeIdentifiers
 @testable import TitlesCore
 
@@ -529,6 +530,26 @@ final class AppModel: ObservableObject {
 
     /// Card the list should scroll to centre, without selecting it.
     @Published var cardScrollTarget: UUID?
+
+    /// Sideways scrolling over the title pane: columns to move (+ on to the later languages,
+    /// - back). See ColumnStepper.
+    let columnSteps = PassthroughSubject<Int, Never>()
+    /// The pointer is over the title pane (not published: nothing redraws for it).
+    var pointerOverCards = false
+
+    /// While playing, the cards glide to each title the playhead reaches instead of jumping:
+    /// for about half the time until the next title starts (0.3 to 0.9 s), so the list keeps
+    /// moving smoothly without falling behind.
+    static func glideDuration(untilNext gap: Double?) -> Double {
+        guard let gap, gap > 0 else { return 0.6 }
+        return min(0.9, max(0.3, gap * 0.5))
+    }
+
+    func glideDuration(to id: UUID) -> Double {
+        guard let s = doc.subtitle(id) else { return Self.glideDuration(untilNext: nil) }
+        let next = doc.subtitles.lazy.map(\.start).filter { $0 > s.start + 0.001 }.min()
+        return Self.glideDuration(untilNext: next.map { $0 - s.start })
+    }
 
     /// The editor window; keyboard and mouse handling ignores every other window
     /// (Settings, sheets), so typing there can't change titles.

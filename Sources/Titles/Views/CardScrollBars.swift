@@ -25,6 +25,10 @@ final class CardScrollTracker: ObservableObject {
     /// Rows to scroll to, from the up-down bar.
     let rowRequests = PassthroughSubject<Request, Never>()
     private var fade: Task<Void, Never>?
+    private var fadeAt = Date.distantPast
+    /// The column last asked for sideways, and when: steps that come quickly (a wheel
+    /// spun several notches) count on from it, not from where the pane has got to so far.
+    private var columnAsked: (stop: Int, at: Date)?
 
     func setRows(offset: CGFloat? = nil, content: CGFloat? = nil, viewport: CGFloat? = nil) {
         var m = rows
@@ -45,14 +49,28 @@ final class CardScrollTracker: ObservableObject {
     }
 
     /// Lights the bars, and fades them back a little over a second after the last call.
+    /// (Called on every frame of a scroll: it only moves the fade's time on.)
     func light() {
         if !lit { lit = true }
-        fade?.cancel()
+        fadeAt = Date().addingTimeInterval(1.2)
+        guard fade == nil else { return }
         fade = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            guard !Task.isCancelled else { return }
+            while let wait = self?.fadeAt.timeIntervalSinceNow, wait > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000) + 1_000_000)
+            }
             self?.lit = false
+            self?.fade = nil
         }
+    }
+
+    /// The column to put at the pane's left edge for a sideways step of `move` columns, or
+    /// nil if it's already there. `current`: the column at the left edge now.
+    func columnStop(move: Int, current: Int, last: Int, now: Date = Date()) -> Int? {
+        let from: Int
+        if let asked = columnAsked, now.timeIntervalSince(asked.at) < 0.5 { from = asked.stop } else { from = current }
+        let to = min(last, max(0, from + move))
+        columnAsked = (to, now)
+        return to == current && to == from ? nil : to
     }
 
     /// The row to scroll to for a point on the up-down bar (`fraction`: 0 at the top of the
@@ -64,6 +82,39 @@ final class CardScrollTracker: ObservableObject {
         let index = Int((room * max(0, fraction)).rounded())
         return (min(count - 1, max(0, index)), .top)
     }
+}
+
+/// Where the title pane stops when it scrolls sideways: with a whole language column at its
+/// left edge (column `k` there when scrolled `k` columns along).
+enum ColumnStops {
+    /// The last column that can be at the left edge (the rest fill the pane to its right).
+    static func last(count: Int, width: CGFloat, gap: CGFloat, viewport: CGFloat, margins: CGFloat = 24) -> Int {
+        let fit = fitting(width: width, gap: gap, viewport: viewport, margins: margins)
+        return max(0, count - fit)
+    }
+
+    /// How many whole columns the pane shows.
+    static func fitting(width: CGFloat, gap: CGFloat, viewport: CGFloat, margins: CGFloat = 24) -> Int {
+        max(1, Int(((viewport - margins + gap) / (width + gap) + 0.01).rounded(.down)))
+    }
+
+    /// The column at the left edge when scrolled this far.
+    static func current(offset: CGFloat, width: CGFloat, gap: CGFloat) -> Int {
+        max(0, Int((offset / (width + gap)).rounded()))
+    }
+
+    /// The stop that brings column `index` into view from stop `current` (moving as little
+    /// as it can), with `fit` columns in view.
+    static func revealing(_ index: Int, from current: Int, fit: Int, last: Int) -> Int {
+        let to: Int
+        if index < current { to = index } else if index > current + fit - 1 { to = index - fit + 1 } else { to = current }
+        return min(last, max(0, to))
+    }
+}
+
+/// The scroll target for sideways stop `k`: a marker `k` column-widths along the pane.
+struct ColumnStopID: Hashable {
+    let index: Int
 }
 
 /// How far one of the title pane's scroll views is scrolled, and how much there is.
@@ -182,17 +233,17 @@ struct CardScrollBarH: View {
     static let height: CGFloat = 12
 
     @ObservedObject var tracker: CardScrollTracker
-    /// The open languages, in order.
-    let columnIDs: [UUID]
+    /// The last column that can be at the pane's left edge (see ColumnStops).
+    let lastStop: Int
     /// How wide all the columns are together, and how much of that the pane shows (from the
     /// pane's layout; only how far it's scrolled comes from the scroll view).
     let content: CGFloat
     let viewport: CGFloat
-    /// Scrolls the pane to a language's column.
-    let scrollTo: (UUID, UnitPoint) -> Void
+    /// Scrolls the pane so this column is at its left edge.
+    let scrollTo: (Int) -> Void
     @State private var hover = false
     @State private var dragging = false
-    @State private var lastRequest: UUID?
+    @State private var lastRequest: Int?
 
     var body: some View {
         GeometryReader { geo in
@@ -235,13 +286,17 @@ struct CardScrollBarH: View {
 
     private func scroll(toX x: CGFloat, width w: CGFloat, thumbWidth: CGFloat) {
         let m = CardScrollMetrics(offset: tracker.columns.offset, content: content, viewport: viewport)
-        guard !columnIDs.isEmpty, m.overflows else { return }
+        guard m.overflows else { return }
         let fraction = (x - thumbWidth / 2) / max(1, w - thumbWidth)
-        guard let target = CardScrollTracker.rowTarget(fraction: fraction, count: columnIDs.count,
-                                                       share: m.share) else { return }
-        let id = columnIDs[target.index]
-        guard id != lastRequest else { return }
-        lastRequest = id
-        scrollTo(id, target.anchor == .bottom ? .trailing : .leading)
+        let stop = Self.stop(fraction: fraction, last: lastStop)
+        guard stop != lastRequest else { return }
+        lastRequest = stop
+        scrollTo(stop)
+    }
+
+    /// The column to put at the left edge for a point on the bar (0 at the start of the
+    /// thumb's travel, 1 at its end).
+    static func stop(fraction: CGFloat, last: Int) -> Int {
+        Int((CGFloat(last) * min(1, max(0, fraction))).rounded())
     }
 }
