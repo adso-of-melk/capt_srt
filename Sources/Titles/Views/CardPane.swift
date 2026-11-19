@@ -9,6 +9,13 @@ struct CardPane: View {
     @ObservedObject var model: AppModel
     /// The focused language's titles.
     @ObservedObject var doc: SubtitleDocument
+    /// Where the pane is scrolled to, for its own scroll bars. Held, not observed, so
+    /// scrolling redraws only the bars.
+    @State private var scroll = CardScrollTracker()
+    private static let columnsSpace = "cardColumns"
+    private static let rowsSpace = "cardRows"
+    /// The language bars above the cards (26 points and their padding).
+    private static let headerRowHeight: CGFloat = 38
 
     var body: some View {
         let tracks = model.openTracks
@@ -29,12 +36,14 @@ struct CardPane: View {
             GeometryReader { geo in
                 let gap: CGFloat = 8
                 let count = CGFloat(max(1, tracks.count))
-                let usable = geo.size.width - 24 - gap * (count - 1)
                 // Columns share the pane; narrower than full size, the text shrinks instead.
-                let width = max(model.cardColumnFloor, usable / count)
+                let width = AppModel.cardColumnWidth(pane: geo.size.width, count: tracks.count,
+                                                     floor: model.cardColumnFloor, gap: gap)
                 let total = width * count + gap * (count - 1) + 24
+                let overflows = total > geo.size.width + 1
+                let viewport = geo.size.width
                 ScrollViewReader { hProxy in
-                    ScrollView(.horizontal, showsIndicators: total > geo.size.width + 1) {
+                    ScrollView(.horizontal, showsIndicators: false) {
                         VStack(spacing: 0) {
                             HStack(spacing: gap) {
                                 ForEach(tracks) { track in
@@ -51,10 +60,34 @@ struct CardPane: View {
                             rowsList(tracks: tracks, width: width, gap: gap)
                         }
                         .frame(width: max(total, geo.size.width), height: geo.size.height, alignment: .top)
+                        .background(GeometryReader { g in
+                            Color.clear.preference(key: CardColumnsScrollKey.self,
+                                                   value: CardScrollMetrics(offset: -g.frame(in: .named(Self.columnsSpace)).minX,
+                                                                            content: g.size.width, viewport: viewport))
+                        })
+                    }
+                    .coordinateSpace(.named(Self.columnsSpace))
+                    .onPreferenceChange(CardColumnsScrollKey.self) { m in
+                        MainActor.assumeIsolated { scroll.setColumns(m) }
                     }
                     .onChange(of: model.video?.focusedTrackID) { _, id in
                         guard let id else { return }
                         withAnimation(.easeOut(duration: 0.15)) { hProxy.scrollTo(id) }
+                    }
+                    // Our own scroll bars, on the pane's edges whichever way it's scrolled.
+                    .overlay(alignment: .topTrailing) {
+                        CardScrollBarV(tracker: scroll, clock: model.clock, rows: model.rows,
+                                       issueRows: model.qcTickRows())
+                            .padding(.top, Self.headerRowHeight)
+                            .padding(.bottom, overflows ? CardScrollBarH.height : 0)
+                    }
+                    .overlay(alignment: .bottom) {
+                        if overflows {
+                            CardScrollBarH(tracker: scroll, columnIDs: tracks.map(\.id)) { id, anchor in
+                                withAnimation(.easeOut(duration: 0.12)) { hProxy.scrollTo(id, anchor: anchor) }
+                            }
+                            .padding(.trailing, CardScrollBarV.width)
+                        }
                     }
                 }
             }
@@ -68,7 +101,7 @@ struct CardPane: View {
         let selectedRow = model.selectedRowKey
         let overlaps = doc.overlappingIDs
         ScrollViewReader { proxy in
-            ScrollView(.vertical) {
+            ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 8) {
                     ForEach(Array(model.rows.enumerated()), id: \.element.key) { index, row in
                         HStack(alignment: .top, spacing: gap) {
@@ -78,6 +111,7 @@ struct CardPane: View {
                                 cell(row: row, number: index + 1, track: track, width: width, isFocusedColumn: track.id == focusedID,
                                      inSelectedRow: row.key == selectedRow && track.id == focusedID, overlaps: overlaps)
                                     .frame(width: width)
+                                    .modifier(StepBack(on: model.columnStepsBack(track.id)))
                             }
                         }
                         .id(row.key)
@@ -87,6 +121,25 @@ struct CardPane: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
                 .padding(.top, 2)
+                .background(GeometryReader { g in
+                    Color.clear.preference(key: CardRowsScrollKey.self,
+                                           value: CardScrollMetrics(offset: -g.frame(in: .named(Self.rowsSpace)).minY,
+                                                                    content: g.size.height))
+                })
+            }
+            .coordinateSpace(.named(Self.rowsSpace))
+            .background(GeometryReader { g in
+                Color.clear.preference(key: CardRowsViewportKey.self, value: g.size.height)
+            })
+            .onPreferenceChange(CardRowsScrollKey.self) { m in
+                MainActor.assumeIsolated { scroll.setRows(offset: m.offset, content: m.content) }
+            }
+            .onPreferenceChange(CardRowsViewportKey.self) { h in
+                MainActor.assumeIsolated { scroll.setRows(viewport: h) }
+            }
+            // A click or drag on the scroll bar.
+            .onReceive(scroll.rowRequests) { request in
+                proxy.scrollTo(request.id, anchor: request.anchor)
             }
             .onChange(of: doc.selectedID) { _, id in
                 guard let id, let key = model.rowKey(ofSub: id) else { return }
@@ -271,6 +324,14 @@ private struct LanguageHeader: View {
         .frame(width: width, height: 26)
         .background(RoundedRectangle(cornerRadius: 7).fill(isFocused ? Theme.amber.opacity(0.12) : Theme.panelRaised.opacity(0.6)))
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(isFocused ? Theme.amber.opacity(0.8) : Theme.rule, lineWidth: 1))
+        // The language being worked in: an amber rail under its bar, as the waveform marks
+        // the selected title in amber.
+        .overlay(alignment: .bottom) {
+            if isFocused && (model.video?.openTrackIDs.count ?? 0) > 1 {
+                Capsule().fill(Theme.amber).frame(height: 2).padding(.horizontal, 12).offset(y: 5)
+            }
+        }
+        .modifier(StepBack(on: model.columnStepsBack(track.id)))
         .contentShape(Rectangle())
         .offset(x: dragX)
         .shadow(color: .black.opacity(dragX == 0 ? 0 : 0.5), radius: 6, y: 2)
@@ -296,6 +357,22 @@ private struct LanguageHeader: View {
         )
         .help("Drag to move the column; click to work in this language")
         .contextMenu { LanguageMenuItems(model: model, track: track) }
+    }
+}
+
+/// A language column that isn't in focus steps back: its colours duller (purples toward
+/// slate) and a third of the way toward the pane's background, text included. The focused
+/// column keeps its full colours.
+struct StepBack: ViewModifier {
+    let on: Bool
+    static let saturation = 0.4
+    static let opacity = 0.7
+
+    func body(content: Content) -> some View {
+        content
+            .saturation(on ? Self.saturation : 1)
+            .opacity(on ? Self.opacity : 1)
+            .animation(.easeOut(duration: 0.15), value: on)
     }
 }
 
@@ -421,6 +498,71 @@ struct CardView: View {
         return a
     }
 
+    /// One way of laying out the header strip (see the `ViewThatFits` in `body`).
+    @ViewBuilder
+    private func header(cps: TimingStatus, dur: TimingStatus, line: TimingStatus, size: CGFloat,
+                        cpsWord: Bool, showTime: Bool) -> some View {
+        HStack(spacing: 6) {
+            Text("\(number)")
+                .font(Theme.label(12, .heavy))
+                .foregroundStyle(Theme.background)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(minWidth: 26)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(isSelected ? Theme.amber : Theme.periwinkle.opacity(0.75)))
+                .onTapGesture(count: 2) {
+                    if model.video?.focusedTrackID != track.id { model.focusTrack(track.id, edit: false) }
+                    model.playTitle(sub.id)
+                }
+                .help("Double-click to play this title")
+            if showTime {
+                Text(model.tc(sub.start))
+                    .font(Theme.mono(size))
+                    .foregroundStyle(Theme.textDim)
+                    .lineLimit(1)
+                    .fixedSize()
+                if !compact {
+                    Text("→").font(Theme.mono(size)).foregroundStyle(Theme.textFaint)
+                    Text(model.tc(sub.end))
+                        .font(Theme.mono(size))
+                        .foregroundStyle(Theme.textDim)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            }
+            if track.locked { Image(systemName: "lock.fill").font(.system(size: 8)).foregroundStyle(Theme.lilac) }
+            Spacer(minLength: 4)
+            if isOverlapping { Chip(text: "OVERLAP", color: Theme.lilac, size: size).fixedSize() }
+            // Another language's column: CPL and CPS stay in the quiet blue of its cards,
+            // with only a rim in the warning colour, so they nudge without shouting.
+            if line == .bad {
+                if qcMuted {
+                    Chip(text: "\(preset.longestLine(sub)) CPL", color: Theme.periwinkle, outline: Theme.status(line), size: size)
+                        .fixedSize()
+                } else {
+                    Chip(text: "\(preset.longestLine(sub)) CPL", color: Theme.status(line), filled: true, size: size)
+                        .fixedSize()
+                }
+            }
+            if !compact {
+                Chip(text: String(format: "%.2fs", sub.duration), color: qcMuted ? Theme.periwinkle : Theme.status(dur), size: size)
+                    .fixedSize()
+            }
+            Group {
+                if qcMuted {
+                    Chip(text: String(format: cpsWord ? "%.1f CPS" : "%.1f", sub.cps), color: Theme.periwinkle,
+                         outline: cps == .ok ? nil : Theme.status(cps), size: size)
+                } else {
+                    Chip(text: String(format: cpsWord ? "%.1f CPS" : "%.1f", sub.cps), color: Theme.status(cps),
+                         filled: cps == .bad, size: size)
+                }
+            }
+            .fixedSize()
+            .help(String(format: "%.2f characters per second (max %g)", sub.cps, preset.maxCPS))
+        }
+    }
+
     private func decoratedText() -> AttributedString {
         let misspelled = model.checksSpelling(track)
             ? SpellService.shared.misspelled(in: Markup.plain(sub.text), language: track.language.code) : []
@@ -457,49 +599,14 @@ struct CardView: View {
         let accent = isSelected || inGroup ? Theme.amber : (inSelectedRow ? Theme.amber.opacity(0.4) : Theme.rule)
 
         VStack(spacing: 0) {
-            // Header strip: number, in/out times, duration, CPS.
-            HStack(spacing: 6) {
-                Text("\(number)")
-                    .font(Theme.label(12, .heavy))
-                    .foregroundStyle(Theme.background)
-                    .frame(minWidth: 26)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(isSelected ? Theme.amber : Theme.periwinkle.opacity(0.75)))
-                    .onTapGesture(count: 2) {
-                        if model.video?.focusedTrackID != track.id { model.focusTrack(track.id, edit: false) }
-                        model.playTitle(sub.id)
-                    }
-                    .help("Double-click to play this title")
-                Text(model.tc(sub.start))
-                    .font(Theme.mono(10))
-                    .foregroundStyle(Theme.textDim)
-                    .lineLimit(1)
-                if !compact {
-                    Text("→").font(Theme.mono(10)).foregroundStyle(Theme.textFaint)
-                    Text(model.tc(sub.end))
-                        .font(Theme.mono(10))
-                        .foregroundStyle(Theme.textDim)
-                        .lineLimit(1)
-                }
-                if track.locked { Image(systemName: "lock.fill").font(.system(size: 8)).foregroundStyle(Theme.lilac) }
-                Spacer(minLength: 4)
-                if isOverlapping { Chip(text: "OVERLAP", color: Theme.lilac) }
-                // Another language's column: CPL and CPS stay in the quiet blue of its cards,
-                // with only a rim in the warning colour, so they nudge without shouting.
-                if line == .bad {
-                    if qcMuted {
-                        Chip(text: "\(preset.longestLine(sub)) CPL", color: Theme.periwinkle, outline: Theme.status(line))
-                    } else {
-                        Chip(text: "\(preset.longestLine(sub)) CPL", color: Theme.status(line), filled: true)
-                    }
-                }
-                if !compact { Chip(text: String(format: "%.2fs", sub.duration), color: qcMuted ? Theme.periwinkle : Theme.status(dur)) }
-                if qcMuted {
-                    Chip(text: String(format: "%.1f CPS", sub.cps), color: Theme.periwinkle,
-                         outline: cps == .ok ? nil : Theme.status(cps))
-                } else {
-                    Chip(text: String(format: "%.1f CPS", sub.cps), color: Theme.status(cps), filled: cps == .bad)
-                }
+            // Header strip: number, in/out times, duration, CPS. Always one line, so every
+            // card's header is the same height: narrower cards get smaller chips, then the CPS
+            // chip without the word, then no timecode (it's on the waveform and in the title bar).
+            ViewThatFits(in: .horizontal) {
+                header(cps: cps, dur: dur, line: line, size: 10, cpsWord: true, showTime: true)
+                header(cps: cps, dur: dur, line: line, size: 9, cpsWord: true, showTime: true)
+                header(cps: cps, dur: dur, line: line, size: 9, cpsWord: false, showTime: true)
+                header(cps: cps, dur: dur, line: line, size: 9, cpsWord: false, showTime: false)
             }
             .padding(.horizontal, 8)
             .padding(.top, 7)

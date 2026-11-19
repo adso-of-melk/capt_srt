@@ -58,6 +58,19 @@ extension AppModel {
 
     func rowKey(ofSub id: UUID) -> UUID? { rowOfSub[id].map { rows[$0].key } }
 
+    /// The last row starting at or before `time` (the first row before any starts), for the
+    /// playhead's mark on the title pane's scroll bar. Rows are in time order.
+    static func rowIndex(at time: Double, in rows: [CardRow]) -> Int? {
+        guard !rows.isEmpty else { return nil }
+        var lo = 0, hi = rows.count - 1
+        guard rows[0].time <= time + 0.0005 else { return 0 }
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if rows[mid].time <= time + 0.0005 { lo = mid } else { hi = mid - 1 }
+        }
+        return lo
+    }
+
     /// The 1-based row number shown on cards and waveform boxes.
     /// Each language is numbered on its own, in time order.
     func rowNumber(of id: UUID) -> Int? { numberOfSub[id] }
@@ -97,6 +110,13 @@ extension AppModel {
               let i = video.openTrackIDs.firstIndex(of: current), video.openTrackIDs.count > 1 else { return }
         let n = video.openTrackIDs.count
         focusTrack(video.openTrackIDs[((i + delta) % n + n) % n])
+    }
+
+    /// With more than one language open, the columns not in focus step back (duller and
+    /// darker) so it's clear which language a change goes to.
+    func columnStepsBack(_ trackID: UUID) -> Bool {
+        guard let video, video.openTrackIDs.count > 1 else { return false }
+        return video.focusedTrackID != trackID
     }
 
     /// ⌘1–⌘9.
@@ -141,6 +161,10 @@ extension AppModel {
         if let video, !isSyncingLocks, track.id == video.masterTrackID || track.locked {
             enforceLocks(in: video)
         }
+        // For sorting by Last Edited.
+        let owns: (VideoItem) -> Bool = { v in v.tracks.contains { t in t === track } }
+        let owner: VideoItem? = video.map(owns) == true ? video : project?.videos.first(where: owns)
+        owner?.edited = Date()
         scheduleRefresh()
         scheduleAutosave()
     }
@@ -242,22 +266,43 @@ extension AppModel {
         if abs(w - cardPaneWidth) > 0.25 { cardPaneWidth = w }
     }
 
-    /// A language was added: a card pane set narrower than its columns need at full size (up
-    /// to three of them) widens to fit them, as far as the picture's room allows. Never narrows.
-    func widenCardPaneForColumns(divider: CGFloat) {
-        guard cardPaneWidth > 0, let total = mainWindow?.contentView?.bounds.width, total > 0 else { return }
-        let count = CGFloat(min(3, max(1, openTracks.count)))
-        let columns = count * cardColumnMinWidth + (count - 1) * 8 + 24
-        if columns > cardPaneWidth { setCardPaneWidth(columns, in: total, divider: divider) }
+    /// A language column opened or closed: the card pane goes back to sizing itself
+    /// (`autoCardPaneWidth`), so it grows and shrinks with the languages. A width dragged
+    /// by hand holds until then.
+    func openColumnsChanged() {
+        if cardPaneWidth != 0 { cardPaneWidth = 0 }
     }
 
-    /// The width the card pane opens at: a quarter of the window, or more so the open
-    /// languages' columns fit at full size (up to three of them; more scroll sideways).
+    /// The most of the window the card pane takes when it sizes itself; the rest is kept
+    /// for the picture and the waveform.
+    static let cardPaneShare: CGFloat = 0.4
+
+    /// The width the card pane sizes itself to: every open language at full size (one
+    /// alone gets at least a quarter of the window), as long as that's within 40 % of the
+    /// window. Past that it stays at 40 %, the columns narrowing equally down to their
+    /// narrowest; past that they scroll sideways. Never so wide that the picture gets less
+    /// than its minimum.
     func autoCardPaneWidth(in total: CGFloat, divider: CGFloat) -> CGFloat {
-        let count = CGFloat(min(3, max(1, openTracks.count)))
-        let columns = count * cardColumnMinWidth + (count - 1) * 8 + 24
-        let upper = max(cardPaneMinWidth(in: total), total - Self.pictureMinWidth - divider)
-        return min(max(cardPaneMinWidth(in: total), (total * 0.25).rounded(), columns), upper)
+        let lower = cardPaneMinWidth(in: total)
+        let upper = max(lower, total - Self.pictureMinWidth - divider)
+        let count = CGFloat(max(1, openTracks.count))
+        var wanted = count * cardColumnMinWidth + (count - 1) * 8 + 24
+        if count == 1 { wanted = max(wanted, (total * 0.25).rounded()) }
+        let budget = max(lower, min(upper, (total * Self.cardPaneShare).rounded()))
+        return min(max(wanted, lower), budget)
+    }
+
+    /// How wide each language column is in a card pane this wide (`margins`: the pane's
+    /// padding either side together). The columns share the pane equally; when that would
+    /// make them narrower than `floor`, as many as fit at `floor` or wider fill the pane and
+    /// the rest are scrolled to, so whole columns fill it.
+    static func cardColumnWidth(pane: CGFloat, count: Int, floor: CGFloat, gap: CGFloat = 8,
+                                margins: CGFloat = 24) -> CGFloat {
+        let n = CGFloat(max(1, count))
+        let shared = (pane - margins - gap * (n - 1)) / n
+        if shared >= floor { return shared }
+        let fit = max(1, ((pane - margins + gap) / (floor + gap)).rounded(.down))
+        return max(floor, (pane - margins - gap * (fit - 1)) / fit)
     }
 
     /// Locked languages always have exactly the master's titles and timings; text is kept by link.
@@ -558,7 +603,9 @@ extension AppModel {
     /// Shows a project in the editor.
     /// `saveCurrent: false` when the open project is being thrown away on purpose (reload,
     /// restore), so it isn't written over the file that's about to be loaded.
-    func load(_ project: Project, currentVideoID: UUID?, saveCurrent: Bool = true) {
+    /// `overview`: show the project view rather than the editor (nil: when the project has
+    /// more than one video, so the person picks which one to work on).
+    func load(_ project: Project, currentVideoID: UUID?, saveCurrent: Bool = true, overview: Bool? = nil) {
         closeProject(save: saveCurrent)
         self.project = project
         for v in project.videos { v.tracks.forEach(attach) }
@@ -566,6 +613,14 @@ extension AppModel {
         showHome = false
         rememberProject()
         if let v = project.video(currentVideoID) ?? project.videos.first { switchVideo(v) }
+        if overview ?? (project.videos.count > 1) { showProjectView = true }
+    }
+
+    /// The project view's Sort menu.
+    func setVideoSort(_ sort: VideoSort) {
+        guard let project, project.videoSort != sort else { return }
+        project.videoSort = sort
+        scheduleAutosave()
     }
 
     /// Saves and closes the current project (nothing is lost: projects autosave).
@@ -820,7 +875,8 @@ extension AppModel {
             do {
                 let data = try Data(contentsOf: local)
                 let file = try ProjectStore.decode(data)
-                self.load(Project(file, fileURL: url), currentVideoID: current ?? file.currentVideoID, saveCurrent: false)
+                self.load(Project(file, fileURL: url), currentVideoID: current ?? file.currentVideoID, saveCurrent: false,
+                          overview: false)
                 try? ProjectStore.writeLocalCopy(data, id: file.id)
                 self.flash("Reloaded from \(url.lastPathComponent)")
             } catch {
@@ -845,7 +901,8 @@ extension AppModel {
                 ProjectStore.writeBackup(current, id: project.id)
             }
             let keepURL = project.fileURL
-            load(Project(file, fileURL: keepURL), currentVideoID: video?.id ?? file.currentVideoID, saveCurrent: false)
+            load(Project(file, fileURL: keepURL), currentVideoID: video?.id ?? file.currentVideoID, saveCurrent: false,
+                 overview: false)
             saveProject(announce: false)
             flash("Restored the backup from \(url.deletingPathExtension().lastPathComponent)")
         } catch {

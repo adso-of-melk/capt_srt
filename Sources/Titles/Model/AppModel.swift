@@ -145,6 +145,8 @@ final class AppModel: ObservableObject {
     }
     /// The QC bar's counts as last worked out, and what from: see `qcCounts()`.
     var qcCountMemo: (key: QCCountKey, counts: [QCIssue: Int])?
+    /// The scroll bar's issue marks as last worked out: see `qcTickRows()`.
+    var qcTickMemo: (key: QCTickKey, rows: [Int])?
 
     // Fine-tuning with Control/Option held (Settings ▸ Jogging).
     /// Moving the mouse moves the edge.

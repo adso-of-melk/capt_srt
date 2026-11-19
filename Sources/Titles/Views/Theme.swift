@@ -129,10 +129,12 @@ struct Chip: View {
     var filled = false
     /// A rim in its own colour (e.g. red round a quiet blue chip).
     var outline: Color? = nil
+    var size: CGFloat = 10
 
     var body: some View {
         Text(text)
-            .font(Theme.label(10, .bold))
+            .font(Theme.label(size, .bold))
+            .lineLimit(1)
             .tracking(0.6)
             .foregroundStyle(filled ? Theme.background : color)
             .padding(.horizontal, 7)

@@ -94,8 +94,9 @@ struct MainView: View {
         }
         // A new project opens with the card pane at its usual width.
         .onChange(of: model.project?.id) { _, _ in model.cardPaneWidth = 0 }
-        .onChange(of: model.openTracks.count) { old, new in
-            if new > old { model.widenCardPaneForColumns(divider: PaneDivider.thickness) }
+        // Opening or closing a language resizes the card pane to fit the languages.
+        .onChange(of: model.openTracks.count) { _, _ in
+            withAnimation(.easeOut(duration: 0.2)) { model.openColumnsChanged() }
         }
     }
 

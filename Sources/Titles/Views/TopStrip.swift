@@ -63,7 +63,7 @@ private struct VideoSwitcher: View {
 
     var body: some View {
         Menu {
-            ForEach(project.videos) { v in
+            ForEach(project.sortedVideos) { v in
                 Button {
                     model.switchVideo(v)
                 } label: {

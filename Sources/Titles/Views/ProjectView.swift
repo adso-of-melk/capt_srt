@@ -31,6 +31,19 @@ struct ProjectView: View {
                         .font(Theme.label(11, .regular)).foregroundStyle(Theme.textDim)
                 }
                 Spacer()
+                Menu {
+                    Picker("Sort By", selection: Binding(get: { project.videoSort }, set: { model.setVideoSort($0) })) {
+                        ForEach(VideoSort.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    Text("Sort: \(project.videoSort.title)")
+                        .font(Theme.label(11, .semibold))
+                        .foregroundStyle(Theme.textDim)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("List the videos by name, by when they were added (newest first) or by when they were last edited (latest first)")
                 Button("Add Video…") { model.addVideoPanel() }
                     .buttonStyle(ConsoleButtonStyle())
                 Button("Add Video Link…") { model.sheet = .openLink }
@@ -42,7 +55,7 @@ struct ProjectView: View {
 
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 14)], spacing: 14) {
-                    ForEach(project.videos) { v in
+                    ForEach(project.sortedVideos) { v in
                         VideoCard(model: model, video: v, isCurrent: v === model.video)
                     }
                 }
@@ -86,13 +99,18 @@ private struct VideoCard: View {
             // Wraps onto more lines when there are many languages.
             FlowLayout(spacing: 6) {
                 ForEach(video.tracks) { track in
-                    Chip(text: "\(track.language.code.uppercased()) \(track.doc.subtitles.count)",
+                    let count = track.doc.subtitles.count
+                    Chip(text: track.language.code.uppercased(),
                          color: track.id == video.masterTrackID ? Theme.peach : Theme.periwinkle)
+                        .help("\(track.language.name): \(count) title\(count == 1 ? "" : "s")"
+                              + (track.id == video.masterTrackID ? " (master)" : ""))
                 }
             }
             HStack(spacing: 8) {
                 Button("Open") { model.openVideoFromOverview(video) }
                     .buttonStyle(ConsoleButtonStyle())
+                    // Return goes back into the video worked on last.
+                    .keyboardShortcut(isCurrent ? .defaultAction : nil)
                 Button(missing ? "Locate…" : "Replace File…") { model.replaceVideoPanel(for: video) }
                     .buttonStyle(ConsoleButtonStyle(color: missing ? Theme.red : Theme.periwinkle, secondary: true))
                 Spacer()

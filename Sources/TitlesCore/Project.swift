@@ -114,6 +114,10 @@ struct VideoFile: Codable, Sendable {
     var tracks: [TrackFile]
     var openTrackIDs: [UUID]
     var focusedTrackID: UUID?
+    /// When the video was added to the project (absent in older projects).
+    var added: Date? = nil
+    /// When any of its titles last changed (absent until the first edit).
+    var edited: Date? = nil
 }
 
 struct ProjectFile: Codable, Sendable {
@@ -124,6 +128,28 @@ struct ProjectFile: Codable, Sendable {
     var settings: ProjectSettings
     var videos: [VideoFile]
     var currentVideoID: UUID?
+    /// How the project view lists the videos (absent: by name).
+    var videoSort: VideoSort? = nil
+}
+
+/// How the project view (and the video menu) lists a project's videos.
+enum VideoSort: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// A to Z, numbers by value (episode 2 before episode 10), as the Finder does.
+    case name
+    /// Newest first; videos from before dates were kept stay in the project's order, after them.
+    case added
+    /// Most recently edited first; videos never edited come after, in the project's order.
+    case edited
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .name: return "Name"
+        case .added: return "Date Added"
+        case .edited: return "Last Edited"
+        }
+    }
 }
 
 // MARK: - Runtime model
@@ -190,8 +216,13 @@ final class VideoItem: ObservableObject, Identifiable {
     /// Languages shown as columns (and waveform lanes), in order.
     @Published var openTrackIDs: [UUID]
     @Published var focusedTrackID: UUID?
+    /// When it was added to the project (nil: before dates were kept).
+    var added: Date?
+    /// When any of its titles last changed. Not published: it changes with every keystroke,
+    /// and only the project view's sorting reads it.
+    var edited: Date?
 
-    init(id: UUID = UUID(), name: String, url: URL?, master: Track) {
+    init(id: UUID = UUID(), name: String, url: URL?, master: Track, added: Date? = Date()) {
         self.id = id
         self.name = name
         self.url = url
@@ -199,6 +230,7 @@ final class VideoItem: ObservableObject, Identifiable {
         self.tracks = [master]
         self.openTrackIDs = [master.id]
         self.focusedTrackID = master.id
+        self.added = added
     }
 
     init(_ f: VideoFile) {
@@ -216,11 +248,14 @@ final class VideoItem: ObservableObject, Identifiable {
         masterTrackID = master
         openTrackIDs = open
         focusedTrackID = f.focusedTrackID.flatMap { open.contains($0) ? $0 : nil } ?? open.first
+        added = f.added
+        edited = f.edited
     }
 
     var file: VideoFile {
         VideoFile(id: id, name: name, url: url?.absoluteString, masterTrackID: masterTrackID,
-                  tracks: tracks.map(\.file), openTrackIDs: openTrackIDs, focusedTrackID: focusedTrackID)
+                  tracks: tracks.map(\.file), openTrackIDs: openTrackIDs, focusedTrackID: focusedTrackID,
+                  added: added, edited: edited)
     }
 
     func track(_ id: UUID?) -> Track? { tracks.first { $0.id == id } }
@@ -234,6 +269,8 @@ final class Project: ObservableObject, Identifiable {
     @Published var name: String
     @Published var settings: ProjectSettings
     @Published var videos: [VideoItem]
+    /// How the project view lists the videos.
+    @Published var videoSort: VideoSort = .name
     /// Where the person keeps the project (may be in iCloud). A local copy is always kept too.
     var fileURL: URL?
 
@@ -247,14 +284,41 @@ final class Project: ObservableObject, Identifiable {
 
     convenience init(_ f: ProjectFile, fileURL: URL?) {
         self.init(id: f.id, name: f.name, settings: f.settings, videos: f.videos.map(VideoItem.init), fileURL: fileURL)
+        videoSort = f.videoSort ?? .name
     }
 
     func file(currentVideoID: UUID?) -> ProjectFile {
         ProjectFile(id: id, name: name, modified: Date(), settings: settings,
-                    videos: videos.map(\.file), currentVideoID: currentVideoID)
+                    videos: videos.map(\.file), currentVideoID: currentVideoID, videoSort: videoSort)
     }
 
     func video(_ id: UUID?) -> VideoItem? { videos.first { $0.id == id } }
+
+    /// The videos in the order the project view lists them.
+    var sortedVideos: [VideoItem] { Self.sorted(videos, by: videoSort) }
+
+    static func sorted(_ videos: [VideoItem], by sort: VideoSort) -> [VideoItem] {
+        let order = Dictionary(videos.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        func listed(_ a: VideoItem, _ b: VideoItem) -> Bool { order[a.id, default: 0] < order[b.id, default: 0] }
+        // Newest first; no date after every date, in the project's order.
+        func newer(_ a: Date?, _ b: Date?, _ x: VideoItem, _ y: VideoItem) -> Bool {
+            switch (a, b) {
+            case let (a?, b?): return a != b ? a > b : listed(x, y)
+            case (_?, nil): return true
+            case (nil, _?): return false
+            case (nil, nil): return listed(x, y)
+            }
+        }
+        switch sort {
+        case .name:
+            return videos.sorted { a, b in
+                let c = a.name.localizedStandardCompare(b.name)
+                return c != .orderedSame ? c == .orderedAscending : listed(a, b)
+            }
+        case .added: return videos.sorted { newer($0.added, $1.added, $0, $1) }
+        case .edited: return videos.sorted { newer($0.edited, $1.edited, $0, $1) }
+        }
+    }
 }
 
 // MARK: - Rows across languages
