@@ -345,7 +345,7 @@ final class WaveStripView: NSView {
             spot.isHidden = false
             // In a synchronized layer, times are the film's: the box is as wide as the time
             // since its start, on every frame, however busy the app is.
-            spot.add(Self.growth(from: start, keyPath: "bounds.size.width", from: 0,
+            spot.add(Self.growth(since: start, keyPath: "bounds.size.width", from: 0,
                                  to: CGFloat(Self.spotReach * pps)), forKey: "grow")
         }
     }
@@ -379,7 +379,7 @@ final class WaveStripView: NSView {
                 spotTimer.frame = inBox(CGRect(x: -size.width - 4, y: 4, width: size.width, height: size.height),
                                         height: height)
                 if !spotManual {
-                    spotTimer.add(Self.growth(from: start, keyPath: "position.x", from: -size.width - 4,
+                    spotTimer.add(Self.growth(since: start, keyPath: "position.x", from: -size.width - 4,
                                               to: CGFloat(Self.spotReach * spotPPS) - size.width - 4), forKey: "slide")
                 }
             }
@@ -418,7 +418,7 @@ final class WaveStripView: NSView {
     }
 
     /// A value growing by `pps` points a second of film from `start` on.
-    private static func growth(from start: Double, keyPath: String, from: CGFloat, to: CGFloat) -> CABasicAnimation {
+    private static func growth(since start: Double, keyPath: String, from: CGFloat, to: CGFloat) -> CABasicAnimation {
         let a = CABasicAnimation(keyPath: keyPath)
         a.fromValue = from
         a.toValue = to

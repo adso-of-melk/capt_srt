@@ -87,7 +87,7 @@ enum Refit {
             if close(prev, s), let prev, let j = joined(prev, s, limits: l) {
                 options.append((Change(range: (i - 1)..<(i + 1), titles: [j]), s.start - prev.end))
             }
-            return options.min { $0.1 < $1.1 }?.0
+            return options.min(by: { $0.1 < $1.1 })?.0
         }
         return nil
     }

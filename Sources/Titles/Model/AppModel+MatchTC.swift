@@ -129,7 +129,7 @@ extension AppModel {
         guard let video, let track = focusedTrack, !track.locked, track.id != video.masterTrackID,
               let master = video.track(video.masterTrackID) else { return false }
         let ids = pickedTitleIDs
-        return track.doc.subtitles.contains { ids.contains($0.id) && $0.link.flatMap(master.doc.subtitle) != nil }
+        return track.doc.subtitles.contains { s in ids.contains(s.id) && s.link.flatMap({ master.doc.subtitle($0) }) != nil }
     }
 
     /// Title ▸ Match TC to Linked Titles: each picked title takes the start and end of the
@@ -141,7 +141,7 @@ extension AppModel {
         let ids = pickedTitleIDs
         var times: [UUID: (start: Double, end: Double)] = [:]
         for s in track.doc.subtitles where ids.contains(s.id) {
-            if let m = s.link.flatMap(master.doc.subtitle) { times[s.id] = (m.start, m.end) }
+            if let m = s.link.flatMap({ master.doc.subtitle($0) }) { times[s.id] = (m.start, m.end) }
         }
         guard !times.isEmpty else {
             flash("These titles have no partner in the master (\(master.language.name)).")
