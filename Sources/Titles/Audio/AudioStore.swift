@@ -9,6 +9,9 @@ final class AudioStore: ObservableObject {
     @Published private(set) var progress: Double = 0
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
+    /// When people speak in the video (shaded behind the waveform), worked out from the
+    /// decoded sound once it's in, in the background. Nil until then.
+    @Published private(set) var speech: [ClosedRange<Double>]?
 
     private var task: Task<Void, Never>?
     private var generation = UUID()
@@ -16,6 +19,7 @@ final class AudioStore: ObservableObject {
     func load(url: URL) {
         task?.cancel()
         waveform = nil
+        speech = nil
         progress = 0
         errorMessage = nil
         isLoading = true
@@ -33,6 +37,14 @@ final class AudioStore: ObservableObject {
                         self.waveform = wf
                         self.isLoading = false
                     }
+                }
+                // Then, at a lower priority, where the speech is.
+                try Task.checkCancellation()
+                let levels = FileMatcher.Speech.levels(samples: wf.samples, sampleRate: wf.sampleRate)
+                try Task.checkCancellation()
+                let stretches = levels.count > 50 ? FileMatcher.Speech(levels: levels).stretches : []
+                await MainActor.run {
+                    if self.generation == gen { self.speech = stretches }
                 }
             } catch is CancellationError {
                 // A newer load replaced this one.
@@ -52,6 +64,7 @@ final class AudioStore: ObservableObject {
         task?.cancel()
         generation = UUID()
         waveform = nil
+        speech = nil
         isLoading = false
         errorMessage = nil
     }

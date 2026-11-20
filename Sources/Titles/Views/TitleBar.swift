@@ -176,6 +176,11 @@ struct TitleBar: View {
             }
             .toggleStyle(.button)
             .help("Show loudness in decibels, so quiet speech is visible next to loud sounds")
+            Toggle(isOn: $model.showSpeech) {
+                Text("Speech").font(Theme.label(10, .bold))
+            }
+            .toggleStyle(.button)
+            .help("Shade where people speak, behind the waveform (worked out from the video's sound)")
         }
     }
 

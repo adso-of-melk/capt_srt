@@ -54,6 +54,10 @@ final class AppModel: ObservableObject {
     @Published var pixelsPerSecond: Double = 120
     @Published var waveGain: Double = 1
     @Published var dbScale = false
+    /// Speech shaded behind the waveform (where people speak, from the video's sound).
+    @Published var showSpeech = true {
+        didSet { UserDefaults.standard.set(showSpeech, forKey: "showSpeech") }
+    }
     @Published var followPlayhead = true
     /// Trackpad: a plain two-finger swipe over a title's left/right half adjusts that edge.
     /// Off by default because it competes with scrolling the waveform.
@@ -228,6 +232,7 @@ final class AppModel: ObservableObject {
         if defaults.object(forKey: "cardsFlow") != nil { cardsFlow = defaults.bool(forKey: "cardsFlow") }
         if defaults.object(forKey: "allowOverlaps") != nil { allowOverlaps = defaults.bool(forKey: "allowOverlaps") }
         if defaults.object(forKey: "keepMinGap") != nil { keepMinGap = defaults.bool(forKey: "keepMinGap") }
+        if defaults.object(forKey: "showSpeech") != nil { showSpeech = defaults.bool(forKey: "showSpeech") }
         if let off = defaults.array(forKey: "qcKindsOff") as? [String] {
             qcKinds = Set(QCIssue.allCases).subtracting(off.compactMap(QCIssue.init(rawValue:)))
         } else if let kinds = defaults.array(forKey: "qcKinds") as? [String] {

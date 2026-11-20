@@ -16,6 +16,7 @@ struct WaveformPane: View {
             revision: model.revision, focused: model.video?.focusedTrackID,
             pps: model.pixelsPerSecond, gain: model.waveGain, db: model.dbScale,
             hasWave: audio.waveform != nil, loading: audio.isLoading,
+            speech: model.showSpeech ? audio.speech?.count ?? -1 : -1,
             qcMode: model.qcMode, qcKinds: model.qcKinds))
             .background(Theme.background)
     }
@@ -34,6 +35,8 @@ struct WaveformPane: View {
         var db: Bool
         var hasWave: Bool
         var loading: Bool
+        /// How many stretches of speech are shaded (-1: none shown).
+        var speech: Int
         var qcMode: Bool
         var qcKinds: Set<QCIssue>
     }
@@ -468,6 +471,7 @@ final class WaveformNSView: NSView {
         var gain: Double
         var db: Bool
         var wave: ObjectIdentifier?
+        var speech: Int
         var multi: Set<UUID>
         var find: String
     }
@@ -494,7 +498,10 @@ final class WaveformNSView: NSView {
     private var stripReach: Double { max(20, 100_000 / pps) }
 
     private func wantsStrip(_ model: AppModel) -> Bool {
-        guard frameLink != nil, window != nil, model.clock.isPlaying, model.spottingID == nil,
+        // Spotting stays on the strip (the growing title is a layer of its own: see syncSpot)
+        // when the language spotted in is open as a band.
+        let spotOnBand = model.spottingID == nil || bandTracks.contains { $0.id == model.video?.focusedTrackID }
+        guard frameLink != nil, window != nil, model.clock.isPlaying, spotOnBand,
               model.engine.syncItem != nil, bounds.width >= 40, bounds.height >= 40,
               CACurrentMediaTime() >= stripHold else { return false }
         if case .none = drag { return true }
@@ -533,6 +540,7 @@ final class WaveformNSView: NSView {
         renderTiles(model, budget: 0)   // everything in view, now
         renderOverlay(model)
         runStrip(at: t)
+        syncSpot(model, at: t)
         stripView.isHidden = false
     }
 
@@ -544,6 +552,7 @@ final class WaveformNSView: NSView {
         if now { display() } else { needsDisplay = true }
         stripView.isHidden = true
         stripView.clear()
+        stripSpot = nil
         tileDirty.removeAll()
         overlayKey = nil
         stripContent = nil
@@ -571,6 +580,7 @@ final class WaveformNSView: NSView {
     private func placeStrip(at t: Double) {
         let origin = Double(stripOrigin) * tileDuration
         stripView.place(stripAt: stripMotion.stripX(origin: origin, at: t), playheadAt: stripMotion.playheadX(at: t))
+        stripView.placeSpot(at: t)
     }
 
     private func stripTick(_ model: AppModel, at t: Double) {
@@ -595,6 +605,76 @@ final class WaveformNSView: NSView {
         renderTiles(model, budget: 0.004)
         if makeOverlayKey(model) != overlayKey { renderOverlay(model) }
         stripView.placeScrollBar(thumb: thumbRect, head: scrollHeadRect)
+        syncSpot(model, at: t)
+    }
+
+    // MARK: Spotting on the strip
+
+    /// The title whose growing box is on the strip (see WaveStripView.showSpot).
+    private var stripSpot: UUID?
+    private var spotLabelText: String?
+    private var spotTimerCheck: CFTimeInterval = 0
+
+    /// While a title is spotted, its box grows on the strip by itself (the tiles leave it
+    /// out); its number and running time are kept up to date here, the time a few times a
+    /// second. Once it's done, the tiles it's on are drawn again at once, with the finished
+    /// title in them, before the box goes, so it never blinks.
+    private func syncSpot(_ model: AppModel, at t: Double) {
+        let id = model.spottingID
+        if let shown = stripSpot, shown != id {
+            if let s = model.doc.subtitle(shown) {
+                let touched = StripTiles.touched(from: s.start, to: s.end, pps: pps)
+                for k in stripView.tileNumbers where touched.contains(k) {
+                    if let image = renderTile(k, model: model) { stripView.setTile(k, image: image) }
+                    tileDirty.remove(k)
+                }
+            }
+            stripView.hideSpot()
+            stripSpot = nil
+        }
+        guard let id, let s = model.doc.subtitle(id) else { return }
+        let number = model.rowNumber(of: id).map(String.init) ?? "\((model.doc.index(of: id) ?? 0) + 1)"
+        let now = CACurrentMediaTime()
+        // Between the timer's updates the box grows by itself: nothing to do.
+        if stripSpot == id, number == spotLabelText, now < spotTimerCheck { return }
+        layoutBands()
+        guard let band = bands.first(where: { $0.focused }) else { return }
+        let height = band.rect.height * WaveLayout.boxShare
+        let box = CGRect(x: 0, y: band.rect.midY - height / 2, width: 0, height: height)
+        let font = labelFont(11)
+        let pillWidth = (number as NSString).size(withAttributes: [.font: font]).width + 10
+        if stripSpot != id || number != spotLabelText {
+            let size = CGSize(width: pillWidth, height: 15)
+            let label = StripImage.render(size: size, scale: stripScale, space: stripSpace) {
+                Palette.amber.setFill()
+                NSBezierPath(roundedRect: CGRect(origin: .zero, size: size), xRadius: 7.5, yRadius: 7.5).fill()
+                drawText(number, at: CGPoint(x: 5, y: 1), font: font, color: Palette.background)
+            }
+            stripView.showSpot(start: s.start, pps: pps, box: box,
+                               fill: Palette.amber.withAlphaComponent(0.18).cgColor, border: Palette.amber.cgColor,
+                               radius: Self.boxCornerRadius, label: label, labelSize: size)
+            if stripManual { stripView.placeSpot(at: t) }
+            stripSpot = id
+            spotLabelText = number
+            spotTimerCheck = 0
+        } else {
+            stripView.moveSpot(box: box)
+        }
+        guard now >= spotTimerCheck, let timer = model.spotTimer() else { return }
+        spotTimerCheck = now + 0.1
+        let tf = monoFont(10)
+        let tw = (timer.text as NSString).size(withAttributes: [.font: tf]).width + 12
+        let width = CGFloat((t - s.start) * pps)
+        let visible = width - tw - 4 > 4 + pillWidth + 2
+        var image: CGImage?
+        if visible {
+            image = StripImage.render(size: CGSize(width: tw, height: 15), scale: stripScale, space: stripSpace) {
+                timer.status.nsColor.setFill()
+                NSBezierPath(roundedRect: CGRect(x: 0, y: 0, width: tw, height: 15), xRadius: 7.5, yRadius: 7.5).fill()
+                drawText(timer.text, at: CGPoint(x: 6, y: 1), font: tf, color: Palette.background)
+            }
+        }
+        stripView.setSpotTimer(image, size: CGSize(width: tw, height: 15), visible: visible)
     }
 
     /// The strip should be moving by the film's clock. If the graphics system shows it
@@ -619,7 +699,8 @@ final class WaveformNSView: NSView {
         return StripContent(
             focused: model.video?.focusedTrackID, bands: bandIDs, weights: bandIDs.map { bandWeights[$0] ?? 1 },
             lanes: laneTracks.map(\.id), qcKinds: model.qcKinds, gain: model.waveGain, db: model.dbScale,
-            wave: model.audio.waveform.map { ObjectIdentifier($0) }, multi: model.multiSelection,
+            wave: model.audio.waveform.map { ObjectIdentifier($0) },
+            speech: model.showSpeech ? model.audio.speech?.count ?? -1 : -1, multi: model.multiSelection,
             find: find.isShown ? "\(find.query)|\(find.matchCase)|\(find.wholeWord)|\(find.scope.rawValue)" : "")
     }
 
@@ -779,6 +860,9 @@ final class WaveformNSView: NSView {
                 Palette.background.withAlphaComponent(0.35).setFill()
                 band.rect.fill()
             }
+            if model.showSpeech, let speech = model.audio.speech {
+                drawSpeech(speech, in: band.rect, muted: showsCodes && !band.focused)
+            }
             drawWaveform(ctx, in: band.rect, model: model, muted: showsCodes && !band.focused)
             drawBoxes(ctx, in: band.rect, track: band.track, focused: band.focused, model: model)
             if showsCodes {
@@ -903,6 +987,30 @@ final class WaveformNSView: NSView {
         return envelopeCache
     }
 
+    /// Where people speak: a soft shade behind the waveform and a line along the band's
+    /// foot, so a title can be lined up with the speech at a glance.
+    private func drawSpeech(_ stretches: [ClosedRange<Double>], in rect: CGRect, muted: Bool) {
+        let from = viewStart, to = viewStart + visibleDuration
+        // The first stretch that reaches into view (they're in time order).
+        var lo = 0, hi = stretches.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if stretches[mid].upperBound < from { lo = mid + 1 } else { hi = mid }
+        }
+        let shade = Palette.periwinkle.withAlphaComponent(muted ? 0.04 : 0.08)
+        let line = Palette.periwinkle.withAlphaComponent(muted ? 0.25 : 0.5)
+        var i = lo
+        while i < stretches.count, stretches[i].lowerBound <= to {
+            let s = stretches[i]
+            let x0 = x(s.lowerBound), x1 = max(x0 + 1, x(s.upperBound))
+            shade.setFill()
+            CGRect(x: x0, y: rect.minY, width: x1 - x0, height: rect.height).fill()
+            line.setFill()
+            CGRect(x: x0, y: rect.maxY - 3, width: x1 - x0, height: 2).fill()
+            i += 1
+        }
+    }
+
     private func drawWaveform(_ ctx: CGContext, in rect: CGRect, model: AppModel, muted: Bool = false) {
         // Centre line
         Palette.rule.setFill()
@@ -980,6 +1088,8 @@ final class WaveformNSView: NSView {
         var selectedRect: CGRect?
 
         for (index, s) in subs.enumerated() {
+            // On the strip, the title being spotted is a layer of its own (see syncSpot).
+            if canvas != nil, focused, s.id == model.spottingID { continue }
             let end = (focused ? model.liveSpotEnd(for: s.id).map { max($0, playheadTime) } : nil) ?? s.end
             guard end >= viewStart && s.start <= viewEnd else { continue }
             let lane = lanes[s.id] ?? 0

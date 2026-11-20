@@ -162,6 +162,19 @@ final class WaveStripView: NSView {
     private let scrollThumb = CALayer()
     private let scrollHead = CALayer()
     private let playhead = CALayer()
+    /// The title being spotted: a box on the strip whose width grows by the film's clock,
+    /// with its number at the left and the running time at its right edge.
+    private let spot = CALayer()
+    private let spotLabel = CALayer()
+    private let spotTimer = CALayer()
+    /// Where the spotted title starts (film seconds), at `spotPPS` points a second.
+    private var spotStart: Double?
+    private var spotPPS: Double = 120
+    private var spotTimerWidth: CGFloat = 0
+    /// Sized by hand, frame by frame (the film's clock isn't reaching the strip).
+    private var spotManual = false
+    /// How long a spotted title can grow on its own (far longer than any title).
+    private static let spotReach: Double = 600
     private var tiles: [Int: CALayer] = [:]
     /// The strip's own zero, as a tile number (tiles sit a whole number of widths from it).
     private var origin = 0
@@ -190,6 +203,16 @@ final class WaveStripView: NSView {
         }
         root.addSublayer(sync)
         for l in [strip, overlay, scrollTrack, scrollThumb, scrollHead, playhead] { sync.addSublayer(l) }
+        for l in [spot, spotLabel, spotTimer] {
+            l.actions = Self.noActions
+            l.anchorPoint = .zero
+        }
+        spot.masksToBounds = true
+        spot.zPosition = 1          // over the tiles
+        spot.isHidden = true
+        spot.addSublayer(spotLabel)
+        spot.addSublayer(spotTimer)
+        strip.addSublayer(spot)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -237,6 +260,7 @@ final class WaveStripView: NSView {
 
     /// Lets go of everything (the waveform draws itself again).
     func clear() {
+        hideSpot()
         still {
             strip.removeAllAnimations()
             playhead.removeAllAnimations()
@@ -284,7 +308,126 @@ final class WaveStripView: NSView {
     func rebase(origin newOrigin: Int) {
         guard newOrigin != origin else { return }
         origin = newOrigin
-        still { for (k, t) in tiles { t.frame = frame(ofTile: k) } }
+        still {
+            for (k, t) in tiles { t.frame = frame(ofTile: k) }
+            if let start = spotStart { spot.position.x = spotX(start) }
+        }
+    }
+
+    // MARK: The title being spotted
+
+    /// Where film time `t` is on the strip (tile `origin` starts at 0).
+    private func spotX(_ t: Double) -> CGFloat {
+        CGFloat(t * spotPPS) - CGFloat(origin) * StripTiles.width
+    }
+
+    /// Starts the growing box of a title being spotted from `start`. `box` gives its top and
+    /// height (the view's points, y down); `label` is its number, drawn at its top left.
+    func showSpot(start: Double, pps: Double, box: CGRect, fill: CGColor, border: CGColor, radius: CGFloat,
+                  label: CGImage?, labelSize: CGSize) {
+        spotStart = start
+        spotPPS = pps
+        spotManual = false
+        let y = layerRect(box).minY
+        still {
+            spot.removeAllAnimations()
+            spotTimer.removeAllAnimations()
+            spot.frame = CGRect(x: spotX(start), y: y, width: 0, height: box.height)
+            spot.backgroundColor = fill
+            spot.borderColor = border
+            spot.borderWidth = 1.5
+            spot.cornerRadius = radius
+            spotLabel.contentsScale = scale
+            spotLabel.contents = label
+            spotLabel.frame = inBox(CGRect(origin: CGPoint(x: 4, y: 4), size: labelSize), height: box.height)
+            spotTimer.contents = nil
+            spotTimer.isHidden = true
+            spot.isHidden = false
+            // In a synchronized layer, times are the film's: the box is as wide as the time
+            // since its start, on every frame, however busy the app is.
+            spot.add(Self.growth(from: start, keyPath: "bounds.size.width", from: 0,
+                                 to: CGFloat(Self.spotReach * pps)), forKey: "grow")
+        }
+    }
+
+    /// Moves the box's top and height (the bands were resized).
+    func moveSpot(box: CGRect) {
+        guard spotStart != nil else { return }
+        let y = layerRect(box).minY
+        guard abs(spot.frame.minY - y) > 0.1 || abs(spot.bounds.height - box.height) > 0.1 else { return }
+        still {
+            spot.position.y = y
+            spot.bounds.size.height = box.height
+            spotLabel.frame = inBox(CGRect(origin: CGPoint(x: 4, y: 4), size: spotLabel.bounds.size), height: box.height)
+            spotTimer.position.y = inBox(CGRect(x: 0, y: 4, width: 1, height: spotTimer.bounds.height),
+                                         height: box.height).minY
+        }
+    }
+
+    /// The running time, a picture `size` big at the box's right edge (hidden while the box is
+    /// too narrow for it beside the number).
+    func setSpotTimer(_ image: CGImage?, size: CGSize, visible: Bool) {
+        guard let start = spotStart else { return }
+        let height = spot.bounds.height
+        still {
+            spotTimer.contentsScale = scale
+            spotTimer.contents = image
+            spotTimer.isHidden = !visible
+            if abs(size.width - spotTimerWidth) > 0.1 || (!spotManual && spotTimer.animation(forKey: "slide") == nil) {
+                spotTimerWidth = size.width
+                spotTimer.removeAllAnimations()
+                spotTimer.frame = inBox(CGRect(x: -size.width - 4, y: 4, width: size.width, height: size.height),
+                                        height: height)
+                if !spotManual {
+                    spotTimer.add(Self.growth(from: start, keyPath: "position.x", from: -size.width - 4,
+                                              to: CGFloat(Self.spotReach * spotPPS) - size.width - 4), forKey: "slide")
+                }
+            }
+        }
+    }
+
+    /// Without the film's clock: the box sized by hand for time `t`.
+    func placeSpot(at t: Double) {
+        guard let start = spotStart else { return }
+        spotManual = true
+        let width = max(0, CGFloat((t - start) * spotPPS))
+        still {
+            if spot.animationKeys()?.isEmpty == false { spot.removeAllAnimations() }
+            if spotTimer.animationKeys()?.isEmpty == false { spotTimer.removeAllAnimations() }
+            spot.bounds.size.width = width
+            spotTimer.position.x = width - spotTimerWidth - 4
+        }
+    }
+
+    func hideSpot() {
+        guard spotStart != nil else { return }
+        spotStart = nil
+        spotTimerWidth = 0
+        still {
+            spot.removeAllAnimations()
+            spotTimer.removeAllAnimations()
+            spot.isHidden = true
+            spotLabel.contents = nil
+            spotTimer.contents = nil
+        }
+    }
+
+    /// A rectangle inside the spotted box (y down from its top) where its layers put it.
+    private func inBox(_ r: CGRect, height: CGFloat) -> CGRect {
+        topDown ? r : CGRect(x: r.minX, y: height - r.maxY, width: r.width, height: r.height)
+    }
+
+    /// A value growing by `pps` points a second of film from `start` on.
+    private static func growth(from start: Double, keyPath: String, from: CGFloat, to: CGFloat) -> CABasicAnimation {
+        let a = CABasicAnimation(keyPath: keyPath)
+        a.fromValue = from
+        a.toValue = to
+        a.beginTime = start <= 0 ? AVCoreAnimationBeginTimeAtZero : start
+        a.duration = spotReach
+        a.fillMode = .both
+        a.isRemovedOnCompletion = false
+        a.timingFunction = CAMediaTimingFunction(name: .linear)
+        return a
     }
 
     func setOverlay(_ image: CGImage?) {

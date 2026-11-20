@@ -491,6 +491,46 @@ enum FileMatcher {
         /// From the loudness of each frame in decibels (`SpeechListener`).
         init(levels: [Float]) { self.init(active: Self.detect(levels)) }
 
+        /// The loudness of each tenth of a second of mono sound, in decibels, with the low
+        /// end turned down (as `SpeechListener` hears it), from sound already in memory.
+        static func levels(samples: [Int16], sampleRate: Double) -> [Float] {
+            let perFrame = max(1, Int(sampleRate * frame))
+            var levels: [Float] = []
+            levels.reserveCapacity(samples.count / perFrame + 1)
+            var sum: Float = 0, count = 0, previous: Float = 0
+            samples.withUnsafeBufferPointer { buffer in
+                for v in buffer {
+                    let x = Float(v) / 32768
+                    let y = x - 0.95 * previous
+                    previous = x
+                    sum += y * y
+                    count += 1
+                    if count == perFrame {
+                        levels.append(10 * log10(sum / Float(perFrame) + 1e-12))
+                        sum = 0
+                        count = 0
+                    }
+                }
+            }
+            return levels
+        }
+
+        /// The stretches of speech, in seconds from the start (for the waveform's shading).
+        var stretches: [ClosedRange<Double>] {
+            var out: [ClosedRange<Double>] = []
+            var start: Int?
+            for i in 0..<frames {
+                let on = prefix[i + 1] > prefix[i]
+                if on, start == nil { start = i }
+                if !on, let s = start {
+                    out.append(Double(s) * Self.frame...Double(i) * Self.frame)
+                    start = nil
+                }
+            }
+            if let s = start { out.append(Double(s) * Self.frame...Double(frames) * Self.frame) }
+            return out
+        }
+
         /// Speech is where the sound rises well above the quiet moments around it (the
         /// quietest tenth of the 10 s around it: the pauses between words, or steady music)
         /// and above the quietest tenth of the film; pauses under 0.3 s are bridged and
