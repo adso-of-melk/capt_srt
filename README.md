@@ -159,7 +159,7 @@ Each video has a **master** language (★) and any number of others, shown side 
 | --- | --- |
 | Video in | MP4, MOV, M4V (H.264, HEVC, ProRes), plus https links and HLS streams. MKV, WebM and AVI come with the libmpv engine later. |
 | Subtitles in | SRT, WebVTT (New Project, Import Language, or drop onto the window). Encoding is detected (UTF-8, UTF-16, Windows-1252, Latin-1). |
-| Subtitles out | **File ▸ Export… (⇧⌘E)**: this language or all languages, this video or all videos, SRT or WebVTT, named by the project pattern (default `{video}.{lang}`). Rows are renumbered on export. UTF-8, with optional BOM and CRLF. |
+| Subtitles out | **File ▸ Export… (⇧⌘E)**: this language or all languages, this video or all videos, named by the project pattern (default `{video}.{lang}`). SubRip (.srt), WebVTT, TTML (IMSC 1.1), DFXP, iTunes Timed Text (.itt), EBU STL, Advanced SubStation (.ass), SubStation (.ssa), YouTube (.sbv), plain text, a dialogue list with timecodes, and Avid DS captions. Rows are renumbered on export. UTF-8, with optional BOM and CRLF (per language in Language Options, with the language's own format and an older code page where the format allows one). EBU STL, the dialogue list and Avid count from the project's start timecode. |
 
 You can drop a video, a `.kptnsub` project or a subtitle file onto the window. Anything that can't be opened shows an alert explaining why.
 
@@ -249,7 +249,10 @@ Sources/TitlesCore/          the core: no windows, no AppKit
   QC.swift                   what QC finds, in words, and its timing fixes
   DragResistance.swift       where a dragged title stops near its neighbours
   LanguageGuess.swift, FileMatcher.swift, ImportPlan.swift   matching dropped files to videos
-  ExportFormat.swift         SRT / VTT
+  ExportFormat.swift         the export formats, what each is for
+  ExportWriters.swift        TTML, DFXP, iTT, SubStation, YouTube, text, dialogue list, Avid
+  EBUSTL.swift               EBU STL (binary, teletext)
+  SerbianScript.swift        Serbian Cyrillic ↔ Latin
 Sources/Titles/              the Mac app
   TitlesApp.swift            app, window, menus
   Model/                     AppModel (every editing action), import, QC commands, spelling, Find

@@ -104,6 +104,12 @@ struct TrackFile: Codable, Sendable {
     /// Right-to-left marks on each line when exporting.
     var directionMarks: Bool?
     var subtitles: [Subtitle]
+    // Language Options (absent: the project's settings).
+    var minDuration: Double? = nil
+    var lineBreakStyle: LineBreaker.Style? = nil
+    var exportFormat: ExportFormat? = nil
+    var utf8BOM: Bool? = nil
+    var crlf: Bool? = nil
 }
 
 struct VideoFile: Codable, Sendable {
@@ -169,6 +175,15 @@ final class Track: ObservableObject, Identifiable {
     @Published var exportEncoding: String?
     /// Add right-to-left marks to each line on export (right-to-left languages only).
     @Published var directionMarks = false
+    /// Shortest a title may be (nil: the project standard).
+    @Published var minDuration: Double?
+    /// Which line of a two-line title may be the longer one.
+    @Published var lineBreakStyle = LineBreaker.Style.bottomHeavy
+    /// This language's own export format, byte-order mark and line endings (nil: the
+    /// project's, from Project Settings and the Export dialog).
+    @Published var exportFormat: ExportFormat?
+    @Published var utf8BOM: Bool?
+    @Published var crlf: Bool?
     let doc = SubtitleDocument()
 
     init(id: UUID = UUID(), language: Language, locked: Bool = false, subtitles: [Subtitle] = []) {
@@ -187,13 +202,35 @@ final class Track: ObservableObject, Identifiable {
         spellCheck = f.spellCheckOff != true
         exportEncoding = f.exportEncoding
         directionMarks = f.directionMarks ?? false
+        minDuration = f.minDuration
+        lineBreakStyle = f.lineBreakStyle ?? .bottomHeavy
+        exportFormat = f.exportFormat
+        utf8BOM = f.utf8BOM
+        crlf = f.crlf
     }
 
     var file: TrackFile {
         TrackFile(id: id, language: language, locked: locked, maxCPS: maxCPS,
                   maxCharsPerLine: maxCharsPerLine, maxLines: maxLines,
                   spellCheckOff: spellCheck ? nil : true, exportEncoding: exportEncoding,
-                  directionMarks: directionMarks ? true : nil, subtitles: doc.subtitles)
+                  directionMarks: directionMarks ? true : nil, subtitles: doc.subtitles,
+                  minDuration: minDuration, lineBreakStyle: lineBreakStyle == .bottomHeavy ? nil : lineBreakStyle,
+                  exportFormat: exportFormat, utf8BOM: utf8BOM, crlf: crlf)
+    }
+
+    /// Copies this language's options (not its titles, name or lock) onto another.
+    func copyOptions(to other: Track) {
+        other.maxCPS = maxCPS
+        other.maxCharsPerLine = maxCharsPerLine
+        other.maxLines = maxLines
+        other.spellCheck = spellCheck
+        other.exportEncoding = exportEncoding
+        other.directionMarks = directionMarks
+        other.minDuration = minDuration
+        other.lineBreakStyle = lineBreakStyle
+        other.exportFormat = exportFormat
+        other.utf8BOM = utf8BOM
+        other.crlf = crlf
     }
 
     /// The project standard with this language's own overrides.
@@ -202,6 +239,7 @@ final class Track: ObservableObject, Identifiable {
         if let c = maxCPS { p.maxCPS = c }
         if let l = maxCharsPerLine { p.maxCharsPerLine = l }
         if let n = maxLines { p.maxLines = n }
+        if let d = minDuration { p.minDuration = d }
         return p
     }
 }

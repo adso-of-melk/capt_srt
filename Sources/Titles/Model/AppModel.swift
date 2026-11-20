@@ -14,7 +14,7 @@ final class PlayheadClock: ObservableObject {
 
 extension ExportFormat {
     /// For save panels.
-    var type: UTType { UTType(filenameExtension: rawValue) ?? .plainText }
+    var type: UTType { UTType(filenameExtension: fileExtension) ?? .plainText }
 }
 
 enum SpotMode: String, CaseIterable, Identifiable {
@@ -1099,7 +1099,7 @@ final class ExportFormatSwitcher: NSObject {
         let format = ExportFormat.allCases[sender.indexOfSelectedItem]
         panel.allowedContentTypes = [format.type]
         let base = (panel.nameFieldStringValue as NSString).deletingPathExtension
-        panel.nameFieldStringValue = "\(base).\(format.rawValue)"
+        panel.nameFieldStringValue = "\(base).\(format.fileExtension)"
     }
 }
 

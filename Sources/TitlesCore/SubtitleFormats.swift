@@ -296,15 +296,17 @@ enum SubtitleFormats {
 
     /// A file's bytes, as a language's export options ask: UTF-8 (optionally with a
     /// byte-order mark) or an older code page, and right-to-left marks. `lost` counts
-    /// characters the code page can't hold (written as "?").
+    /// characters the code page (or EBU STL's character table) can't hold (written as "?").
     static func encoded(_ subs: [Subtitle], format: ExportFormat, bom: Bool, crlf: Bool,
-                        encoding name: String? = nil, directionMarks: Bool = false) -> (data: Data, lost: Int) {
+                        encoding name: String? = nil, directionMarks: Bool = false,
+                        context: ExportContext = ExportContext()) -> (data: Data, lost: Int) {
         let marked = directionMarks ? subs.map { s -> Subtitle in var s = s; s.text = withDirectionMarks(s.text); return s } : subs
-        // WebVTT is UTF-8 by definition: a code page only ever applies to SRT.
-        guard format == .srt, let name, let enc = encoding(named: name), enc != .utf8 else {
-            return (data(marked, format: format, bom: bom, crlf: crlf), 0)
+        if format == .stl { return EBUSTL.file(marked, context: context) }
+        // WebVTT and the XML formats are UTF-8 by definition: a code page never applies to them.
+        guard format.allowsCodePage, let name, let enc = encoding(named: name), enc != .utf8 else {
+            return (data(marked, format: format, bom: bom, crlf: crlf, context: context), 0)
         }
-        var text = srt(marked)
+        var text = self.text(marked, format: format, context: context)
         text = text.replacingOccurrences(of: "\r\n", with: "\n")
         if crlf { text = text.replacingOccurrences(of: "\n", with: "\r\n") }
         if let exact = text.data(using: enc) { return (exact, 0) }
@@ -314,15 +316,36 @@ enum SubtitleFormats {
         return (text.data(using: enc, allowLossyConversion: true) ?? Data(text.utf8), lost)
     }
 
-    /// A file's bytes: UTF-8 (optionally with a byte-order mark), CRLF or LF line endings.
-    static func data(_ subs: [Subtitle], format: ExportFormat, bom: Bool, crlf: Bool) -> Data {
-        var text = format == .srt ? srt(subs) : vtt(subs)
+    /// A file's bytes: UTF-8 (optionally with a byte-order mark; never for XML), CRLF or LF
+    /// line endings. EBU STL is bytes of its own.
+    static func data(_ subs: [Subtitle], format: ExportFormat, bom: Bool, crlf: Bool,
+                     context: ExportContext = ExportContext()) -> Data {
+        if format == .stl { return EBUSTL.file(subs, context: context).data }
+        var text = self.text(subs, format: format, context: context)
         text = text.replacingOccurrences(of: "\r\n", with: "\n")
         if crlf { text = text.replacingOccurrences(of: "\n", with: "\r\n") }
         var data = Data()
-        if bom { data.append(contentsOf: [0xEF, 0xBB, 0xBF]) }
+        if bom && !format.isXML { data.append(contentsOf: [0xEF, 0xBB, 0xBF]) }
         data.append(Data(text.utf8))
         return data
+    }
+
+    /// A text format's contents (EBU STL is bytes: see `EBUSTL`).
+    static func text(_ subs: [Subtitle], format: ExportFormat, context: ExportContext = ExportContext()) -> String {
+        switch format {
+        case .srt: return srt(subs)
+        case .vtt: return vtt(subs)
+        case .ttml: return ttml(subs, context: context)
+        case .dfxp: return dfxp(subs, context: context)
+        case .itt: return itt(subs, context: context)
+        case .ass: return ass(subs, context: context)
+        case .ssa: return ssa(subs, context: context)
+        case .sbv: return sbv(subs)
+        case .txt: return plainText(subs)
+        case .list: return dialogueList(subs, context: context)
+        case .avid: return avid(subs, context: context)
+        case .stl: return ""
+        }
     }
 
     static func vtt(_ subs: [Subtitle]) -> String {
@@ -358,14 +381,19 @@ enum Timecode {
     /// Counted in whole frames, the way a burnt-in timecode counts (non-drop-frame):
     /// at 23.976 or 29.97 fps the seconds are 24 or 30 frames long.
     static func frames(_ t: Double, fps: Double) -> String {
+        let p = frameParts(t, fps: fps)
+        return String(format: "%02d:%02d:%02d:%02d", p.h, p.m, p.s, p.f)
+    }
+
+    /// The hours, minutes, seconds and frames of `frames(_:fps:)`. Hours wrap at 24.
+    static func frameParts(_ t: Double, fps: Double) -> (h: Int, m: Int, s: Int, f: Int) {
         let fps = max(1, fps)
         let nominal = max(1, Int(fps.rounded()))
         // The small allowance keeps a time that sits exactly on a frame from showing the
         // frame before it (13.28 s × 25 is 331.99999999999994 in floating point).
         let totalFrames = Int((max(0, t) * fps + 0.0005).rounded(.down))
-        let f = totalFrames % nominal
         let secs = totalFrames / nominal
-        return String(format: "%02d:%02d:%02d:%02d", secs / 3600, (secs / 60) % 60, secs % 60, f)
+        return ((secs / 3600) % 24, (secs / 60) % 60, secs % 60, totalFrames % nominal)
     }
 
     /// The time of a frame timecode: the opposite of `frames`.

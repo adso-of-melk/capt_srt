@@ -390,8 +390,22 @@ struct LanguageOptionsSheet: View {
                 LanguagePicker(title: "Language", selection: o.language)
                 TextField("Name", text: o.language.name)
                 TextField("Code", text: o.language.code)
-                Text("Spell check and line breaking follow the language. Exported files are named with the code: \(model.video?.name ?? "Film").\(v.language.code).srt")
+                Text("Spell check and line breaking follow the language. Exported files are named with the code: \(model.video?.name ?? "Film").\(v.language.code).\((v.exportFormat ?? projectFormat).fileExtension)")
                     .font(Theme.label(11, .regular)).foregroundStyle(Theme.textDim)
+                if SerbianScript.applies(to: track.language.code),
+                   let script = SerbianScript.dominant(in: track.doc.subtitles.map(\.text)) {
+                    let target: SerbianScript.Script = script == .latin ? .cyrillic : .latin
+                    Toggle("Convert the titles to \(target == .latin ? "Latin" : "Cyrillic") letters", isOn: Binding(
+                        get: { o.wrappedValue.convertTo == target },
+                        set: { on in
+                            o.wrappedValue.convertTo = on ? target : nil
+                            o.wrappedValue.language = on ? converted(track.language, to: target) : track.language
+                        }))
+                    Text(v.convertTo == nil
+                         ? "Rewrites every title in the other alphabet when you click Done (⌘Z undoes it). Words with q, w, x or y and formatting tags stay as they are."
+                         : "On Done, every title is rewritten in \(target == .latin ? "Latin" : "Cyrillic") letters and the language becomes \(v.language.name) (\(v.language.code)).")
+                        .font(Theme.label(11, .regular)).foregroundStyle(Theme.textDim)
+                }
                 if let video = model.video,
                    video.tracks.contains(where: { $0.id != track.id && $0.language.code == v.language.code }) {
                     Text("\(video.name) already has \(v.language.name) in another column; both will export to the same file name.")
@@ -425,6 +439,19 @@ struct LanguageOptionsSheet: View {
                     Text("Project standard (\(standard.maxLines))").tag(Int?.none)
                     ForEach([1, 2, 3], id: \.self) { Text("\($0)").tag(Int?.some($0)) }
                 }
+                Picker("Minimum duration", selection: o.minDuration) {
+                    Text("Project standard (\(String(format: "%.2f s", standard.minDuration)))").tag(Double?.none)
+                    ForEach([0.5, 0.67, 0.833, 1.0, 1.2, 1.5, 2.0], id: \.self) {
+                        Text(String(format: "%.2f s", $0)).tag(Double?.some($0))
+                    }
+                }
+                Picker("Two-line titles", selection: o.lineBreakStyle) {
+                    ForEach(LineBreaker.Style.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                if v.lineBreakStyle != track.lineBreakStyle {
+                    Text("New line breaks follow it. Title ▸ Re-break All Lines applies it to the titles already there.")
+                        .font(Theme.label(11, .regular)).foregroundStyle(Theme.textDim)
+                }
             }
             Section("Spelling") {
                 Toggle("Check spelling in this language", isOn: o.spellCheck)
@@ -450,13 +477,31 @@ struct LanguageOptionsSheet: View {
                 }
             }
             Section("Export") {
+                Picker("Format", selection: o.exportFormat) {
+                    Text("Project's (\(projectFormat.title))").tag(ExportFormat?.none)
+                    ForEach(ExportFormat.allCases, id: \.self) { Text($0.title).tag(ExportFormat?.some($0)) }
+                }
+                if v.exportFormat != nil {
+                    Text("Exporting all languages, this one is written in its own format. Exported on its own, it starts in it.")
+                        .font(Theme.label(11, .regular)).foregroundStyle(Theme.textDim)
+                }
+                Picker("Byte-order mark", selection: o.utf8BOM) {
+                    Text("Project's (\(projectSettings.utf8BOM ? "with" : "without"))").tag(Bool?.none)
+                    Text("UTF-8 with byte-order mark").tag(Bool?.some(true))
+                    Text("UTF-8 without").tag(Bool?.some(false))
+                }
+                Picker("Line endings", selection: o.crlf) {
+                    Text("Project's (\(projectSettings.crlf ? "Windows, CRLF" : "Mac and Linux, LF"))").tag(Bool?.none)
+                    Text("Windows (CRLF)").tag(Bool?.some(true))
+                    Text("Mac and Linux (LF)").tag(Bool?.some(false))
+                }
                 Picker("Text encoding", selection: o.exportEncoding) {
                     Text("UTF-8 (recommended)").tag(String?.none)
                     ForEach(SubtitleFormats.legacyEncodings) { Text($0.title).tag(String?.some($0.name)) }
                 }
                 Text(v.exportEncoding == nil
                      ? "UTF-8 holds every language. Choose an older code page only if a client's system needs it."
-                     : "For SRT files (WebVTT is always UTF-8). Characters this code page can't hold are written as “?”, and export tells you how many.")
+                     : "For SRT, SubStation, YouTube and text files (WebVTT and the XML formats are always UTF-8; EBU STL has its own character sets). Characters this code page can't hold are written as “?”, and export tells you how many.")
                     .font(Theme.label(11, .regular)).foregroundStyle(Theme.textDim)
                 if v.language.isRightToLeft {
                     Toggle("Add right-to-left marks to each line", isOn: o.directionMarks)
@@ -466,6 +511,16 @@ struct LanguageOptionsSheet: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var projectSettings: ProjectSettings { model.project?.settings ?? ProjectSettings() }
+    private var projectFormat: ExportFormat { projectSettings.exportFormat }
+
+    /// The same language in the other alphabet (sr-Cyrl ↔ sr-Latn), keeping a name of your own.
+    private func converted(_ language: Language, to script: SerbianScript.Script) -> Language {
+        let code = SerbianScript.code(language.code, for: script)
+        let standardName = language.name == Language.named(language.code).name
+        return Language(code: code, name: standardName ? Language.named(code).name : language.name)
     }
 }
 
@@ -575,6 +630,13 @@ struct ExportSheet: View {
                 Picker("Format", selection: $format) {
                     ForEach(ExportFormat.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
+                Text(format.note)
+                    .font(Theme.label(11, .regular)).foregroundStyle(Theme.textDim)
+                let own = ownFormats
+                if allLanguages, !own.isEmpty {
+                    Text("Keeping their own format (Language Options): " + own.joined(separator: ", ") + ".")
+                        .font(Theme.label(11, .regular)).foregroundStyle(Theme.teal)
+                }
                 LabeledContent(items.count == 1 ? "File" : "\(items.count) files") {
                     Text(items.prefix(4).map(\.name).joined(separator: "\n") + (items.count > 4 ? "\n…" : ""))
                         .font(Theme.mono(11))
@@ -584,7 +646,7 @@ struct ExportSheet: View {
             }
             .formStyle(.grouped)
             HStack {
-                Text("File names, encoding and line endings are set in Project Settings.")
+                Text("File names, encoding and line endings: Project Settings and Language Options.")
                     .font(Theme.label(11, .regular)).foregroundStyle(Theme.textFaint)
                 Spacer()
                 Button("Cancel") { model.sheet = nil }.keyboardShortcut(.cancelAction)
@@ -603,9 +665,28 @@ struct ExportSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 540, height: 400)
+        .frame(width: 540, height: 460)
         .background(Theme.panel)
-        .onAppear { format = model.project?.settings.exportFormat ?? .srt }
+        .onAppear { format = defaultFormat(allLanguages: false) }
+        .onChange(of: allLanguages) { _, all in format = defaultFormat(allLanguages: all) }
+    }
+
+    /// One language: its own format (Language Options), else the project's. Every language:
+    /// the project's, for the languages without one of their own.
+    private func defaultFormat(allLanguages: Bool) -> ExportFormat {
+        let projectFormat = model.project?.settings.exportFormat ?? .srt
+        return allLanguages ? projectFormat : (model.focusedTrack?.exportFormat ?? projectFormat)
+    }
+
+    /// The languages that keep a format of their own when every language is exported.
+    private var ownFormats: [String] {
+        let videos = allVideos ? (model.project?.videos ?? []) : [model.video].compactMap { $0 }
+        var seen = Set<String>()
+        return videos.flatMap(\.tracks).compactMap { t in
+            guard let f = t.exportFormat, f != format, !t.doc.subtitles.isEmpty else { return nil }
+            let label = "\(t.language.name) (\(f.title))"
+            return seen.insert(label).inserted ? label : nil
+        }
     }
 }
 

@@ -11,9 +11,28 @@ import Foundation
 /// Languages without a word list still get punctuation and balance.
 enum LineBreaker {
 
+    /// Which line of a two-line title may be the longer one (Language Options).
+    enum Style: String, Codable, CaseIterable, Sendable {
+        /// Shorter line on top: what most style guides ask for.
+        case bottomHeavy
+        /// Lines as even as the words allow.
+        case balanced
+        /// Longer line on top: some broadcasters and clients ask for it.
+        case topHeavy
+
+        var title: String {
+            switch self {
+            case .bottomHeavy: return "Bottom-heavy (shorter line on top)"
+            case .balanced: return "Balanced (lines as even as possible)"
+            case .topHeavy: return "Top-heavy (longer line on top)"
+            }
+        }
+    }
+
     /// Breaks `text` into at most `maxLines` lines of `maxChars`. Existing line breaks are
     /// thrown away, so call it only when re-breaking is wanted.
-    static func breakLines(_ text: String, maxChars: Int, maxLines: Int, language: String) -> String {
+    static func breakLines(_ text: String, maxChars: Int, maxLines: Int, language: String,
+                           style: Style = .bottomHeavy) -> String {
         let flat = text
             .replacingOccurrences(of: "\n", with: " ")
             .split(separator: " ", omittingEmptySubsequences: true)
@@ -34,7 +53,8 @@ enum LineBreaker {
         let words = flat.split(separator: " ").map(String.init)
         guard words.count > 1 else { return flat }
         let rules = Rules.for(language)
-        return split(words, maxChars: maxChars, linesLeft: maxLines, rules: rules).joined(separator: "\n")
+        return split(words, maxChars: maxChars, linesLeft: maxLines, rules: rules, style: style)
+            .joined(separator: "\n")
     }
 
     /// Where the second speaker's dash starts in "- Hi. - Hello.": the space before a dash
@@ -54,7 +74,8 @@ enum LineBreaker {
     }
 
     /// Splits off the best first line, then the rest recursively if it's still too long.
-    private static func split(_ words: [String], maxChars: Int, linesLeft: Int, rules: Rules) -> [String] {
+    private static func split(_ words: [String], maxChars: Int, linesLeft: Int, rules: Rules,
+                              style: Style) -> [String] {
         let whole = words.joined(separator: " ")
         if len(whole) <= maxChars || linesLeft <= 1 || words.count < 2 { return [whole] }
 
@@ -64,17 +85,18 @@ enum LineBreaker {
             let bottom = words[k...].joined(separator: " ")
             let s = score(top: top, bottom: bottom, last: words[k - 1], next: words[k],
                           prev: k >= 2 ? words[k - 2] : nil, maxChars: maxChars,
-                          linesLeft: linesLeft, rules: rules)
+                          linesLeft: linesLeft, rules: rules, style: style)
             if best == nil || s < best!.score { best = (k, s) }
         }
         let k = best!.k
         let top = words[..<k].joined(separator: " ")
-        return [top] + split(Array(words[k...]), maxChars: maxChars, linesLeft: linesLeft - 1, rules: rules)
+        return [top] + split(Array(words[k...]), maxChars: maxChars, linesLeft: linesLeft - 1, rules: rules,
+                             style: style)
     }
 
     /// Lower is better.
     private static func score(top: String, bottom: String, last: String, next: String, prev: String?,
-                              maxChars: Int, linesLeft: Int, rules: Rules) -> Double {
+                              maxChars: Int, linesLeft: Int, rules: Rules, style: Style) -> Double {
         var s = 0.0
         let t = Double(len(top)), b = Double(len(bottom))
 
@@ -84,10 +106,15 @@ enum LineBreaker {
         let bottomLimit = maxChars * max(1, linesLeft - 1)
         if len(bottom) > bottomLimit { s += 1000 + (b - Double(bottomLimit)) * 20 }
 
-        // Balance, leaning bottom-heavy: a longer top line costs more than a longer bottom.
+        // Balance, leaning the way the language's style asks: bottom-heavy (the default)
+        // makes a longer top line cost more than a longer bottom one; top-heavy the reverse.
         if linesLeft == 2 {
             s += abs(t - b) * 0.6
-            if t > b { s += (t - b) * 0.6 }
+            switch style {
+            case .bottomHeavy: if t > b { s += (t - b) * 0.6 }
+            case .topHeavy: if b > t { s += (b - t) * 0.6 }
+            case .balanced: break
+            }
         } else {
             // More than two lines: fill the top line well.
             s += (Double(maxChars) - t) * 0.3

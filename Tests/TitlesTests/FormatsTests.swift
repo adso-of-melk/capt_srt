@@ -127,7 +127,7 @@ final class FormatsTests: XCTestCase {
     func testWhatIsWrittenReadsBackTheSame() throws {
         let subs = [sub(0.04, 1.96, "First"), sub(2.5, 4.123, "<i>Second</i>\nline"), sub(3600.5, 3602, "Čćđšž ČĆĐŠŽ"),
                     sub(7199.999, 7201.001, "- One.\n- Two.")]
-        for format in ExportFormat.allCases {
+        for format in [ExportFormat.srt, .vtt] {
             for crlf in [true, false] {
                 for bom in [true, false] {
                     let data = SubtitleFormats.data(subs, format: format, bom: bom, crlf: crlf)

@@ -18,6 +18,15 @@ struct LanguageOptions: Equatable {
     /// nil: UTF-8.
     var exportEncoding: String?
     var directionMarks: Bool
+    /// nil: the project standard.
+    var minDuration: Double?
+    var lineBreakStyle: LineBreaker.Style
+    /// nil: the project's (Project Settings, the Export dialog).
+    var exportFormat: ExportFormat?
+    var utf8BOM: Bool?
+    var crlf: Bool?
+    /// Rewrite every title in this alphabet when the dialog closes (Serbian and its neighbours).
+    var convertTo: SerbianScript.Script?
 
     @MainActor init(_ track: Track, isMaster: Bool) {
         language = track.language
@@ -29,6 +38,11 @@ struct LanguageOptions: Equatable {
         locked = track.locked
         exportEncoding = track.exportEncoding
         directionMarks = track.directionMarks
+        minDuration = track.minDuration
+        lineBreakStyle = track.lineBreakStyle
+        exportFormat = track.exportFormat
+        utf8BOM = track.utf8BOM
+        crlf = track.crlf
     }
 }
 
@@ -1033,12 +1047,7 @@ extension AppModel {
         let copy = Track(language: Language(code: source.language.code,
                                             name: Self.copyName(for: source.language.name, taken: names)),
                          locked: isMaster ? false : source.locked, subtitles: subs)
-        copy.maxCPS = source.maxCPS
-        copy.maxCharsPerLine = source.maxCharsPerLine
-        copy.maxLines = source.maxLines
-        copy.spellCheck = source.spellCheck
-        copy.exportEncoding = source.exportEncoding
-        copy.directionMarks = source.directionMarks
+        source.copyOptions(to: copy)
         attach(copy)
         let at = video.tracks.firstIndex { $0.id == source.id }.map { $0 + 1 } ?? video.tracks.count
         video.tracks.insert(copy, at: at)
@@ -1258,6 +1267,40 @@ extension AppModel {
         saveProject()
     }
 
+    /// Language Options: minimum duration, line-break style and this language's own export
+    /// format, byte-order mark and line endings.
+    func setLanguageExtras(_ track: Track, minDuration: Double?, lineBreakStyle: LineBreaker.Style,
+                           exportFormat: ExportFormat?, utf8BOM: Bool?, crlf: Bool?) {
+        guard track.minDuration != minDuration || track.lineBreakStyle != lineBreakStyle
+                || track.exportFormat != exportFormat || track.utf8BOM != utf8BOM || track.crlf != crlf else { return }
+        track.minDuration = minDuration
+        track.lineBreakStyle = lineBreakStyle
+        track.exportFormat = exportFormat
+        track.utf8BOM = utf8BOM
+        track.crlf = crlf
+        bump()
+        saveProject()
+    }
+
+    /// Language Options ▸ Convert to Latin / Cyrillic: every title rewritten in the other
+    /// alphabet, in one undo step. Formatting tags are kept.
+    func convertScript(_ track: Track, to script: SerbianScript.Script) {
+        var changed = 0
+        track.doc.perform { subs in
+            for i in subs.indices {
+                let converted = SerbianScript.convert(subs[i].text, to: script)
+                if converted != subs[i].text { subs[i].text = converted; changed += 1 }
+            }
+        }
+        track.doc.endTextCoalescing()
+        find.refresh()
+        bump()
+        saveProject()
+        let alphabet = script == .latin ? "Latin" : "Cyrillic"
+        flash(changed == 0 ? "\(track.language.name) was already in \(alphabet) letters"
+                           : "\(track.language.name): \(changed) titles now in \(alphabet) letters (⌘Z to undo)")
+    }
+
     func setSpellCheck(_ track: Track, _ on: Bool) {
         guard track.spellCheck != on else { return }
         track.spellCheck = on
@@ -1275,6 +1318,9 @@ extension AppModel {
         setOverrides(track, maxCPS: .some(o.maxCPS), maxChars: .some(o.maxChars), maxLines: .some(o.maxLines))
         setSpellCheck(track, o.spellCheck)
         setExportOptions(track, encoding: o.exportEncoding, directionMarks: o.directionMarks)
+        setLanguageExtras(track, minDuration: o.minDuration, lineBreakStyle: o.lineBreakStyle,
+                          exportFormat: o.exportFormat, utf8BOM: o.utf8BOM, crlf: o.crlf)
+        if let script = o.convertTo { convertScript(track, to: script) }
         if o.makeMaster, video?.masterTrackID != track.id {
             setMaster(track)
         } else if video?.masterTrackID != track.id, o.locked != track.locked {
@@ -1307,6 +1353,7 @@ extension AppModel {
     struct ExportItem {
         let name: String
         let data: Data
+        var format: ExportFormat = .srt
         /// Characters the language's code page couldn't hold (written as "?").
         var lost = 0
         /// Titles whose broken formatting tags were repaired in the file.
@@ -1325,18 +1372,24 @@ extension AppModel {
                     .replacingOccurrences(of: "{video}", with: ProjectStore.sanitize(v.name))
                     .replacingOccurrences(of: "{lang}", with: t.language.code)
                     .replacingOccurrences(of: "{project}", with: ProjectStore.sanitize(project.name))
-                let out = SubtitleFormats.encoded(t.doc.subtitles, format: format, bom: s.utf8BOM, crlf: s.crlf,
-                                                  encoding: t.exportEncoding,
-                                                  directionMarks: t.directionMarks && t.language.isRightToLeft)
+                // Exporting every language, one with a format of its own (Language Options)
+                // keeps it; one language at a time, the format picked is the one written.
+                let f = allLanguages ? (t.exportFormat ?? format) : format
+                let context = ExportContext(fps: fps, language: t.language.code, title: v.name,
+                                            startTimecode: s.startTimecode)
+                let out = SubtitleFormats.encoded(t.doc.subtitles, format: f, bom: t.utf8BOM ?? s.utf8BOM,
+                                                  crlf: t.crlf ?? s.crlf, encoding: t.exportEncoding,
+                                                  directionMarks: t.directionMarks && t.language.isRightToLeft,
+                                                  context: context)
                 // Two languages with the same code (a duplicate) must not write over each
                 // other: the second file is Film.en-2.srt, the third Film.en-3.srt.
-                var name = "\(base).\(format.rawValue)"
+                var name = "\(base).\(f.fileExtension)"
                 var n = 2
                 while items.contains(where: { $0.name.lowercased() == name.lowercased() }) {
-                    name = "\(base)-\(n).\(format.rawValue)"
+                    name = "\(base)-\(n).\(f.fileExtension)"
                     n += 1
                 }
-                items.append(ExportItem(name: name, data: out.data, lost: out.lost,
+                items.append(ExportItem(name: name, data: out.data, format: f, lost: out.lost,
                                         repaired: TextChecks.brokenTagCount(t.doc.subtitles)))
             }
         }
@@ -1351,7 +1404,7 @@ extension AppModel {
             let panel = NSSavePanel()
             panel.title = "Export Subtitles"
             panel.prompt = "Export"
-            panel.allowedContentTypes = [format.type]
+            panel.allowedContentTypes = [items[0].format.type]
             panel.nameFieldStringValue = items[0].name
             panel.roomy()
             guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -1441,7 +1494,8 @@ extension AppModel {
         let rules = preset(for: track)
         guard rebalance || Markup.plain(sub.text).count > rules.maxCharsPerLine else { return }
         let broken = LineBreaker.breakLines(sub.text, maxChars: rules.maxCharsPerLine,
-                                            maxLines: rules.maxLines, language: track.language.code)
+                                            maxLines: rules.maxLines, language: track.language.code,
+                                            style: track.lineBreakStyle)
         if broken != sub.text { track.doc.setText(id, broken) }
     }
 
@@ -1454,7 +1508,8 @@ extension AppModel {
         let lines = Markup.plain(text).split(separator: "\n", omittingEmptySubsequences: false)
         guard lines.contains(where: { $0.trimmingCharacters(in: .whitespaces).count > rules.maxCharsPerLine }) else { return nil }
         var broken = LineBreaker.breakLines(text, maxChars: rules.maxCharsPerLine,
-                                            maxLines: rules.maxLines, language: track.language.code)
+                                            maxLines: rules.maxLines, language: track.language.code,
+                                            style: track.lineBreakStyle)
         if text.hasSuffix(" ") { broken += " " }
         return broken
     }
@@ -1467,7 +1522,8 @@ extension AppModel {
         track.doc.perform { subs in
             for i in subs.indices {
                 let broken = LineBreaker.breakLines(subs[i].text, maxChars: rules.maxCharsPerLine,
-                                                    maxLines: rules.maxLines, language: track.language.code)
+                                                    maxLines: rules.maxLines, language: track.language.code,
+                                                    style: track.lineBreakStyle)
                 if broken != subs[i].text { subs[i].text = broken; changed += 1 }
             }
         }
@@ -1482,7 +1538,8 @@ extension AppModel {
               let sub = track.doc.subtitle(id) else { return }
         let rules = preset(for: track)
         let broken = LineBreaker.breakLines(sub.text, maxChars: rules.maxCharsPerLine,
-                                            maxLines: rules.maxLines, language: track.language.code)
+                                            maxLines: rules.maxLines, language: track.language.code,
+                                            style: track.lineBreakStyle)
         if broken != sub.text { track.doc.setText(id, broken) }
     }
 
@@ -1491,7 +1548,8 @@ extension AppModel {
         guard let track = focusedTrack, let sub = doc.selected else { return }
         let rules = preset(for: track)
         let broken = LineBreaker.breakLines(sub.text, maxChars: rules.maxCharsPerLine,
-                                            maxLines: rules.maxLines, language: track.language.code)
+                                            maxLines: rules.maxLines, language: track.language.code,
+                                            style: track.lineBreakStyle)
         if broken != sub.text { doc.setText(sub.id, broken) }
     }
 }
@@ -1614,7 +1672,7 @@ extension AppModel {
         guard autoLineBreaks else { return joined }
         let rules = preset(for: track)
         return LineBreaker.breakLines(joined, maxChars: rules.maxCharsPerLine, maxLines: rules.maxLines,
-                                      language: track.language.code)
+                                      language: track.language.code, style: track.lineBreakStyle)
     }
 
     /// Title ▸ Shift Titles…: moves titles by `offset` seconds (negative = earlier).

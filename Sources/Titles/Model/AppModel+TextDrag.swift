@@ -57,7 +57,7 @@ extension AppModel {
         guard autoLineBreaks, !Markup.plain(text).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
         let rules = preset(for: track)
         return LineBreaker.breakLines(text, maxChars: rules.maxCharsPerLine, maxLines: rules.maxLines,
-                                      language: track.language.code)
+                                      language: track.language.code, style: track.lineBreakStyle)
     }
 
     /// The dragged words put into a title's text: in front (`atStart`) or after it, with one
