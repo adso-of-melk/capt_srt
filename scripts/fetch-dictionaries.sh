@@ -6,14 +6,18 @@
 #   bash scripts/fetch-dictionaries.sh hr th      # just these
 #
 # Sources:
-#   hr, sr (Cyrillic), sr-Latn, fa: github.com/wooorm/dictionaries (UTF-8 copies)
-#     hr: Denis Lacković, LGPL/SISSL · sr, sr-Latn: Goran Rakić, LGPL/GPL/MPL/CC BY-SA
-#     fa: Lilak, Apache 2.0
-#   bs, th: github.com/LibreOffice/dictionaries
+#   hr, fa: github.com/wooorm/dictionaries (UTF-8 copies)
+#     hr: Denis Lacković, LGPL/SISSL · fa: Lilak, Apache 2.0
+#   sr (Cyrillic), sr-Latn, bs, th: github.com/LibreOffice/dictionaries
+#     sr, sr-Latn: Milutin Smiljanić, LGPL 3+/MPL 2+/GPL 3+ (affix rules, so every
+#       inflected form; replaces the old full-form Rakić lists, which missed most forms)
 #     bs: GPL 2+/LGPL 2.1+/MPL 1.1+ · th: NECTEC/libthai word lists, LGPL
 set -euo pipefail
 
 DEST="${KPTN_DICTIONARIES:-$HOME/Library/Application Support/KPTN.SUB/Dictionaries}"
+# Words the dictionaries are missing (dictionaries/README.md in the repository). Found
+# before moving into $DEST, so the script also works when started by a relative path.
+REPO_EXTRAS="$(cd "$(dirname "$0")/.." && pwd)/dictionaries"
 WOOORM="https://raw.githubusercontent.com/wooorm/dictionaries/main/dictionaries"
 LIBRE="https://raw.githubusercontent.com/LibreOffice/dictionaries/master"
 
@@ -29,10 +33,14 @@ get() {
     local code="$1"
     echo "• $code"
     case "$code" in
-        hr|sr|sr-Latn|fa)
+        hr|fa)
             fetch "$WOOORM/$code/index.aff" "$code.aff" &&
             fetch "$WOOORM/$code/index.dic" "$code.dic" &&
             fetch "$WOOORM/$code/license" "$code.license.txt" ;;
+        sr|sr-Latn)
+            fetch "$LIBRE/sr/$code.aff" "$code.aff" &&
+            fetch "$LIBRE/sr/$code.dic" "$code.dic" &&
+            fetch "$LIBRE/sr/README.txt" "$code.license.txt" ;;
         bs)
             fetch "$LIBRE/bs_BA/bs_BA.aff" bs.aff &&
             fetch "$LIBRE/bs_BA/bs_BA.dic" bs.dic &&
@@ -46,8 +54,6 @@ get() {
     esac
 }
 
-# Words the dictionaries are missing (dictionaries/README.md in the repository).
-REPO_EXTRAS="$(cd "$(dirname "$0")/.." && pwd)/dictionaries"
 
 codes=("$@")
 [ ${#codes[@]} -eq 0 ] && codes=(hr sr sr-Latn bs fa th)
