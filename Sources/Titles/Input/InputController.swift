@@ -276,6 +276,10 @@ final class InputController {
             endJog(commit: false)
             return nil
         }
+        if e.keyCode == Key.escape, model.matchPick != nil {
+            model.cancelMatchTC()
+            return nil
+        }
 
         // Typing in the Find or Replace field: every key is the field's.
         // Esc there closes Find.

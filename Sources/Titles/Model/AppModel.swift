@@ -83,6 +83,8 @@ final class AppModel: ObservableObject {
     var rowOfSub: [UUID: Int] = [:]
     /// Titles picked together on the waveform (Shift-click, Shift-drag, ⌘A), in the focused language.
     @Published var multiSelection: Set<UUID> = []
+    /// Match TC to Neighbour: titles waiting for the click on the title to match (Esc cancels).
+    @Published var matchPick: MatchPick?
     /// Per-language title numbers (1-based, time order).
     var numberOfSub: [UUID: Int] = [:]
     /// The focused language has no title in this row, and that empty slot is selected.

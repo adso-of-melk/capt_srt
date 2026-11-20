@@ -880,6 +880,11 @@ struct CardView: View {
                 delegate: TextDropTarget(model: model, track: track, id: sub.id, hovering: $textDropHover))
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded {
+            // Match TC to Neighbour: this card is the title to match.
+            if model.matchPick != nil {
+                model.matchTC(to: sub.id, in: track.id)
+                return
+            }
             let flags = NSEvent.modifierFlags
             // Shift-click: every title from the selected one to this one (to join them, say).
             // ⌘-click: this one in or out of the group.
@@ -902,6 +907,27 @@ struct CardView: View {
             }
             if inGroup, model.canJoin {
                 Button("Join \(model.multiSelection.count) Titles  (⌘J)") { model.joinSelected() }
+            }
+            if !track.locked {
+                Divider()
+                Button(inGroup ? "Match TC of \(model.multiSelection.count) Titles to Neighbour…" : "Match TC to Neighbour…") {
+                    focusColumn()
+                    if !inGroup {
+                        model.clearMulti()
+                        model.select(sub.id)
+                    }
+                    model.beginMatchTC()
+                }
+                if track.id != model.video?.masterTrackID, sub.link != nil {
+                    Button(inGroup ? "Match TC of \(model.multiSelection.count) Titles to Linked Titles" : "Match TC to Linked Title") {
+                        focusColumn()
+                        if !inGroup {
+                            model.clearMulti()
+                            model.select(sub.id)
+                        }
+                        model.matchLinked()
+                    }
+                }
             }
             Divider()
             Button("Delete Title  (⌃⌫)") {

@@ -194,6 +194,9 @@ struct TitlesCommands: Commands {
                     .keyboardShortcut("b", modifiers: [.command, .option, .shift])
                 Button("Shift Titles…") { model.sheet = .shiftTitles }
                     .keyboardShortcut("t", modifiers: [.command, .option])
+                Button("Match TC to Neighbour…  (then click the title to match)") { model.beginMatchTC() }
+                Button("Match TC to Linked Titles") { model.matchLinked() }
+                    .disabled(!model.canMatchLinked)
             }
             .disabled(noProject)
             Toggle("Break Long Lines Automatically", isOn: $model.autoLineBreaks)

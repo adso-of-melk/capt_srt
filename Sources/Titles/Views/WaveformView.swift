@@ -1366,6 +1366,11 @@ final class WaveformNSView: NSView {
         if case .language = drag, didDrag { NSCursor.closedHand.set(); return }
         if languageCode(at: p) != nil { NSCursor.openHand.set(); return }
         if p.y < rulerHeight || laneRects.contains(where: { $0.rect.contains(p) }) { NSCursor.pointingHand.set(); return }
+        // Match TC to Neighbour: pointing at the title to match.
+        if model?.matchPick != nil {
+            if band(at: p) != nil, case .empty = hit(p) { NSCursor.arrow.set() } else { NSCursor.pointingHand.set() }
+            return
+        }
         if model?.focusedIsLocked == true { NSCursor.arrow.set(); return }
         // Playing on the strip: the boxes are where the strip shows them, not where they
         // were last drawn here (a click finds them again: see mouseDown).
@@ -1404,6 +1409,28 @@ final class WaveformNSView: NSView {
             } else {
                 drag = .scrolling(grab: thumb.width / 2)
                 scroll(thumbX: p.x - thumb.width / 2)
+            }
+            needsDisplay = true
+            return
+        }
+
+        // Match TC to Neighbour: this click picks the title to match, in any band or lane.
+        // A click on empty waveform cancels.
+        if model.matchPick != nil {
+            drag = .none
+            if let lane = laneRects.first(where: { $0.rect.contains(p) }) {
+                if let box = laneBoxes.first(where: { $0.track == lane.track && $0.rect.insetBy(dx: -2, dy: 0).contains(p) }) {
+                    model.matchTC(to: box.id, in: lane.track)
+                } else {
+                    model.cancelMatchTC()
+                }
+            } else if let b = band(at: p) {
+                switch hit(p) {
+                case let .edge(id, _), let .body(id): model.matchTC(to: id, in: b.track.id)
+                case .empty: model.cancelMatchTC()
+                }
+            } else {
+                model.cancelMatchTC()
             }
             needsDisplay = true
             return
@@ -1757,9 +1784,32 @@ final class WaveformNSView: NSView {
         delete.target = self
         let join = NSMenuItem(title: "Join \(model.multiSelection.count) Titles", action: #selector(menuJoin(_:)), keyEquivalent: "")
         join.target = self
-        menu.items = model.canJoin ? [play, edit, .separator(), join, .separator(), delete]
-                                   : [play, edit, .separator(), delete]
+        var items: [NSMenuItem] = [play, edit, .separator()]
+        if model.canJoin { items += [join, .separator()] }
+        if !model.focusedIsLocked {
+            let count = max(1, model.multiSelection.count)
+            let match = NSMenuItem(title: count == 1 ? "Match TC to Neighbour…" : "Match TC of \(count) Titles to Neighbour…",
+                                   action: #selector(menuMatchTC(_:)), keyEquivalent: "")
+            match.target = self
+            items.append(match)
+            if model.canMatchLinked {
+                let linked = NSMenuItem(title: "Match TC to Linked Titles", action: #selector(menuMatchLinked(_:)), keyEquivalent: "")
+                linked.target = self
+                items.append(linked)
+            }
+            items.append(.separator())
+        }
+        menu.items = items + [delete]
         return menu
+    }
+
+    @objc private func menuMatchTC(_ sender: NSMenuItem) {
+        model?.beginMatchTC()
+        needsDisplay = true
+    }
+
+    @objc private func menuMatchLinked(_ sender: NSMenuItem) {
+        model?.matchLinked()
     }
 
     @objc private func menuJoin(_ sender: NSMenuItem) {

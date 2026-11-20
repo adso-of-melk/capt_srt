@@ -678,6 +678,7 @@ extension AppModel {
         video = nil
         showProjectView = false
         multiSelection = []
+        matchPick = nil
         editingTimecode = false
         pendingPreview = nil
         doc = SubtitleDocument()
@@ -815,6 +816,7 @@ extension AppModel {
         redoOrder.removeAll()
         video = v
         multiSelection = []
+        matchPick = nil
         let focused = v.track(v.focusedTrackID) ?? v.master ?? v.tracks.first
         if let focused {
             v.focusedTrackID = focused.id
