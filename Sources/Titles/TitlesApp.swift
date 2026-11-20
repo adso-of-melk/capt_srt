@@ -234,6 +234,8 @@ struct TitlesCommands: Commands {
                 Button("Extend Selected Titles to Fit Reading Speed") { model.extendToFitReadingSpeed(all: false) }
                     .keyboardShortcut("e", modifiers: [.command, .option])
                 Button("Extend All Titles to Fit Reading Speed") { model.extendToFitReadingSpeed(all: true) }
+                Button("Re-split Selected Titles to Fit") { model.resplitToFit(all: false) }
+                Button("Re-split All Titles to Fit") { model.resplitToFit(all: true) }
                 Divider()
                 Button("Widen Selected Gaps to the Minimum") { model.fixGaps(all: false, close: false) }
                 Button("Widen All Gaps to the Minimum") { model.fixGaps(all: true, close: false) }

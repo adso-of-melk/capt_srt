@@ -214,9 +214,10 @@ final class QCTests: XCTestCase {
     }
 
     func testEachIssueGetsTheFixesThatApply() {
-        XCTAssertEqual(QCFix.fixes(for: [.readingSpeed]), [.extend])
-        XCTAssertEqual(QCFix.fixes(for: [.duration, .gap]), [.extend, .widenGaps])
-        XCTAssertEqual(QCFix.fixes(for: [.lineLength, .lineCount]), [.rebreak])
+        XCTAssertEqual(QCFix.fixes(for: [.readingSpeed]), [.extend, .resplit])
+        XCTAssertEqual(QCFix.fixes(for: [.duration, .gap]), [.extend, .widenGaps, .resplit])
+        XCTAssertEqual(QCFix.fixes(for: [.lineLength, .lineCount]), [.rebreak, .resplit])
+        XCTAssertEqual(QCFix.fixes(for: [.lineLength]), [.rebreak])
         XCTAssertEqual(QCFix.fixes(for: [.spelling, .overlap, .empty, .nearReadingSpeed]), [])
     }
 

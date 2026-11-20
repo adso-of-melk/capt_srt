@@ -177,6 +177,7 @@ extension AppModel {
         case .rebreak:
             rebreakSelected()
             doc.endTextCoalescing()
+        case .resplit: resplitToFit(all: false)
         case .removeBlankLines: rewriteText(of: id) { TextChecks.withoutBlankLines($0) }
         case .italicizeWords: rewriteText(of: id) { TextChecks.wholeWordItalics($0, italic: true) }
         case .unitalicizeWords: rewriteText(of: id) { TextChecks.wholeWordItalics($0, italic: false) }
@@ -311,4 +312,62 @@ extension AppModel {
             + "QC ▸ Widen All Gaps to the Minimum fixes them in one go (⌘Z to undo); each one is also fixed when you move one of its titles."
     }
 
+}
+
+// MARK: QC: re-splitting
+
+extension AppModel {
+    /// QC ▸ Re-split to Fit: titles with more text than their lines hold are split, titles
+    /// too fast to read share their words with a neighbour close by, and titles shorter than
+    /// the minimum duration join one (see `Refit`). The selected titles (or every title in
+    /// the language), in one undo step.
+    func resplitToFit(all: Bool) {
+        guard let video, let track = focusedTrack, !refuseIfLocked() else { return }
+        let picked: Set<UUID> = all ? Set(doc.subtitles.map(\.id)) : pickedTitleIDs
+        guard !picked.isEmpty else {
+            flash("Select the titles to re-split, or use Re-split All.")
+            return
+        }
+        let limits = Refit.Limits(rules: preset(for: track), gap: minGap, frame: frameDuration,
+                                  language: track.language.code, style: track.lineBreakStyle)
+        var split = 0, shared = 0, joined = 0, left = 0
+        track.doc.perform { subs in
+            var i = 0
+            while i < subs.count {
+                guard picked.contains(subs[i].id) else { i += 1; continue }
+                guard let change = Refit.change(for: i, in: subs, limits: limits) else {
+                    if Self.wantsRefit(subs[i], limits: limits) { left += 1 }
+                    i += 1
+                    continue
+                }
+                let before = change.range.count, after = change.titles.count
+                if after > before { split += 1 } else if after < before { joined += 1 } else { shared += 1 }
+                subs.replaceSubrange(change.range, with: change.titles)
+                i = change.range.lowerBound + change.titles.count
+            }
+        }
+        track.doc.endTextCoalescing()
+        clearMulti()
+        enforceLocks(in: video)
+        bump()
+        var done: [String] = []
+        if split > 0 { done.append("split \(split) title\(split == 1 ? "" : "s")") }
+        if shared > 0 { done.append("re-split \(shared) pair\(shared == 1 ? "" : "s")") }
+        if joined > 0 { done.append("joined \(joined) pair\(joined == 1 ? "" : "s")") }
+        if done.isEmpty {
+            flash(left > 0
+                  ? "Re-splitting can't fix \(left == 1 ? "this title" : "these \(left) titles"): no neighbour close enough to share with (try Extend to Fit Reading Speed)."
+                  : "Every \(all ? "" : "selected ")title already fits.")
+        } else {
+            let text = done.joined(separator: ", ")
+            flash(text.prefix(1).uppercased() + text.dropFirst()
+                  + (left > 0 ? "; \(left) left as they were (nothing close to share with)" : "") + " (⌘Z to undo)")
+        }
+    }
+
+    /// Too much text for its lines, too fast, or too short.
+    static func wantsRefit(_ s: Subtitle, limits l: Refit.Limits) -> Bool {
+        s.characterCount > 0 && (Refit.overflows(s.text, l) || Refit.tooFast(s.characterCount, s.duration, l)
+                                 || s.duration < l.rules.minDuration - 0.0005)
+    }
 }

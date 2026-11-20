@@ -64,7 +64,7 @@ enum QCIssue: String, CaseIterable, Identifiable, Codable, Sendable {
 
 /// What clicking a title's issue tag offers to do about it.
 enum QCFix: String, CaseIterable, Identifiable {
-    case extend, widenGaps, rebreak, removeBlankLines, italicizeWords, unitalicizeWords, repairTags
+    case extend, widenGaps, rebreak, resplit, removeBlankLines, italicizeWords, unitalicizeWords, repairTags
 
     var id: String { rawValue }
 
@@ -73,6 +73,7 @@ enum QCFix: String, CaseIterable, Identifiable {
         case .extend: return "Extend to Fit Reading Speed"
         case .widenGaps: return "Widen Gaps to the Minimum"
         case .rebreak: return "Re-break Lines"
+        case .resplit: return "Re-split to Fit"
         case .removeBlankLines: return "Remove Blank Lines"
         case .italicizeWords: return "Italicize Whole Words"
         case .unitalicizeWords: return "Remove Italics From Those Words"
@@ -81,7 +82,7 @@ enum QCFix: String, CaseIterable, Identifiable {
     }
 
     /// Moves titles in time (not allowed in a language locked to the master's timing).
-    var changesTiming: Bool { self == .extend || self == .widenGaps }
+    var changesTiming: Bool { self == .extend || self == .widenGaps || self == .resplit }
 
     /// The fixes for a title's issues, in this order. Spelling, overlaps and empty titles
     /// have none: they need a person.
@@ -90,6 +91,7 @@ enum QCFix: String, CaseIterable, Identifiable {
         if !issues.isDisjoint(with: [.readingSpeed, .duration]) { out.append(.extend) }
         if issues.contains(.gap) { out.append(.widenGaps) }
         if !issues.isDisjoint(with: [.lineLength, .lineCount]) { out.append(.rebreak) }
+        if !issues.isDisjoint(with: [.readingSpeed, .lineCount, .duration]) { out.append(.resplit) }
         if issues.contains(.blankLine) { out.append(.removeBlankLines) }
         if issues.contains(.partItalic) { out += [.italicizeWords, .unitalicizeWords] }
         if issues.contains(.tags) { out.append(.repairTags) }
