@@ -550,6 +550,7 @@ private struct AddLanguageMenu: View {
                     }
                 }
             }
+            Button("New Language…") { model.sheet = .newBlankLanguage }
             Button("New Language from Master…") { model.sheet = .newLanguage }
             Button("Import Language…") { model.importLanguagePanel() }
             DuplicateLanguageItems(model: model)

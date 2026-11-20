@@ -14,6 +14,7 @@ struct SheetHost: View {
             case .newProject: NewProjectSheet(model: model)
             case .projectSettings: ProjectSettingsSheet(model: model)
             case .newLanguage: LanguageSheet(model: model, importURL: nil)
+            case .newBlankLanguage: LanguageSheet(model: model, importURL: nil, blank: true)
             case .importLanguage: LanguageSheet(model: model, importURL: model.pendingImport)
             case .export: ExportSheet(model: model)
             case .openLink: OpenLinkSheet(model: model)
@@ -473,6 +474,8 @@ struct LanguageOptionsSheet: View {
 struct LanguageSheet: View {
     @ObservedObject var model: AppModel
     let importURL: URL?
+    /// New Language…: no titles, no timecodes.
+    var blank = false
     @State private var language = Language.named("hr")
     @State private var locked = false
     @State private var copyText = false
@@ -480,13 +483,17 @@ struct LanguageSheet: View {
     var body: some View {
         let master = model.masterTrack
         VStack(alignment: .leading, spacing: 14) {
-            SheetHeader(title: importURL == nil ? "New language from master" : "Import language", color: Theme.teal)
+            SheetHeader(title: importURL != nil ? "Import language" : blank ? "New language" : "New language from master",
+                        color: Theme.teal)
             Form {
                 if let importURL {
                     LabeledContent("File", value: importURL.lastPathComponent)
                 }
                 LanguagePicker(title: "Language", selection: $language)
-                if importURL == nil {
+                if blank {
+                    Text("Starts with no titles and no timecodes, ready for spotting or for drawing titles on the waveform. It has its own timing (it can't be locked to the master, as it shares nothing with it).")
+                        .font(Theme.label(11, .regular)).foregroundStyle(Theme.textDim)
+                } else if importURL == nil {
                     LabeledContent("Copies timecodes from", value: master.map { "\($0.language.name) (master)" } ?? "—")
                     Picker("Timing", selection: $locked) {
                         Text("Free: its own timing, edited independently").tag(false)
@@ -513,17 +520,19 @@ struct LanguageSheet: View {
                     if let importURL {
                         model.pendingImport = nil
                         model.importLanguage(from: importURL, as: language)
+                    } else if blank {
+                        model.addBlankLanguage(language)
                     } else {
                         model.addLanguage(language, locked: locked, copyText: copyText)
                     }
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(ConsoleButtonStyle(color: Theme.teal))
-                .disabled(importURL == nil && master == nil)
+                .disabled(importURL == nil && !blank && master == nil)
             }
         }
         .padding(20)
-        .frame(width: 540, height: importURL == nil ? 380 : 300)
+        .frame(width: 540, height: importURL == nil && !blank ? 380 : 300)
         .background(Theme.panel)
         .onAppear {
             // Suggest the first common language this video doesn't have yet.

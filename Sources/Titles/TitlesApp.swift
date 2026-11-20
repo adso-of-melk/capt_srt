@@ -161,6 +161,7 @@ struct TitlesCommands: Commands {
                         .keyboardShortcut(KeyEquivalent(Character("\(i + 1)")))
                 }
                 Divider()
+                Button("New Language…") { model.sheet = .newBlankLanguage }
                 Button("New Language from Master…") { model.sheet = .newLanguage }
                 Button("Import Language…") { model.importLanguagePanel() }
                 DuplicateLanguageItems(model: model)

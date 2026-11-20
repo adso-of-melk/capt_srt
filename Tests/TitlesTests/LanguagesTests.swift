@@ -29,6 +29,27 @@ final class LanguagesTests: XCTestCase {
         XCTAssertEqual(f.video.tracks[2].doc.subtitles.map(\.text), ["Hello", "World"])
     }
 
+    func testABlankLanguageStartsWithNoTitlesAndItsOwnTiming() {
+        let f = makeFixture([("en", [sub(1, 2, "Hello"), sub(3, 4, "World")])])
+
+        f.model.addBlankLanguage(Language.named("hr"))
+
+        XCTAssertEqual(f.video.tracks.count, 2)
+        XCTAssertTrue(f.hr.doc.subtitles.isEmpty)
+        XCTAssertFalse(f.hr.locked)
+        XCTAssertEqual(f.video.openTrackIDs, [f.en.id, f.hr.id])
+        XCTAssertEqual(f.video.focusedTrackID, f.hr.id)
+        XCTAssertTrue(f.model.doc === f.hr.doc)
+        // The master's rows are still there, with nothing beside them yet.
+        XCTAssertEqual(f.model.rows.count, 2)
+        XCTAssertTrue(f.model.rows.allSatisfy { $0.cells[f.hr.id] == nil })
+
+        // Titles drawn in it are its own: no link to the master's.
+        let id = f.hr.doc.add(start: 10, end: 12, text: "Bok")
+        XCTAssertNil(f.hr.doc.subtitle(id)?.link)
+        XCTAssertEqual(f.en.doc.subtitles.count, 2)
+    }
+
     func testDuplicatingTheMasterCopiesEveryTitleAndLinksTheCopyToIt() throws {
         let a = sub(1, 2, "Hello <i>there</i>"), b = sub(3, 4.5, "World")
         let f = makeFixture([("en", [a, b]), ("hr", [sub(1, 2, "Bok")])])

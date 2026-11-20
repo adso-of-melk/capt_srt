@@ -34,7 +34,7 @@ struct LanguageOptions: Equatable {
 
 /// The dialogs the editor can show.
 enum SheetKind: Identifiable, Equatable {
-    case newProject, projectSettings, newLanguage, importLanguage, export, openLink, shiftTitles, languageOptions, dropImport
+    case newProject, projectSettings, newLanguage, newBlankLanguage, importLanguage, export, openLink, shiftTitles, languageOptions, dropImport
     var id: Self { self }
 }
 
@@ -987,6 +987,20 @@ extension AppModel {
     }
 
     // MARK: Languages
+
+    /// New Language…: a language with no titles and no timecodes, to spot or draw from
+    /// scratch. It has nothing to share with the master, so it's free (never locked).
+    func addBlankLanguage(_ language: Language) {
+        guard let video else { return }
+        let track = Track(language: language, locked: false, subtitles: [])
+        attach(track)
+        video.tracks.append(track)
+        video.openTrackIDs.append(track.id)
+        rebuildRows()
+        focusTrack(track.id, edit: false)
+        saveProject()
+        flash("Added \(language.name), with no titles yet: spot them or draw them on the waveform")
+    }
 
     /// New Language from Master: the master's timecodes, blank (or with its text copied), free or locked.
     func addLanguage(_ language: Language, locked: Bool, copyText: Bool) {
