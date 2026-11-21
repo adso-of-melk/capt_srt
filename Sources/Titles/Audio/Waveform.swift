@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+@testable import TitlesCore
 
 /// Decoded mono audio (16 kHz, 16-bit) plus a pyramid of loudness summaries,
 /// so the waveform draws instantly at any zoom level.

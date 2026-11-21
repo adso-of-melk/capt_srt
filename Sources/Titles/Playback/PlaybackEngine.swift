@@ -1,4 +1,6 @@
 import AppKit
+import AVFoundation
+@testable import TitlesCore
 
 /// Everything the editor needs from a video engine. Build 1 uses AVFoundation;
 /// a libmpv engine (MKV, WebM, AVI…) can be dropped in behind this protocol later.
@@ -15,6 +17,8 @@ protocol PlaybackEngine: AnyObject {
     var onPlayStateChange: ((Bool) -> Void)? { get set }
 
     func load(url: URL) async throws
+    /// Closes the current video, leaving an empty engine.
+    func unload()
     func play()
     func pause()
     func setRate(_ rate: Float)
@@ -28,4 +32,12 @@ protocol PlaybackEngine: AnyObject {
 
     /// The view that renders the picture.
     func makeVideoView() -> NSView
+
+    /// The item the picture is playing, for drawing that moves in step with it (the
+    /// waveform's strip, see WaveStripView). Nil when there's none.
+    var syncItem: AVPlayerItem? { get }
+}
+
+extension PlaybackEngine {
+    var syncItem: AVPlayerItem? { nil }
 }

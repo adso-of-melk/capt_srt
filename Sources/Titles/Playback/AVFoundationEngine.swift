@@ -1,6 +1,7 @@
 import AVFoundation
 import AVKit
 import AppKit
+@testable import TitlesCore
 
 enum EngineError: LocalizedError {
     case unsupported(String)
@@ -57,6 +58,8 @@ final class AVFoundationEngine: NSObject, PlaybackEngine {
 
     var isPlaying: Bool { player.rate != 0 }
 
+    var syncItem: AVPlayerItem? { player.currentItem }
+
     func load(url: URL) async throws {
         pause()
         let asset = AVURLAsset(url: url)
@@ -72,6 +75,16 @@ final class AVFoundationEngine: NSObject, PlaybackEngine {
         }
         let item = AVPlayerItem(asset: asset)
         player.replaceCurrentItem(with: item)
+        onTimeChange?(0)
+    }
+
+    func unload() {
+        pause()
+        stopAt = nil
+        player.replaceCurrentItem(with: nil)
+        duration = 0
+        frameRate = 25
+        hasVideo = false
         onTimeChange?(0)
     }
 

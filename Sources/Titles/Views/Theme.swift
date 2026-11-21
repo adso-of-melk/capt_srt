@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+@testable import TitlesCore
 
 /// Dark, minimal "future-retro" console palette: near-black blue panels,
 /// warm amber and peach accents, cool periwinkle and lilac secondaries,
@@ -11,12 +12,21 @@ enum Palette {
     static let rule = NSColor(hex: 0x1C2742)
     static let lane = NSColor(hex: 0x080C17)
 
+    /// Selection and focus only ("you are here"). Never a timing status.
     static let amber = NSColor(hex: 0xFF9D4A)
+    /// Timing status "near the limit": a pale LCARS gold, kept well apart from amber.
+    static let gold = NSColor(hex: 0xFFCC66)
     static let peach = NSColor(hex: 0xFFC994)
     static let lilac = NSColor(hex: 0xC49BDB)
     static let periwinkle = NSColor(hex: 0x8EA1FF)
     static let red = NSColor(hex: 0xE8665A)
     static let teal = NSColor(hex: 0x5FCFC0)
+
+    /// QC mode ("yellow alert"): its indicator, its frame and the marks on titles with issues.
+    static let alert = NSColor(hex: 0xF4DC4C)
+    /// QC mode's warmer near-black panels and waveform lane.
+    static let alertPanel = NSColor(hex: 0x13110A)
+    static let alertLane = NSColor(hex: 0x0E0C06)
 
     static let text = NSColor(hex: 0xE6EAF4)
     static let textDim = NSColor(hex: 0x7A86A5)
@@ -25,9 +35,21 @@ enum Palette {
     static func status(_ s: TimingStatus) -> NSColor {
         switch s {
         case .ok: return periwinkle
-        case .warn: return amber
+        case .warn: return gold
         case .bad: return red
         }
+    }
+
+    /// A colour as another language shows it (see StepBack, the title pane's own): less
+    /// saturated, keeping its brightness, and fainter. Warning rims keep a little more of
+    /// their colour (`StepBack.rimSaturation`).
+    static func steppedBack(_ c: NSColor, saturation: Double = StepBack.saturation) -> NSColor {
+        guard let rgb = c.usingColorSpace(.sRGB) else { return c }
+        let k = CGFloat(saturation)
+        let l = 0.2126 * rgb.redComponent + 0.7152 * rgb.greenComponent + 0.0722 * rgb.blueComponent
+        func mix(_ v: CGFloat) -> CGFloat { min(1, max(0, l + (v - l) * k)) }
+        return NSColor(srgbRed: mix(rgb.redComponent), green: mix(rgb.greenComponent), blue: mix(rgb.blueComponent),
+                       alpha: rgb.alphaComponent * CGFloat(StepBack.opacity))
     }
 }
 
@@ -37,11 +59,14 @@ enum Theme {
     static let panelRaised = Color(nsColor: Palette.panelRaised)
     static let rule = Color(nsColor: Palette.rule)
     static let amber = Color(nsColor: Palette.amber)
+    static let gold = Color(nsColor: Palette.gold)
     static let peach = Color(nsColor: Palette.peach)
     static let lilac = Color(nsColor: Palette.lilac)
     static let periwinkle = Color(nsColor: Palette.periwinkle)
     static let red = Color(nsColor: Palette.red)
     static let teal = Color(nsColor: Palette.teal)
+    static let alert = Color(nsColor: Palette.alert)
+    static let alertPanel = Color(nsColor: Palette.alertPanel)
     static let text = Color(nsColor: Palette.text)
     static let textDim = Color(nsColor: Palette.textDim)
     static let textFaint = Color(nsColor: Palette.textFaint)
@@ -78,6 +103,8 @@ struct ConsoleLabel: View {
             .font(Theme.label(size, .bold))
             .tracking(1.6)
             .foregroundStyle(color)
+            .lineLimit(1)
+            .fixedSize()
     }
 }
 
@@ -112,31 +139,92 @@ struct Chip: View {
     let text: String
     var color: Color = Theme.textDim
     var filled = false
+    /// A rim in its own colour (e.g. red round a quiet blue chip).
+    var outline: Color? = nil
+    var rimWidth: CGFloat = 1
+    /// A faint wash of its own colour inside (instead of the chip's colour).
+    var tint: Color? = nil
+    var size: CGFloat = 10
 
     var body: some View {
         Text(text)
-            .font(Theme.label(10, .bold))
+            .font(Theme.label(size, .bold))
+            .lineLimit(1)
             .tracking(0.6)
             .foregroundStyle(filled ? Theme.background : color)
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
             .background(
-                Capsule().fill(filled ? color : color.opacity(0.12))
+                Capsule().fill(filled ? color : (tint?.opacity(0.22) ?? color.opacity(0.12)))
             )
-            .overlay(Capsule().stroke(color.opacity(filled ? 0 : 0.35), lineWidth: 1))
+            .overlay(Capsule().stroke(outline ?? color.opacity(filled ? 0 : 0.35), lineWidth: rimWidth))
+    }
+}
+
+extension Chip {
+    /// A chip in another language's column: the quiet blue of its cards, with a rim in the
+    /// warning colour when it's over or near a limit. Over (red) gets the stronger rim and a
+    /// red wash, so it never draws less notice than near (gold).
+    static func muted(_ text: String, status: TimingStatus, size: CGFloat) -> Chip {
+        switch status {
+        case .ok: return Chip(text: text, color: Theme.periwinkle, size: size)
+        case .warn: return Chip(text: text, color: Theme.periwinkle, outline: Theme.gold.opacity(0.8), size: size)
+        case .bad: return Chip(text: text, color: Theme.periwinkle, outline: Theme.red, rimWidth: 1.5, tint: Theme.red, size: size)
+        }
     }
 }
 
 /// Pill-shaped console button.
+/// A console capsule. The primary one is filled; `secondary` (Cancel and the like) is
+/// the same shape and type, outlined.
 struct ConsoleButtonStyle: ButtonStyle {
     var color: Color = Theme.amber
+    var secondary = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(Theme.label(11, .bold))
             .tracking(1.2)
-            .foregroundStyle(Theme.background)
+            .foregroundStyle(secondary ? color : Theme.background)
             .padding(.horizontal, 12)
             .frame(height: 22)
-            .background(Capsule().fill(color.opacity(configuration.isPressed ? 0.7 : 1)))
+            .background(Capsule().fill(secondary
+                ? color.opacity(configuration.isPressed ? 0.25 : 0.08)
+                : color.opacity(configuration.isPressed ? 0.7 : 1)))
+            .overlay(Capsule().stroke(secondary ? color.opacity(0.6) : .clear, lineWidth: 1))
+            .contentShape(Capsule())
     }
+}
+
+extension SpotTimerStatus {
+    var nsColor: NSColor {
+        switch self {
+        case .short, .near: return Palette.gold
+        case .ok: return Palette.periwinkle
+        case .over: return Palette.red
+        }
+    }
+    var color: Color { Color(nsColor: nsColor) }
+}
+
+/// The spotting timer: a small console readout, filled with its status colour.
+struct SpotTimerPill: View {
+    let text: String
+    let status: SpotTimerStatus
+    var body: some View {
+        HStack(spacing: 4) {
+            Capsule().fill(Theme.background.opacity(0.55)).frame(width: 6, height: 8)
+            Text(text).font(Theme.mono(11, .bold)).tracking(0.5)
+        }
+        .foregroundStyle(Theme.background)
+        .padding(.horizontal, 7)
+        .frame(height: 16)
+        .background(Capsule().fill(status.color))
+        .fixedSize()
+        .animation(.easeOut(duration: 0.2), value: status)
+    }
+}
+
+extension NSColor {
+    /// This colour at a share of its own opacity.
+    func faded(_ share: CGFloat) -> NSColor { withAlphaComponent(alphaComponent * share) }
 }
