@@ -35,6 +35,10 @@ extension AppModel {
     }
 
     func handleDrop(_ urls: [URL]) {
+        guard !importing else {
+            flash("Still matching the files dropped before. Wait for it, or Cancel it first.")
+            return
+        }
         let droppedFolder = urls.contains { $0.isFileURL && $0.hasDirectoryPath }
         let files = Self.expandFolders(urls)
         if let projectFile = files.first(where: { $0.pathExtension.lowercased() == ProjectStore.fileExtension }) {
@@ -116,13 +120,28 @@ extension AppModel {
         let master = intoProject ? (project?.settings.masterLanguage ?? ProjectSettings().masterLanguage)
                                  : ProjectSettings().masterLanguage
         let projectID = project?.id
-        if !subtitles.isEmpty {
-            flash("Reading \(subtitles.count) subtitle file\(subtitles.count == 1 ? "" : "s")…")
+        guard !importing else {
+            flash("Still matching the files dropped before. Wait for it, or Cancel it first.")
+            return
         }
-        Task { [weak self] in
+        importing = true
+        let token = UUID()
+        importToken = token
+        showStatus(subtitles.isEmpty ? "Reading the video\(videos.count == 1 ? "" : "s")…"
+                                     : "Reading \(subtitles.count) subtitle file\(subtitles.count == 1 ? "" : "s")…")
+        importTask = Task { [weak self] in
+            defer {
+                if let self, self.importToken == token {
+                    self.importing = false
+                    self.importTask = nil
+                    self.listenJob = nil
+                    self.importToken = nil
+                }
+            }
             var read: [ImportPlan.ReadFile] = []
             var skipped = skipped
             for url in subtitles {
+                if Task.isCancelled { return }
                 let job = Self.offMain { () -> ImportPlan.ReadFile? in
                     guard let subs = try? SubtitleFormats.read(url: url), !subs.isEmpty else { return nil }
                     return ImportPlan.ReadFile(url: url, subtitles: subs, language: LanguageGuess.language(of: url))
@@ -133,13 +152,19 @@ extension AppModel {
                 }
             }
             var lengths: [URL: Double] = [:]
+            if Task.isCancelled { return }
+            if !videos.isEmpty { self?.showStatus("Measuring the video\(videos.count == 1 ? "" : "s")…") }
             for url in videos + existing.compactMap(\.url) where lengths[url] == nil {
+                if Task.isCancelled { return }
                 let job = Task.detached { await Self.mediaDuration(url) }
                 if case let seconds?? = await Self.value(of: job, timeout: 5) { lengths[url] = seconds }
             }
-            guard let self else { return }
+            guard let self, !Task.isCancelled else { return }
             // Another project was opened (or this one closed) meanwhile: drop it.
-            guard self.project?.id == projectID || !intoProject else { return }
+            guard self.project?.id == projectID || !intoProject else {
+                self.statusMessage = nil
+                return
+            }
             let targets = existing.map { t -> ImportPlan.Target in
                 var t = t
                 t.duration = t.url.flatMap { lengths[$0] }
@@ -151,6 +176,7 @@ extension AppModel {
             // videos and match the files by where people speak.
             if onto == nil, plan.hasUnsureFiles, plan.targets.count > 1 {
                 let heard = await self.listen(to: plan.targets.compactMap(\.url))
+                guard !Task.isCancelled else { return }
                 guard self.project?.id == projectID || !intoProject else {
                     self.statusMessage = nil
                     return
@@ -161,6 +187,7 @@ extension AppModel {
                 }
             }
             guard !plan.files.isEmpty || !videos.isEmpty else {
+                self.importing = false
                 self.flash("None of the subtitle files could be read.")
                 return
             }
@@ -182,6 +209,18 @@ extension AppModel {
         }
     }
 
+    /// Stops reading and listening to dropped files (the progress card's Cancel).
+    func cancelImport() {
+        guard importing else { return }
+        importTask?.cancel()
+        listenJob?.cancel()
+        importTask = nil
+        listenJob = nil
+        importToken = nil
+        importing = false
+        flash("Stopped matching the dropped files.")
+    }
+
     /// When people speak in each video file (the ones whose sound can be read). Each video
     /// is listened to once; a long one takes a few seconds.
     func listen(to urls: [URL]) async -> [URL: FileMatcher.Speech] {
@@ -190,6 +229,7 @@ extension AppModel {
         var heard: [URL: FileMatcher.Speech] = [:]
         let toListen = unique.filter { speechHeard[$0] == nil }
         for (n, url) in unique.enumerated() {
+            if Task.isCancelled { break }
             if let known = speechHeard[url] {
                 heard[url] = known
                 continue
@@ -197,6 +237,7 @@ extension AppModel {
             let position = (toListen.firstIndex(of: url) ?? n) + 1
             showStatus("Listening to video \(position) of \(toListen.count) to match the subtitle files by speech…")
             let job = Task.detached { await SpeechListener.speech(url: url) }
+            listenJob = job
             if case let speech?? = await Self.value(of: job, timeout: 240) {
                 heard[url] = speech
                 speechHeard[url] = speech

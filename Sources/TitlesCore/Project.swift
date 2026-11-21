@@ -299,6 +299,24 @@ final class VideoItem: ObservableObject, Identifiable {
     func track(_ id: UUID?) -> Track? { tracks.first { $0.id == id } }
     var master: Track? { track(masterTrackID) }
     var openTracks: [Track] { openTrackIDs.compactMap(track) }
+
+    /// How a video's columns start when its project is opened: the master first (opened if
+    /// it was closed), then the other open languages in order of their codes, and you in the
+    /// master. Reordering lasts while the project is open; the next opening starts over.
+    func arrangeForOpening() {
+        let others = openTrackIDs.filter { $0 != masterTrackID }.compactMap(track)
+            .enumerated()
+            .sorted { a, b in
+                let ca = a.element.language.code.lowercased(), cb = b.element.language.code.lowercased()
+                if ca != cb { return ca < cb }
+                let na = a.element.language.name.lowercased(), nb = b.element.language.name.lowercased()
+                return na != nb ? na < nb : a.offset < b.offset
+            }
+            .map(\.element.id)
+        openTrackIDs = (master != nil ? [masterTrackID] : []) + others
+        if openTrackIDs.isEmpty, let first = tracks.first { openTrackIDs = [first.id] }
+        focusedTrackID = master?.id ?? openTrackIDs.first
+    }
 }
 
 @MainActor

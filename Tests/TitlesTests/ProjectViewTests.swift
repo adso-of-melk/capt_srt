@@ -40,6 +40,39 @@ final class ProjectViewTests: XCTestCase {
         XCTAssertFalse(model.showProjectView)
     }
 
+    func testOpeningPutsTheMasterFirstAndTheOthersByCodeWithOnlyTheMasterOpenOnTheWaveform() throws {
+        let (model, _) = makeModel()
+        let en = Track(language: Language.named("en"))
+        let v = VideoItem(name: "Film", url: nil, master: en)
+        let hr = Track(language: Language.named("hr")), de = Track(language: Language.named("de"))
+        let ptBR = Track(language: Language.named("pt-BR")), fr = Track(language: Language.named("fr"))
+        v.tracks += [hr, de, ptBR, fr]
+        // Left last time: English closed, Croatian first, French closed, Croatian in use and
+        // open on the waveform with Portuguese.
+        v.openTrackIDs = [hr.id, ptBR.id, de.id]
+        v.focusedTrackID = hr.id
+        model.waveBands = [hr.id, ptBR.id]
+
+        model.load(Project(name: "Film", settings: ProjectSettings(), videos: [v], fileURL: nil), currentVideoID: v.id)
+
+        XCTAssertEqual(v.openTrackIDs, [en.id, de.id, hr.id, ptBR.id], "French stays closed")
+        XCTAssertEqual(v.focusedTrackID, en.id)
+        XCTAssertTrue(model.doc === en.doc)
+        XCTAssertEqual(model.waveBandTracks.map(\.id), [en.id])
+        XCTAssertFalse(model.isWaveBand(hr.id))
+
+        // Reordering lasts while the project is open…
+        model.moveColumn(ptBR, to: 0)
+        model.toggleWaveBand(hr.id)
+        XCTAssertEqual(v.openTrackIDs, [ptBR.id, en.id, de.id, hr.id])
+        // …and the next opening starts over.
+        let file = try XCTUnwrap(model.project).file(currentVideoID: v.id)
+        model.load(Project(file, fileURL: nil), currentVideoID: v.id, saveCurrent: false)
+        let again = try XCTUnwrap(model.video)
+        XCTAssertEqual(again.openTrackIDs, [en.id, de.id, hr.id, ptBR.id])
+        XCTAssertEqual(model.waveBandTracks.map(\.id), [en.id])
+    }
+
     func testNamesSortWithTheirNumbersInOrder() {
         let videos = [video("Episode 10"), video("episode 2"), video("Episode 1"), video("Bonus")]
         XCTAssertEqual(Project.sorted(videos, by: .name).map(\.name), ["Bonus", "Episode 1", "episode 2", "Episode 10"])

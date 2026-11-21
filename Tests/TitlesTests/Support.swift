@@ -90,7 +90,13 @@ func makeFixture(_ languages: [(code: String, subs: [Subtitle])]) -> Fixture {
         video.openTrackIDs.append(track.id)
     }
     let project = Project(name: "Test", settings: ProjectSettings(), videos: [video], fileURL: nil)
+    let order = video.openTrackIDs
     model.load(project, currentVideoID: video.id)
+    // Columns in the order given (opening a project sorts them by code), nothing pinned
+    // open on the waveform yet.
+    video.openTrackIDs = order
+    model.waveBands = []
+    model.rebuildRows()
     // Pretend a video is loaded, so seeking and previews go to the fake player.
     model.videoURL = URL(fileURLWithPath: "/tmp/kptn-sub-test-video.mp4")
     return Fixture(model: model, engine: engine, video: video)

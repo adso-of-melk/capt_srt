@@ -644,11 +644,22 @@ extension AppModel {
         closeProject(save: saveCurrent)
         self.project = project
         for v in project.videos { v.tracks.forEach(attach) }
+        arrangeForOpening(project)
         syncSpellingWords()
         showHome = false
         rememberProject()
         if let v = project.video(currentVideoID) ?? project.videos.first { switchVideo(v) }
         if overview ?? (project.videos.count > 1) { showProjectView = true }
+    }
+
+    /// Every video starts with its master first and the other languages by code, and only
+    /// the master open on the waveform (the rest as slim lanes, in the same order).
+    func arrangeForOpening(_ project: Project) {
+        for v in project.videos {
+            v.arrangeForOpening()
+            waveBands.subtract(v.tracks.map(\.id))
+            waveBands.insert(v.masterTrackID)
+        }
     }
 
     /// The project view's Sort menu.

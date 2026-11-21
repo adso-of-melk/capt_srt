@@ -8,6 +8,8 @@ import UniformTypeIdentifiers
 struct MainView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var doc: SubtitleDocument
+    /// Files are being dragged over the window.
+    @State private var dropTarget = false
 
     var body: some View {
         Group {
@@ -31,10 +33,28 @@ struct MainView: View {
         .dropDestination(for: URL.self) { urls, _ in
             model.handleDrop(urls)
             return !urls.isEmpty
+        } isTargeted: { dropTarget = $0 }
+        .overlay { if dropTarget { DropHighlight(text: dropText) } }
+        .overlay(alignment: .bottom) {
+            // The editor's title bar shows messages; the home screen and project view have
+            // none, so they (and any import under way) get a card.
+            if model.importing || (model.statusMessage != nil && (model.showHome || model.project == nil || model.showProjectView)) {
+                StatusCard(model: model)
+                    .padding(.bottom, 18)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
+        .animation(.easeOut(duration: 0.2), value: model.importing)
         .sheet(item: $model.sheet) { kind in
             SheetHost(model: model, kind: kind)
         }
+    }
+
+    private var dropText: String {
+        if model.importing { return "Still matching the files dropped before" }
+        if model.showHome || model.project == nil { return "Drop videos and subtitle files to start a project" }
+        if model.showProjectView { return "Drop to add to \(model.project?.name ?? "the project")" }
+        return "Drop a subtitle file to add a language"
     }
 
     private var editor: some View {
@@ -245,5 +265,53 @@ final class PaneDividerView: NSView {
         } else {
             CGRect(x: 0, y: (bounds.height - w) / 2, width: bounds.width, height: w).fill()
         }
+    }
+}
+
+
+/// Round the window while files are dragged over it, saying what a drop does.
+struct DropHighlight: View {
+    let text: String
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Theme.teal, lineWidth: 3)
+                .padding(6)
+            Text(text)
+                .font(Theme.label(13, .semibold))
+                .foregroundStyle(Theme.background)
+                .padding(.horizontal, 14).padding(.vertical, 7)
+                .background(Capsule().fill(Theme.teal))
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// What's going on, on the home screen and the project view (they have no title bar for
+/// messages): dropped files being read and matched, with Cancel, or a passing message.
+struct StatusCard: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if model.importing {
+                ProgressView().controlSize(.small)
+            }
+            Text(model.statusMessage ?? "Reading the dropped files…")
+                .font(Theme.label(12, .medium))
+                .foregroundStyle(Theme.text)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            if model.importing {
+                Button("Cancel") { model.cancelImport() }
+                    .buttonStyle(ConsoleButtonStyle(secondary: true))
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .frame(maxWidth: 560)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panelRaised))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(model.importing ? Theme.teal.opacity(0.6) : Theme.rule, lineWidth: 1))
+        .shadow(color: .black.opacity(0.4), radius: 10, y: 4)
     }
 }

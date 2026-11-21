@@ -105,6 +105,13 @@ final class AppModel: ObservableObject {
     @Published var pendingImport: URL?
     /// Videos and subtitle files dropped together, matched up, waiting to be checked.
     @Published var importPlan: ImportPlan?
+    /// Dropped files being read, measured and listened to before the import sheet shows.
+    @Published var importing = false
+    var importTask: Task<Void, Never>?
+    /// Which import is current, so a cancelled one finishing late doesn't touch a newer one.
+    var importToken: UUID?
+    /// The video being listened to for matching, so Cancel can stop it.
+    var listenJob: Task<FileMatcher.Speech?, Never>?
     @Published var textOnly = false {
         didSet { UserDefaults.standard.set(textOnly, forKey: "textOnly") }
     }

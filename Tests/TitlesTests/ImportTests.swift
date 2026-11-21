@@ -498,4 +498,36 @@ final class ImportTests: XCTestCase {
         XCTAssertEqual(Set(plan.files.map(\.language.code)), ["en", "hr"])
         XCTAssertEqual(plan.name, "Show")
     }
+
+    func testWhileDroppedFilesAreBeingMatchedASecondDropWaitsAndCancelStopsIt() throws {
+        let folder = try tempFolder()
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+        let a = template(seed: 1, count: 60)
+        let en = try writeFile("Show.S01E01.en.srt", SubtitleFormats.srt(a), in: folder)
+        let hr = try writeFile("Show.S01E01.hr.srt", SubtitleFormats.srt(translation(of: a)), in: folder)
+        let (model, _) = makeModel()
+
+        model.handleDrop([en, hr])
+        XCTAssertTrue(model.importing)
+        XCTAssertNotNil(model.statusMessage, "the progress card has something to say")
+        // A second drop meanwhile is turned away, not started alongside.
+        model.handleDrop([en])
+        XCTAssertTrue(model.statusMessage?.contains("Still matching") ?? false)
+        XCTAssertTrue(waitUntil { model.importPlan != nil })
+        XCTAssertEqual(model.importPlan?.files.count, 2)
+        XCTAssertTrue(waitUntil { !model.importing })
+
+        // Cancel: nothing comes of it, and the next drop works.
+        model.sheet = nil
+        model.importPlan = nil
+        model.handleDrop([en, hr])
+        XCTAssertTrue(model.importing)
+        model.cancelImport()
+        XCTAssertFalse(model.importing)
+        _ = waitUntil(timeout: 1) { false }
+        XCTAssertNil(model.importPlan)
+        XCTAssertNil(model.sheet)
+        model.handleDrop([en, hr])
+        XCTAssertTrue(waitUntil { model.importPlan != nil })
+    }
 }
