@@ -25,8 +25,8 @@ final class FrameRateTests: XCTestCase {
         let f = makeFixture([("en", [sub(10, 12, "A"), sub(1000, 1002, "B")]),
                              ("hr", [sub(10, 12, "a"), sub(1000, 1002, "b")])])
         f.model.changeFrameRate(from: 23.976, to: 25, allLanguages: true)
-        XCTAssertEqual(f.en.doc.subtitles[1].start, 959.04, accuracy: 0.001)
-        XCTAssertEqual(f.hr.doc.subtitles[1].start, 959.04, accuracy: 0.001)
+        XCTAssertEqual(f.en.doc.subtitles[1].start, 959.041, accuracy: 0.0005)
+        XCTAssertEqual(f.hr.doc.subtitles[1].start, 959.041, accuracy: 0.0005)
         f.model.changeFrameRate(from: 25, to: 23.976, allLanguages: true)
         XCTAssertEqual(f.en.doc.subtitles[1].start, 1000, accuracy: 0.002)
         XCTAssertEqual(f.hr.doc.subtitles[0].end, 12, accuracy: 0.002)
