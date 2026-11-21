@@ -16,7 +16,7 @@ struct WaveformPane: View {
             revision: model.revision, focused: model.video?.focusedTrackID,
             pps: model.pixelsPerSecond, gain: model.waveGain, db: model.dbScale,
             hasWave: audio.waveform != nil, loading: audio.isLoading,
-            speech: model.showSpeech ? audio.speech?.count ?? -1 : -1,
+            speech: model.showSpeech && audio.speech != nil ? audio.speechRevision : -1,
             qcMode: model.qcMode, qcKinds: model.qcKinds))
             .background(Theme.background)
     }
@@ -35,7 +35,7 @@ struct WaveformPane: View {
         var db: Bool
         var hasWave: Bool
         var loading: Bool
-        /// How many stretches of speech are shaded (-1: none shown).
+        /// Which reckoning of the speech colours the waveform (-1: none shown).
         var speech: Int
         var qcMode: Bool
         var qcKinds: Set<QCIssue>
@@ -86,6 +86,7 @@ final class WaveformNSView: NSView {
         static let gold = Palette.steppedBack(Palette.gold.withAlphaComponent(0.8), saturation: StepBack.rimSaturation)
         static let red = Palette.steppedBack(Palette.red, saturation: StepBack.rimSaturation)
         static let teal = Palette.steppedBack(Palette.teal)
+        static let grey = Palette.steppedBack(Palette.textDim)
     }
 
     /// Languages drawn as full bands, top to bottom in column order.
@@ -700,7 +701,7 @@ final class WaveformNSView: NSView {
             focused: model.video?.focusedTrackID, bands: bandIDs, weights: bandIDs.map { bandWeights[$0] ?? 1 },
             lanes: laneTracks.map(\.id), qcKinds: model.qcKinds, gain: model.waveGain, db: model.dbScale,
             wave: model.audio.waveform.map { ObjectIdentifier($0) },
-            speech: model.showSpeech ? model.audio.speech?.count ?? -1 : -1, multi: model.multiSelection,
+            speech: model.showSpeech && model.audio.speech != nil ? model.audio.speechRevision : -1, multi: model.multiSelection,
             find: find.isShown ? "\(find.query)|\(find.matchCase)|\(find.wholeWord)|\(find.scope.rawValue)" : "")
     }
 
@@ -860,10 +861,8 @@ final class WaveformNSView: NSView {
                 Palette.background.withAlphaComponent(0.35).setFill()
                 band.rect.fill()
             }
-            if model.showSpeech, let speech = model.audio.speech {
-                drawSpeech(speech, in: band.rect, muted: showsCodes && !band.focused)
-            }
-            drawWaveform(ctx, in: band.rect, model: model, muted: showsCodes && !band.focused)
+            drawWaveform(ctx, in: band.rect, model: model, muted: showsCodes && !band.focused,
+                         speech: model.showSpeech ? model.audio.speech : nil)
             drawBoxes(ctx, in: band.rect, track: band.track, focused: band.focused, model: model)
             if showsCodes {
                 Palette.rule.setFill()
@@ -987,31 +986,10 @@ final class WaveformNSView: NSView {
         return envelopeCache
     }
 
-    /// Where people speak: a soft shade behind the waveform and a line along the band's
-    /// foot, so a title can be lined up with the speech at a glance.
-    private func drawSpeech(_ stretches: [ClosedRange<Double>], in rect: CGRect, muted: Bool) {
-        let from = viewStart, to = viewStart + visibleDuration
-        // The first stretch that reaches into view (they're in time order).
-        var lo = 0, hi = stretches.count
-        while lo < hi {
-            let mid = (lo + hi) / 2
-            if stretches[mid].upperBound < from { lo = mid + 1 } else { hi = mid }
-        }
-        let shade = Palette.periwinkle.withAlphaComponent(muted ? 0.04 : 0.08)
-        let line = Palette.periwinkle.withAlphaComponent(muted ? 0.25 : 0.5)
-        var i = lo
-        while i < stretches.count, stretches[i].lowerBound <= to {
-            let s = stretches[i]
-            let x0 = x(s.lowerBound), x1 = max(x0 + 1, x(s.upperBound))
-            shade.setFill()
-            CGRect(x: x0, y: rect.minY, width: x1 - x0, height: rect.height).fill()
-            line.setFill()
-            CGRect(x: x0, y: rect.maxY - 3, width: x1 - x0, height: 2).fill()
-            i += 1
-        }
-    }
-
-    private func drawWaveform(_ ctx: CGContext, in rect: CGRect, model: AppModel, muted: Bool = false) {
+    /// The sound, bar by bar. With `speech` known, the waveform itself shows where people
+    /// speak: there it's in teal, and everything else (music, doors, footsteps) in grey.
+    private func drawWaveform(_ ctx: CGContext, in rect: CGRect, model: AppModel, muted: Bool = false,
+                              speech: [ClosedRange<Double>]? = nil) {
         // Centre line
         Palette.rule.setFill()
         CGRect(x: 0, y: rect.midY, width: rect.width, height: 1).fill()
@@ -1034,29 +1012,35 @@ final class WaveformNSView: NSView {
             return CGFloat(min(1, max(0, v))) * half
         }
 
-        let peakPath = CGMutablePath()
-        let rmsPath = CGMutablePath()
+        // [0]: speech (or all of it, while the speech isn't known or isn't shown); [1]: the rest.
+        let peakPaths = [CGMutablePath(), CGMutablePath()]
+        let rmsPaths = [CGMutablePath(), CGMutablePath()]
+        let spoken = speech.map { SpeechCursor($0) }
         for (i, e) in env.enumerated() {
             let xx = CGFloat(i) + 0.5
             let p = scale(e.peak), r = scale(e.rms)
+            let k = spoken?.contains(viewStart + Double(xx) / pps) == false ? 1 : 0
             if p > 0.3 {
-                peakPath.move(to: CGPoint(x: xx, y: rect.midY - p))
-                peakPath.addLine(to: CGPoint(x: xx, y: rect.midY + p))
+                peakPaths[k].move(to: CGPoint(x: xx, y: rect.midY - p))
+                peakPaths[k].addLine(to: CGPoint(x: xx, y: rect.midY + p))
             }
             if r > 0.3 {
-                rmsPath.move(to: CGPoint(x: xx, y: rect.midY - r))
-                rmsPath.addLine(to: CGPoint(x: xx, y: rect.midY + r))
+                rmsPaths[k].move(to: CGPoint(x: xx, y: rect.midY - r))
+                rmsPaths[k].addLine(to: CGPoint(x: xx, y: rect.midY + r))
             }
         }
         ctx.setLineWidth(1)
-        ctx.addPath(peakPath)
         // Another language's band: its waveform steps back with it.
         let teal = muted ? Muted.teal : Palette.teal
-        ctx.setStrokeColor(teal.withAlphaComponent(teal.alphaComponent * 0.35).cgColor)
-        ctx.strokePath()
-        ctx.addPath(rmsPath)
-        ctx.setStrokeColor(teal.withAlphaComponent(teal.alphaComponent * 0.85).cgColor)
-        ctx.strokePath()
+        let grey = muted ? Muted.grey : Palette.textDim
+        for (k, colour) in [teal, grey].enumerated() {
+            ctx.addPath(peakPaths[k])
+            ctx.setStrokeColor(colour.withAlphaComponent(colour.alphaComponent * (k == 0 ? 0.35 : 0.3)).cgColor)
+            ctx.strokePath()
+            ctx.addPath(rmsPaths[k])
+            ctx.setStrokeColor(colour.withAlphaComponent(colour.alphaComponent * (k == 0 ? 0.85 : 0.6)).cgColor)
+            ctx.strokePath()
+        }
     }
 
     private func drawBoxes(_ ctx: CGContext, in rect: CGRect, track: Track, focused: Bool, model: AppModel) {

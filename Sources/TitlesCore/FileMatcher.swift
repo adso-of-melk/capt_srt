@@ -535,7 +535,12 @@ enum FileMatcher {
         /// quietest tenth of the 10 s around it: the pauses between words, or steady music)
         /// and above the quietest tenth of the film; pauses under 0.3 s are bridged and
         /// blips under 0.2 s dropped.
-        static func detect(_ levels: [Float]) -> [Bool] {
+        ///
+        /// With `heard` (per frame, how sure a sound classifier is that someone speaks, 0 to
+        /// 1) loud sound that isn't speech (a door, music, footsteps) is left out, and speech
+        /// the classifier is sure of counts even where it hardly rises above the sound around
+        /// it (over music or a crowd), as long as it stands out from the film's quiet.
+        static func detect(_ levels: [Float], heard: [Float]? = nil) -> [Bool] {
             let n = levels.count
             guard n > 0 else { return [] }
             let quiet = levels.sorted()[Int(Double(n - 1) * 0.1)]
@@ -545,7 +550,12 @@ enum FileMatcher {
                 let around = levels[max(0, i - reach)...min(n - 1, i + reach)].sorted()
                 floor[i] = around[Int(Double(around.count - 1) * 0.1)]
             }
-            var active = (0..<n).map { levels[$0] > max(floor[$0] + 6, quiet + 9) }
+            var active = (0..<n).map { i -> Bool in
+                let loud = levels[i] > max(floor[i] + 6, quiet + 9)
+                guard let heard else { return loud }
+                let sure = i < heard.count ? heard[i] : 0
+                return (sure >= 0.6 && levels[i] > quiet + 6) || (sure >= 0.3 && loud)
+            }
             // Bridge short pauses, then drop short blips.
             var i = 0
             while i < n {

@@ -180,7 +180,7 @@ struct TitleBar: View {
                 Text("Speech").font(Theme.label(10, .bold))
             }
             .toggleStyle(.button)
-            .help("Shade where people speak, behind the waveform (worked out from the video's sound)")
+            .help("Colour the waveform where people speak: speech in teal, other sound (music, doors, footsteps) in grey")
         }
     }
 
