@@ -11,6 +11,8 @@ struct DropImportSheet: View {
     @State private var name: String
     @State private var folder = ProjectStore.defaultProjectsFolder
     @State private var settings: ProjectSettings
+    /// The video box a file is being dragged over ("unmatched" for the Not Matched box).
+    @State private var dropKey: String?
 
     init(model: AppModel, plan: ImportPlan) {
         self.model = model
@@ -40,34 +42,41 @@ struct DropImportSheet: View {
                     }
                     StandardFields(settings: $settings)
                 }
+                // Each video is one box: a file dragged anywhere on it (its name, its files or
+                // the space between them) goes into that video.
                 ForEach(plan.targets) { target in
                     let files = plan.files(of: target.id)
                     if !files.isEmpty || target.url != nil {
                         Section {
-                            if files.isEmpty {
-                                Text(target.existingID == nil ? "No subtitle files: the video comes in with an empty \(settings.masterLanguage.name)."
-                                                              : "Nothing new for this video.")
-                                    .font(Theme.label(11, .regular)).foregroundStyle(Theme.textFaint)
-                                    .dropDestination(for: String.self) { ids, _ in drop(ids, on: target.id) }
+                            box(target.id.uuidString, target: target.id) {
+                                header(target, files: files)
+                                if files.isEmpty {
+                                    Text(target.existingID == nil ? "No subtitle files: the video comes in with an empty \(settings.masterLanguage.name). Drag files here to add them."
+                                                                  : "Nothing new for this video. Drag files here to add them.")
+                                        .font(Theme.label(11, .regular)).foregroundStyle(Theme.textFaint)
+                                }
+                                ForEach(files) { file in
+                                    Divider().opacity(0.5)
+                                    row(file, master: masterFileID(of: target), length: target.duration)
+                                }
                             }
-                            ForEach(files) { file in row(file, master: masterFileID(of: target), length: target.duration) }
-                        } header: {
-                            header(target, files: files)
-                                .dropDestination(for: String.self) { ids, _ in drop(ids, on: target.id) }
                         }
                     }
                 }
                 if !unmatched.isEmpty {
                     Section {
-                        ForEach(unmatched) { file in row(file, master: nil, length: nil) }
-                    } header: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "questionmark.folder").foregroundStyle(Theme.amber)
-                            Text("NOT MATCHED").font(Theme.label(11, .bold)).foregroundStyle(Theme.amber)
-                            Text("Left out unless you move them to a video (menu or drag).")
-                                .font(Theme.label(11, .regular)).foregroundStyle(Theme.textDim)
+                        box("unmatched", target: nil) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "questionmark.folder").foregroundStyle(Theme.amber)
+                                Text("NOT MATCHED").font(Theme.label(11, .bold)).foregroundStyle(Theme.amber)
+                                Text("Left out unless you drag them onto a video (or use the menu).")
+                                    .font(Theme.label(11, .regular)).foregroundStyle(Theme.textDim)
+                            }
+                            ForEach(unmatched) { file in
+                                Divider().opacity(0.5)
+                                row(file, master: nil, length: nil)
+                            }
                         }
-                        .dropDestination(for: String.self) { ids, _ in drop(ids, on: nil) }
                     }
                 }
                 if !plan.skipped.isEmpty {
@@ -105,6 +114,24 @@ struct DropImportSheet: View {
 
     // MARK: Parts
 
+    /// A video's files (or the unmatched ones) as one drop target, lit while a file is
+    /// dragged over any part of it.
+    private func box<Content: View>(_ key: String, target: UUID?, @ViewBuilder content: () -> Content) -> some View {
+        let lit = dropKey == key
+        return VStack(alignment: .leading, spacing: 6) { content() }
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .background(RoundedRectangle(cornerRadius: 6).fill(Theme.teal.opacity(lit ? 0.08 : 0)).padding(-6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.teal, lineWidth: 2).padding(-6).opacity(lit ? 1 : 0))
+            .dropDestination(for: String.self) { ids, _ in
+                dropKey = nil
+                return drop(ids, on: target)
+            } isTargeted: { on in
+                if on { dropKey = key } else if dropKey == key { dropKey = nil }
+            }
+    }
+
     private func header(_ target: ImportPlan.Target, files: [ImportPlan.File]) -> some View {
         let counts = Dictionary(grouping: files, by: \.language).filter { $0.value.count > 1 }
         return HStack(spacing: 8) {
@@ -136,6 +163,11 @@ struct DropImportSheet: View {
     private func row(_ file: ImportPlan.File, master: UUID?, length: Double?) -> some View {
         let end = file.subtitles.map(\.end).max() ?? 0
         return HStack(spacing: 8) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Theme.textFaint)
+                .frame(width: 14)
+                .help("Drag onto another video")
             Text(file.url.lastPathComponent)
                 .lineLimit(1).truncationMode(.middle)
                 .help(file.url.path)
@@ -165,8 +197,12 @@ struct DropImportSheet: View {
             moveMenu(file)
         }
         .contentShape(Rectangle())
-        .draggable(file.id.uuidString)
-        .dropDestination(for: String.self) { ids, _ in drop(ids, on: file.target) }
+        .draggable(file.id.uuidString) {
+            Label(file.url.lastPathComponent, systemImage: "doc.text")
+                .font(Theme.label(11, .medium))
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 5).fill(Theme.panelRaised))
+        }
     }
 
     private func moveMenu(_ file: ImportPlan.File) -> some View {
