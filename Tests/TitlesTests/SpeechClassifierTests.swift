@@ -71,8 +71,8 @@ final class SpeechClassifierTests: XCTestCase {
     }
 
     private struct Fixed: SpeechClassifier {
-        var windows: [SpeechWindow]
-        func windows(samples: [Int16], sampleRate: Double) throws -> [SpeechWindow] { windows }
+        var heard: [SpeechWindow]
+        func windows(samples: [Int16], sampleRate: Double) throws -> [SpeechWindow] { heard }
     }
 
     /// Quiet noise with two loud tones, 5 to 6 s and 12 to 13.5 s.
@@ -95,7 +95,7 @@ final class SpeechClassifierTests: XCTestCase {
 
     func testAnotherEngineCanBePluggedIn() throws {
         // As a Windows port would: its own engine says only the second tone is speech.
-        let engine = Fixed(windows: [SpeechWindow(start: 4.5, end: 6.5, confidence: 0.05),
+        let engine = Fixed(heard: [SpeechWindow(start: 4.5, end: 6.5, confidence: 0.05),
                                      SpeechWindow(start: 11.5, end: 14, confidence: 0.95)])
         let speech = try FileMatcher.Speech(samples: sound(), sampleRate: 16_000, classifier: engine)
         XCTAssertEqual(speech.stretches.count, 1)
