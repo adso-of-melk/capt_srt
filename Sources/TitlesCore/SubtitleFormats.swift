@@ -11,10 +11,11 @@ enum SubtitleFormats {
 
     // MARK: Reading
 
+    /// A subtitle file's titles, without the adverts subtitle sites add (`withoutAds`).
     static func read(url: URL) throws -> [Subtitle] {
         let data = try Data(contentsOf: url)
         guard let text = decodeText(data) else { throw FormatError.unreadable }
-        return parse(text)
+        return withoutAds(parse(text))
     }
 
     /// Tries UTF-8 (with or without BOM), UTF-16 with BOM, then the legacy Windows encodings.

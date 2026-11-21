@@ -18,6 +18,40 @@ final class FormatsTests: XCTestCase {
         XCTAssertEqual(subs[1].text, "Two\nlines")
     }
 
+    func testASubtitleSitesAdvertIsLeftOut() throws {
+        // As tvsubtitles.net hands its files out: the advert last, as title 9999 on a broken
+        // timecode.
+        let text = """
+        1\r\n00:00:05,000 --> 00:00:07,000\r\nCapitão, os escudos estão a 20%.\r\n\r\n\
+        2\r\n00:00:08,000 --> 00:00:10,000\r\nVocê tem certeza?\r\n\r\n\
+        3\r\n00:00:11,000 --> 00:00:12,000\r\nVisite www.frota.org agora mesmo, por favor, disse ele.\r\n\r\n\
+        4\r\n00:00:13,000 --> 00:00:14,000\r\nSim.\r\n\r\n\
+        5\r\n00:00:15,000 --> 00:00:16,000\r\nNão.\r\n\r\n\
+        6\r\n00:00:17,000 --> 00:00:18,000\r\nTalvez.\r\n\r\n\
+        9999\r\n00:00:0,500 --> 00:00:2,00\r\n<font color="#ffff00" size=14>www.tvsubtitles.net</font>\r\n
+        """
+        let url = try tempFolder().appendingPathComponent("da.srt")
+        try Data(text.utf8).write(to: url)
+        let subs = try SubtitleFormats.read(url: url)
+        XCTAssertEqual(subs.count, 6)
+        XCTAssertEqual(subs.first?.text, "Capitão, os escudos estão a 20%.")
+        XCTAssertFalse(subs.contains { $0.text.contains("tvsubtitles") })
+    }
+
+    func testWhatCountsAsAnAdvert() {
+        XCTAssertTrue(SubtitleFormats.isAd(sub(0, 1, "Advertise your product or brand here\ncontact www.OpenSubtitles.org today"), nearEdge: false))
+        XCTAssertTrue(SubtitleFormats.isAd(sub(0, 1, "Support us and become VIP member"), nearEdge: false))
+        XCTAssertTrue(SubtitleFormats.isAd(sub(0, 1, "<i>Sync by n17t01\nwww.addic7ed.com</i>"), nearEdge: false))
+        // A bare web address at the start or end of the file is an advert...
+        XCTAssertTrue(SubtitleFormats.isAd(sub(0, 1, "www.legendasdivx.pt"), nearEdge: true))
+        XCTAssertTrue(SubtitleFormats.isAd(sub(0, 1, "Downloaded from https://example.com/subs"), nearEdge: true))
+        // ...but in the middle of the film it could be dialogue, and so is a full sentence.
+        XCTAssertFalse(SubtitleFormats.isAd(sub(0, 1, "www.legendasdivx.pt"), nearEdge: false))
+        XCTAssertFalse(SubtitleFormats.isAd(sub(0, 1, "Just go to www.dunder-mifflin.com and order the paper there."), nearEdge: true))
+        // A translator's credit stays.
+        XCTAssertFalse(SubtitleFormats.isAd(sub(0, 1, "Tradução e Legendas: Vera\nRevisão: Cap. MDaniel - USS Venture"), nearEdge: true))
+    }
+
     func testReadsAFileThatStartsWithAByteOrderMark() {
         let subs = SubtitleFormats.parse("\u{FEFF}1\n00:00:01,000 --> 00:00:02,000\nHello\n")
         XCTAssertEqual(subs.map(\.text), ["Hello"])
