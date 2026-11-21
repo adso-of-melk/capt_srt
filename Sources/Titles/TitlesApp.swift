@@ -194,6 +194,7 @@ struct TitlesCommands: Commands {
                     .keyboardShortcut("b", modifiers: [.command, .option, .shift])
                 Button("Shift Titles…") { model.sheet = .shiftTitles }
                     .keyboardShortcut("t", modifiers: [.command, .option])
+                Button("Change Frame Rate…  (titles made for another copy, e.g. PAL 25 fps)") { model.sheet = .changeFrameRate }
                 Button("Match TC to Neighbour…  (then click the title to match)") { model.beginMatchTC() }
                 Button("Match TC to Linked Titles") { model.matchLinked() }
                     .disabled(!model.canMatchLinked)

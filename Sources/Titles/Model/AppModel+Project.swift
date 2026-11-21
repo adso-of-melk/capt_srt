@@ -48,7 +48,7 @@ struct LanguageOptions: Equatable {
 
 /// The dialogs the editor can show.
 enum SheetKind: Identifiable, Equatable {
-    case newProject, projectSettings, newLanguage, newBlankLanguage, importLanguage, export, openLink, shiftTitles, languageOptions, dropImport
+    case newProject, projectSettings, newLanguage, newBlankLanguage, importLanguage, export, openLink, shiftTitles, changeFrameRate, languageOptions, dropImport
     var id: Self { self }
 }
 
@@ -1731,6 +1731,44 @@ extension AppModel {
         enforceLocks(in: video)
         flash(String(format: "Moved titles %@%.3f s", offset > 0 ? "+" : "", offset)
               + (stopped ? ", stopped by the next title (titles can't overlap)" : ""))
+    }
+
+    /// The frame rates Change Frame Rate offers.
+    static let frameRates: [Double] = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60]
+
+    /// The exact rate behind a rounded NTSC one (23.976 is 24000/1001).
+    static func exactRate(_ fps: Double) -> Double {
+        for base in [24.0, 30, 60] where abs(fps - base * 1000 / 1001) < 0.01 { return base * 1000 / 1001 }
+        return fps
+    }
+
+    /// Title ▸ Change Frame Rate…: retimes titles made for a copy of the film that runs at
+    /// `from` fps to one that runs at `to` fps. A PAL copy (25) runs about 4% faster than
+    /// a film or NTSC one (23.976), so its titles start nearly right and fall further behind
+    /// all the way through; every time is multiplied by from/to (to the millisecond), and
+    /// lengths and gaps grow or shrink with it. One undo step a language; locked languages
+    /// follow their master.
+    func changeFrameRate(from: Double, to: Double, allLanguages: Bool) {
+        guard let video, from > 0, to > 0 else { return }
+        let factor = Self.exactRate(from) / Self.exactRate(to)
+        guard abs(factor - 1) > 1e-9 else { return }
+        if !allLanguages, refuseIfLocked() { return }
+        let tracks = allLanguages ? video.tracks.filter { !$0.locked || $0.id == video.masterTrackID }
+                                  : [focusedTrack].compactMap { $0 }
+        func scaled(_ t: Double) -> Double { (t * factor * 1000).rounded() / 1000 }
+        for track in tracks where !track.doc.subtitles.isEmpty {
+            track.doc.perform { subs in
+                for i in subs.indices {
+                    subs[i].start = scaled(subs[i].start)
+                    subs[i].end = scaled(subs[i].end)
+                }
+            }
+        }
+        enforceLocks(in: video)
+        bump()
+        let name = allLanguages ? "every language" : focusedTrack?.language.name ?? "this language"
+        flash(String(format: "Retimed %@ from %g to %g fps (titles %@ %.1f%%; ⌘Z to undo)", name, from, to,
+                     factor > 1 ? "stretched" : "squeezed", abs(factor - 1) * 100))
     }
 
     /// Reads "+1.5", "-0.25", or a timecode "-00:00:01:12" (frames at the project rate).

@@ -19,6 +19,7 @@ struct SheetHost: View {
             case .export: ExportSheet(model: model)
             case .openLink: OpenLinkSheet(model: model)
             case .shiftTitles: ShiftTitlesSheet(model: model)
+            case .changeFrameRate: FrameRateSheet(model: model)
             case .dropImport:
                 if let plan = model.importPlan {
                     DropImportSheet(model: model, plan: plan)
@@ -772,6 +773,67 @@ struct ShiftTitlesSheet: View {
         guard let value = model.parseOffset(offset) else { return }
         model.sheet = nil
         model.shiftTitles(by: value, onlySelected: scope == 0, allLanguages: scope == 1 && allLanguages)
+    }
+}
+
+// MARK: - Change frame rate
+
+/// Retimes titles made for a copy of the film at another frame rate (most often PAL, 25 fps,
+/// against a 23.976 copy): they start nearly right and fall steadily further behind.
+struct FrameRateSheet: View {
+    @ObservedObject var model: AppModel
+    @State private var from = 25.0
+    @State private var to = 23.976
+    @State private var allLanguages = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SheetHeader(title: "Change frame rate")
+            Text("For titles made for another copy of the film, which runs faster or slower: they start nearly right and drift further off as it goes on. (If they're off by the same amount all the way, use Shift Titles instead.)")
+                .font(Theme.label(12, .regular)).foregroundStyle(Theme.textDim)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 16) {
+                Picker("Made for", selection: $from) { rates }
+                Picker("This video", selection: $to) { rates }
+            }
+            Text(effect).font(Theme.label(11, .regular)).foregroundStyle(Theme.textFaint)
+            Toggle("All languages (locked ones follow their master)", isOn: $allLanguages)
+            HStack {
+                Spacer()
+                Button("Cancel") { model.sheet = nil }.keyboardShortcut(.cancelAction)
+                    .buttonStyle(ConsoleButtonStyle(secondary: true))
+                Button("Retime") { apply() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(ConsoleButtonStyle())
+                    .disabled(from == to)
+            }
+        }
+        .padding(20)
+        .frame(width: 480)
+        .background(Theme.panel)
+        .onAppear {
+            let fps = model.fps
+            to = AppModel.frameRates.min { abs($0 - fps) < abs($1 - fps) } ?? 23.976
+            from = abs(to - 25) < 0.01 ? 23.976 : 25
+        }
+    }
+
+    private var rates: some View {
+        ForEach(AppModel.frameRates, id: \.self) { Text(String(format: "%g fps", $0)).tag($0) }
+    }
+
+    /// What it does to a title an hour in.
+    private var effect: String {
+        guard from != to else { return "Pick two different rates." }
+        let factor = AppModel.exactRate(from) / AppModel.exactRate(to)
+        let shift = (factor - 1) * 3600
+        return String(format: "Every title moves %@ in proportion: one an hour in by %.1f s, and lengths change by %.1f%%.",
+                      factor > 1 ? "later" : "earlier", abs(shift), abs(factor - 1) * 100)
+    }
+
+    private func apply() {
+        model.sheet = nil
+        model.changeFrameRate(from: from, to: to, allLanguages: allLanguages)
     }
 }
 
