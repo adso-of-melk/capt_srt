@@ -132,6 +132,94 @@ final class LanguageGuessTests: XCTestCase {
         XCTAssertEqual(LanguageGuess.language(of: old)?.code, "hr")
     }
 
+    // MARK: Brazil or Portugal, and names that are wrong
+
+    static let brazilian = [
+        "Você tem certeza de que eles estão vindo para cá?",
+        "Estou falando sério, a gente precisa sair agora.",
+        "Me diga o que aconteceu na tela principal.",
+        "O garoto está esperando no banheiro.",
+        "Vocês viram o celular dele?",
+        "Ligue para a equipe de segurança e peça o registro.",
+        "É uma seqüência de eventos muito estranha.",
+        "Antônio disse que o trem chega às oito."
+    ]
+    static let european = [
+        "Tens a certeza de que eles vêm para cá?",
+        "Estou a falar a sério, temos de sair já.",
+        "Diga-me o que aconteceu no ecrã principal.",
+        "O miúdo está à espera na casa de banho.",
+        "Viram o telemóvel dele?",
+        "Liga à equipa de segurança e pede o registo.",
+        "É uma sequência de acontecimentos muito estranha.",
+        "O António disse que o comboio chega às oito."
+    ]
+
+    private func srt(_ lines: [String]) -> String {
+        lines.enumerated().map { i, line in
+            "\(i + 1)\n00:00:\(String(format: "%02d", i * 3 + 1)),000 --> 00:00:\(String(format: "%02d", i * 3 + 3)),000\n\(line)\n"
+        }.joined(separator: "\n")
+    }
+
+    func testBrazilOrPortugalFromTheWords() throws {
+        XCTAssertEqual(LanguageGuess.portugueseRegion(Self.brazilian.joined(separator: " ")), "pt-BR")
+        XCTAssertEqual(LanguageGuess.portugueseRegion(Self.european.joined(separator: " ")), "pt-PT")
+        XCTAssertNil(LanguageGuess.portugueseRegion("Sim. Não. Obrigado."), "nothing to go on")
+        // "Está lindo" is said on both sides; "está a ver" only in Portugal.
+        XCTAssertNil(LanguageGuess.portugueseRegion("Está lindo. Está lindo."))
+        XCTAssertEqual(LanguageGuess.portugueseRegion("Ele está a ver. Ela anda a pensar."), "pt-PT")
+
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let br = try writeFile("Episode 1.srt", srt(Self.brazilian), in: folder, encoding: .windowsCP1252)
+        XCTAssertEqual(LanguageGuess.language(of: br)?.code, "pt-BR")
+        let pt = try writeFile("Episode 2.srt", srt(Self.european), in: folder)
+        XCTAssertEqual(LanguageGuess.language(of: pt)?.code, "pt-PT")
+    }
+
+    func testANameThatIsOnlyACodeGivesWayToTheWords() throws {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        // As Jeremy's download came: "da.srt" (Danish), in Brazilian Portuguese.
+        let da = try writeFile("da.srt", srt(Self.brazilian), in: folder)
+        XCTAssertEqual(LanguageGuess.language(of: da)?.code, "pt-BR")
+        // A film's name and then a code is a label someone chose: it stays (a translator's
+        // template holds the source language).
+        let labelled = try writeFile("Film.da.srt", srt(Self.brazilian), in: folder)
+        XCTAssertEqual(LanguageGuess.language(of: labelled)?.code, "da")
+    }
+
+    func testTheWordsTellTheRegionUnlessTheNameSpellsItOut() throws {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let por = try writeFile("Film.por.srt", srt(Self.brazilian), in: folder)
+        XCTAssertEqual(LanguageGuess.language(of: por)?.code, "pt-BR")
+        let portuguese = try writeFile("Film Portuguese.srt", srt(Self.brazilian), in: folder)
+        XCTAssertEqual(LanguageGuess.language(of: portuguese)?.code, "pt-BR")
+        let spelled = try writeFile("Film.pt-PT.srt", srt(Self.brazilian), in: folder)
+        XCTAssertEqual(LanguageGuess.language(of: spelled)?.code, "pt-PT")
+        XCTAssertEqual(LanguageGuess.fromName("Film.pob")?.code, "pt-BR")
+        XCTAssertEqual(LanguageGuess.fromName("Film Brazilian")?.code, "pt-BR")
+    }
+
+    func testWhenTheNameAndTheWordsDisagree() {
+        let da = Language.named("da"), br = Language.named("pt-BR")
+        XCTAssertEqual(LanguageGuess.settle(name: da, spelledOut: true, bare: true, text: br, sure: 0.9).code, "pt-BR")
+        XCTAssertEqual(LanguageGuess.settle(name: da, spelledOut: true, bare: true, text: br, sure: 0.4).code, "da",
+                       "the recogniser isn't sure")
+        XCTAssertEqual(LanguageGuess.settle(name: da, spelledOut: true, bare: false, text: br, sure: 0.9).code, "da")
+        // Languages the recogniser mixes up, or doesn't know: the name stays.
+        XCTAssertEqual(LanguageGuess.settle(name: Language.named("bs"), spelledOut: true, bare: true,
+                                            text: Language.named("hr"), sure: 0.95).code, "bs")
+        XCTAssertEqual(LanguageGuess.settle(name: Language.named("sl"), spelledOut: true, bare: true,
+                                            text: Language.named("hr"), sure: 0.95).code, "sl")
+        XCTAssertEqual(LanguageGuess.settle(name: Language.named("nb"), spelledOut: true, bare: true,
+                                            text: Language.named("da"), sure: 0.95).code, "nb")
+        // Serbian named generically, written in Cyrillic: the letters decide the script.
+        XCTAssertEqual(LanguageGuess.settle(name: Language.named("sr-Latn"), spelledOut: false, bare: false,
+                                            text: Language.named("sr-Cyrl"), sure: 0.5).code, "sr-Cyrl")
+    }
+
     func testAFileWithNoWordsGivesNoGuess() throws {
         let folder = try tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
